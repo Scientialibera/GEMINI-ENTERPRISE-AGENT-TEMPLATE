@@ -12,25 +12,29 @@ from common import ROOT, get_agent_spec
 
 DEFAULT_ARTIFACT_DIR = ROOT / "artifacts"
 REQUIREMENTS_FILENAME = "requirements.txt"
+GZIP_HEADER_FILENAME = ""
 GZIP_MTIME = 0
 TAR_MTIME = 0
 NORMALIZED_UID = 0
 NORMALIZED_GID = 0
+NORMALIZED_FILE_MODE = 0o644
+NORMALIZED_DIRECTORY_MODE = 0o755
 
 
 def _normalized_tarinfo(path: Path, arcname: str) -> tarfile.TarInfo:
     info = tarfile.TarInfo(arcname)
-    stat = path.stat()
-    info.mode = stat.st_mode & 0o777
     info.uid = NORMALIZED_UID
     info.gid = NORMALIZED_GID
     info.uname = ""
     info.gname = ""
     info.mtime = TAR_MTIME
+
     if path.is_file():
-        info.size = stat.st_size
+        info.mode = NORMALIZED_FILE_MODE
+        info.size = path.stat().st_size
         info.type = tarfile.REGTYPE
     else:
+        info.mode = NORMALIZED_DIRECTORY_MODE
         info.type = tarfile.DIRTYPE
     return info
 
@@ -61,7 +65,12 @@ def package_agent(agent_name: str, output: Path) -> Path:
         )
 
         with output.open("wb") as raw:
-            with gzip.GzipFile(fileobj=raw, mode="wb", mtime=GZIP_MTIME) as compressed:
+            with gzip.GzipFile(
+                filename=GZIP_HEADER_FILENAME,
+                mode="wb",
+                fileobj=raw,
+                mtime=GZIP_MTIME,
+            ) as compressed:
                 with tarfile.open(fileobj=compressed, mode="w") as archive:
                     _add_path(archive, requirements_path, REQUIREMENTS_FILENAME)
                     for package_path in spec.extra_packages:
