@@ -147,7 +147,7 @@ Terraform consumes a deterministic `.tar.gz` from the application repository:
 ```hcl
 source_archive_path = "./artifacts/example-agent.tar.gz"
 entrypoint_module   = "auth_reference_agent.agent"
-entrypoint_object   = "root_agent"
+entrypoint_object   = "app"
 requirements_file   = "requirements.txt"
 ```
 

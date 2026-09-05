@@ -31,9 +31,9 @@ variable "entrypoint_module" {
 }
 
 variable "entrypoint_object" {
-  description = "Python object exported by entrypoint_module."
+  description = "Python object exported by entrypoint_module. Must be the AdkApp wrapper that exposes the declared class methods, not a bare Agent."
   type        = string
-  default     = "root_agent"
+  default     = "app"
 }
 
 variable "python_version" {

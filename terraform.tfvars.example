@@ -12,7 +12,7 @@ region     = "us-central1"
 agent_display_name = "REPLACE_WITH_AGENT_DISPLAY_NAME"
 source_archive_path = "./artifacts/REPLACE_WITH_AGENT_ARCHIVE.tar.gz"
 entrypoint_module   = "auth_reference_agent.agent"
-entrypoint_object   = "root_agent"
+entrypoint_object   = "app"
 python_version      = "3.12"
 requirements_file   = "requirements.txt"
 

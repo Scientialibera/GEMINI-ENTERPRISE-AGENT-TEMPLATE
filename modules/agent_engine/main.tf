@@ -37,6 +37,7 @@ resource "google_vertex_ai_reasoning_engine" "this" {
   description  = var.description
 
   spec {
+    class_methods   = file("${path.module}/adk_class_methods.json")
     agent_framework = "google-adk"
     identity_type   = "AGENT_IDENTITY"
 
@@ -83,9 +84,9 @@ resource "google_vertex_ai_reasoning_engine" "this" {
 
 locals {
   agent_identity_member = startswith(
-    google_vertex_ai_reasoning_engine.this.effective_identity,
+    google_vertex_ai_reasoning_engine.this.spec[0].effective_identity,
     "principal://",
-  ) ? google_vertex_ai_reasoning_engine.this.effective_identity : "principal://${google_vertex_ai_reasoning_engine.this.effective_identity}"
+  ) ? google_vertex_ai_reasoning_engine.this.spec[0].effective_identity : "principal://${google_vertex_ai_reasoning_engine.this.spec[0].effective_identity}"
 }
 
 resource "google_vertex_ai_reasoning_engine_iam_binding" "invokers" {

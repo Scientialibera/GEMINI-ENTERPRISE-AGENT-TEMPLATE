@@ -1,7 +1,6 @@
 .terraform/
 *.tfstate
 *.tfstate.*
-.terraform.lock.hcl
 terraform.tfvars
 *.tfplan
 crash.log
@@ -18,3 +17,7 @@ artifacts/
 *.pfx
 credentials.json
 application_default_credentials.json
+
+tfplan
+provider-schema.json
+validation/

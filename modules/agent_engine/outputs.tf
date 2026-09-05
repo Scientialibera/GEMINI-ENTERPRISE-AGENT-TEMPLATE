@@ -7,5 +7,5 @@ output "reasoning_engine_id" {
 }
 
 output "agent_identity" {
-  value = google_vertex_ai_reasoning_engine.this.effective_identity
+  value = google_vertex_ai_reasoning_engine.this.spec[0].effective_identity
 }

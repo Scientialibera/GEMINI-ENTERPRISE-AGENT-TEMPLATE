@@ -21,10 +21,13 @@ locals {
   agent_resource_key      = substr(sha1(join("/", [var.region, var.agent_display_name])), 0, 12)
   effective_log_bucket_id = coalesce(var.log_bucket_id, "agent-engine-${local.agent_resource_key}")
 
+  # Orgless trust domains use the "proj-" prefix. Public documentation shows
+  # "project-", but IAM rejects that form with "member is of an unknown type";
+  # the effectiveIdentity reported by a deployed Agent Engine confirms "proj-".
   developer_agent_identity_principal_set = var.developer_agent_identity_organization_id != null ? (
     "principalSet://agents.global.org-${var.developer_agent_identity_organization_id}.system.id.goog/attribute.platformContainer/aiplatform/projects/${data.google_project.current.number}"
     ) : (
-    "principalSet://agents.global.project-${data.google_project.current.number}.system.id.goog/attribute.platformContainer/aiplatform/projects/${data.google_project.current.number}"
+    "principalSet://agents.global.proj-${data.google_project.current.number}.system.id.goog/attribute.platformContainer/aiplatform/projects/${data.google_project.current.number}"
   )
 
   bootstrap_env_names = setunion(
@@ -46,6 +49,25 @@ locals {
   }
 
   runtime_secret_env = merge(local.managed_secret_env, var.external_secret_env)
+
+  # Reasoning Engine secret_env injection is performed by Google-managed service
+  # agents at deployment time, not by the runtime Agent Identity principal.
+  # Two distinct service agents are involved and both require secretAccessor:
+  #   *@gcp-sa-aiplatform    -> roles/aiplatform.serviceAgent
+  #   *@gcp-sa-aiplatform-re -> roles/aiplatform.reasoningEngineServiceAgent
+  secret_accessor_service_agents = {
+    aiplatform       = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-aiplatform.iam.gserviceaccount.com"
+    reasoning_engine = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
+  }
+
+  # Cartesian product of secret env entries x service agents requiring access.
+  secret_accessor_bindings = {
+    for pair in setproduct(keys(local.runtime_secret_env), keys(local.secret_accessor_service_agents)) :
+    "${pair[0]}/${pair[1]}" => {
+      secret = local.runtime_secret_env[pair[0]].secret
+      member = local.secret_accessor_service_agents[pair[1]]
+    }
+  }
 }
 
 resource "terraform_data" "configuration_validation" {
@@ -121,17 +143,24 @@ resource "google_secret_manager_secret_version" "managed" {
   secret_data_wo         = var.secret_values[each.key]
   secret_data_wo_version = each.value.value_version
   deletion_policy        = "DISABLE"
+
+  lifecycle {
+    precondition {
+      condition     = contains(keys(var.secret_values), each.key)
+      error_message = "managed_secrets[\"${each.key}\"] has no payload in secret_values. Supply it at apply time from an approved ephemeral secret source (never in tfvars or state)."
+    }
+  }
 }
 
 locals {
   agent_bootstrap_env = merge(
     var.bootstrap_env,
     {
-      CONFIG_PARAMETER                            = google_parameter_manager_parameter.runtime_config.id
-      CONFIG_PARAMETER_LOCATION                   = "global"
-      CONFIG_REFRESH_SECONDS                      = tostring(var.config_refresh_seconds)
+      CONFIG_PARAMETER                           = google_parameter_manager_parameter.runtime_config.id
+      CONFIG_PARAMETER_LOCATION                  = "global"
+      CONFIG_REFRESH_SECONDS                     = tostring(var.config_refresh_seconds)
       GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY = "true"
-      OTEL_SEMCONV_STABILITY_OPT_IN               = "gen_ai_latest_experimental"
+      OTEL_SEMCONV_STABILITY_OPT_IN              = "gen_ai_latest_experimental"
     }
   )
 }
@@ -161,12 +190,12 @@ resource "google_storage_bucket_iam_member" "developer_staging_bucket_writer" {
 }
 
 resource "google_secret_manager_secret_iam_member" "agent_platform_accessor" {
-  for_each = local.runtime_secret_env
+  for_each = local.secret_accessor_bindings
 
   project   = var.project_id
   secret_id = each.value.secret
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-aiplatform.iam.gserviceaccount.com"
+  member    = each.value.member
 
   depends_on = [google_secret_manager_secret.managed]
 }
@@ -214,7 +243,12 @@ resource "google_project_iam_member" "developer_agent_identity_common" {
   role    = each.value
   member  = local.developer_agent_identity_principal_set
 
-  depends_on = [module.agent_engine]
+  # Intentionally independent of module.agent_engine. This grant covers Agent
+  # Identities of developer-created Agent Engines, which are deployed from the
+  # agent repository and must be able to read runtime configuration even when
+  # no Terraform-managed Agent Engine exists yet. Ordering it after the module
+  # would make a first-time developer deployment unusable.
+  depends_on = [google_project_service.required]
 }
 
 module "observability" {
