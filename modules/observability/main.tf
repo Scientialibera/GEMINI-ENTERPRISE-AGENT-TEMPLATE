@@ -1,8 +1,8 @@
 resource "google_logging_project_bucket_config" "agent_logs" {
   project          = var.project_id
   location         = "global"
-  bucket_id        = "agent-engine-analytics"
-  description      = "Analytics-enabled logs for managed Agent Engine runtimes."
+  bucket_id        = var.log_bucket_id
+  description      = "Analytics-enabled logs for managed Agent Engine runtime ${var.reasoning_engine_id}."
   retention_days   = var.log_retention_days
   enable_analytics = true
 }
@@ -10,7 +10,7 @@ resource "google_logging_project_bucket_config" "agent_logs" {
 resource "google_logging_project_sink" "agent_logs" {
   project     = var.project_id
   name        = "agent-engine-${var.reasoning_engine_id}"
-  description = "Routes logs for one Agent Engine runtime into the analytics bucket."
+  description = "Routes logs for one Agent Engine runtime into its analytics bucket."
   destination = "logging.googleapis.com/projects/${var.project_id}/locations/global/buckets/${google_logging_project_bucket_config.agent_logs.bucket_id}"
   filter      = <<-EOT
     resource.type="aiplatform.googleapis.com/ReasoningEngine"

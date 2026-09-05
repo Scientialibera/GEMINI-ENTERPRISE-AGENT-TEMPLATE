@@ -51,6 +51,8 @@ terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
+Do not apply a plan that contains unexpected Agent Engine source/bootstrap changes when the intended change is runtime configuration only.
+
 ## Configuration ownership
 
 | Configuration | Authoritative source | Runtime delivery | Change behavior |
@@ -147,7 +149,19 @@ entrypoint_object   = "root_agent"
 requirements_file   = "requirements.txt"
 ```
 
-Application packaging is not implemented in Terraform.
+Build the archive with the companion agent repository's `dev/package_agent.py`. Application packaging is not implemented in Terraform.
+
+## Multi-agent safety
+
+This root template deploys one Agent Engine workload. A production IaC repository may instantiate the module once per independently deployable agent or use separate environment/workload roots.
+
+Generated shared-project resource names must not collide across agents. The template therefore:
+
+- derives a deterministic custom invoker-role ID from project, region and agent display name when `invoker_role` is not supplied;
+- derives a deterministic per-agent Logging bucket ID when `log_bucket_id` is null;
+- requires callers to provide a unique `config_parameter_id` for each independently managed runtime config.
+
+For broader platform-wide resources such as WIF, Terraform runner IAM or remote state, use the foundation/bootstrap layer rather than duplicating them per agent.
 
 ## Environment layout
 
@@ -164,7 +178,7 @@ modules/
 └── observability/
 ```
 
-The root files in this branch are a compact template. Split them into environment roots when adopting the template for a real platform repository.
+The root files in this branch are a compact workload template. Split them into environment roots when adopting the template for a real platform repository.
 
 ## Change behavior
 
@@ -175,6 +189,19 @@ The root files in this branch are a compact template. Split them into environmen
 | source archive | No | Yes |
 | IAM only | No | No unless deployment config also changes |
 | Parameter Manager UI version in dev | Yes | No |
+
+## Terraform standards
+
+- Run `terraform fmt -check -recursive` and `terraform validate` before every plan.
+- Pin provider versions and upgrade intentionally.
+- Use typed variables, validation blocks and top-level `check` blocks for cross-variable invariants.
+- Keep repeated derived values in `locals`; do not duplicate resource-name or configuration formulas.
+- Use `for_each` for repeatable IAM/config resources rather than copied blocks.
+- Prefer resource-level IAM for sensitive data access.
+- Do not use `Owner`/`Editor` as convenience roles in the template.
+- Do not put secret payloads in Git, tfvars, plan output or normal state.
+- Do not bootstrap the permissions of the Terraform identity from the workload stack it is already executing.
+- Do not let a live-config-only change accidentally modify Agent Engine deployment fields.
 
 ## Repository rules
 

@@ -54,7 +54,7 @@ variable "config_parameter_id" {
 }
 
 variable "config_revision" {
-  description = "Unique source-control revision used when publishing a runtime configuration version. A 12-character Git SHA is recommended."
+  description = "Unique source-control revision used when publishing runtime configuration. A 12-character Git SHA is recommended."
   type        = string
 
   validation {
@@ -75,7 +75,7 @@ variable "config_refresh_seconds" {
 }
 
 variable "runtime_config" {
-  description = "Live non-secret application configuration. Terraform/Git is authoritative; this map is published as JSON to Parameter Manager. config_revision is injected automatically."
+  description = "Live non-secret application configuration. Terraform/Git is authoritative; config_revision is injected automatically."
   type        = map(string)
 
   validation {
@@ -191,7 +191,7 @@ variable "invoker_members" {
 }
 
 variable "invoker_role" {
-  description = "Optional existing Reasoning Engine invoker role. When null, the module creates a query-only custom role."
+  description = "Optional existing Reasoning Engine invoker role. When null, a deterministic query-only custom role is created."
   type        = string
   default     = null
   nullable    = true
@@ -208,32 +208,63 @@ variable "agent_project_roles" {
 }
 
 variable "min_instances" {
-  type    = number
-  default = 1
+  description = "Minimum Agent Engine runtime instances."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.min_instances >= 0
+    error_message = "min_instances cannot be negative."
+  }
 }
 
 variable "max_instances" {
-  type    = number
-  default = 10
+  description = "Maximum Agent Engine runtime instances."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.max_instances >= 1
+    error_message = "max_instances must be at least 1."
+  }
 }
 
 variable "container_concurrency" {
-  type    = number
-  default = 9
+  description = "Maximum concurrent requests per runtime container."
+  type        = number
+  default     = 9
+
+  validation {
+    condition     = var.container_concurrency >= 1
+    error_message = "container_concurrency must be at least 1."
+  }
 }
 
 variable "resource_limits" {
-  type = map(string)
+  description = "Agent Runtime resource limits."
+  type        = map(string)
   default = {
     cpu    = "4"
     memory = "4Gi"
   }
 }
 
+variable "log_bucket_id" {
+  description = "Optional Cloud Logging bucket ID. Null generates a deterministic per-agent ID to avoid collisions in shared projects."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "log_retention_days" {
   description = "Retention for the dedicated Agent Engine log bucket."
   type        = number
   default     = 90
+
+  validation {
+    condition     = var.log_retention_days >= 1
+    error_message = "log_retention_days must be at least 1."
+  }
 }
 
 variable "notification_channels" {

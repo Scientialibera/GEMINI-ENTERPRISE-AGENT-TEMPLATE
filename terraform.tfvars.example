@@ -21,31 +21,31 @@ requirements_file   = "requirements.txt"
 config_parameter_id    = "REPLACE_WITH_AGENT_CONFIG_PARAMETER_ID"
 config_refresh_seconds = 30
 runtime_config = {
-  model                       = "gemini-3.7-flash"
-  instruction                 = "You are a concise enterprise assistant."
-  environment                 = "dev"
-  log_level                   = "INFO"
-  agent_identity_bucket_name  = "REPLACE_IF_USING_AGENT_IDENTITY_STORAGE_TOOL"
-  storage_object_limit        = "10"
-  bigquery_query_row_limit    = "100"
-  mcp_server_url              = ""
+  model                      = "gemini-3.7-flash"
+  instruction                = "You are a concise enterprise assistant."
+  environment                = "dev"
+  log_level                  = "INFO"
+  agent_identity_bucket_name = "REPLACE_IF_USING_AGENT_IDENTITY_STORAGE_TOOL"
+  storage_object_limit       = "10"
+  bigquery_query_row_limit   = "100"
+  mcp_server_url             = ""
 }
 
 # BOOTSTRAP ONLY. Changing these values can create a new Agent Runtime revision.
 bootstrap_env = {
-  BOOTSTRAP_MODEL                      = "gemini-3.7-flash"
-  GEMINI_MODEL_LOCATION                = "global"
-  GEMINI_ENTERPRISE_AUTHORIZATION_ID   = "REPLACE_IF_USING_AUTH_REFERENCE_AGENT"
+  BOOTSTRAP_MODEL                    = "gemini-3.7-flash"
+  GEMINI_MODEL_LOCATION              = "global"
+  GEMINI_ENTERPRISE_AUTHORIZATION_ID = "REPLACE_IF_USING_AUTH_REFERENCE_AGENT"
 }
 
 # SECRETS
-# Keep payloads out of terraform.tfvars. Populate managed_secrets only when the
+# Keep payloads out of terraform.tfvars. Populate managed_secrets only when this
 # stack owns the Secret Manager object. Supply matching TF_VAR_secret_values at apply.
 managed_secrets     = {}
 external_secret_env = {}
 
 # DEVELOPER DEPLOYMENT ACCESS
-# Prefer a Google Group. Leave empty when local dev deployment helpers are not used.
+# Prefer a Google Group. Leave empty when developer deployment helpers are not used.
 developer_deployer_members = [
   "group:REPLACE_WITH_DEV_GROUP@example.com",
 ]
@@ -56,7 +56,9 @@ developer_staging_bucket_name = "REPLACE_WITH_EXISTING_DEV_STAGING_BUCKET_NAME"
 # Organization project:
 developer_agent_identity_organization_id = "REPLACE_WITH_ORGANIZATION_ID"
 developer_agent_identity_orgless         = false
-# For an orgless project instead set organization_id=null and orgless=true.
+# Orgless project instead:
+# developer_agent_identity_organization_id = null
+# developer_agent_identity_orgless         = true
 
 # CALLER ACCESS
 invoker_members = [
@@ -71,4 +73,8 @@ agent_project_roles = [
   "roles/storage.objectViewer",
 ]
 
-log_retention_days = 90
+# OBSERVABILITY
+# log_bucket_id may be omitted/null. Terraform generates a deterministic per-agent
+# bucket ID so multiple agent stacks in the same project do not collide.
+log_bucket_id        = null
+log_retention_days   = 90

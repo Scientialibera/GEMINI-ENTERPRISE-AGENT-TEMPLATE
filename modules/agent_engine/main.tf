@@ -9,13 +9,18 @@ terraform {
   }
 }
 
+locals {
+  invoker_role_scope        = join("/", [var.project_id, var.region, var.display_name])
+  generated_invoker_role_id = "agentRuntimeUser_${substr(sha1(local.invoker_role_scope), 0, 12)}"
+}
+
 resource "google_project_iam_custom_role" "agent_user" {
   count = var.invoker_role == null ? 1 : 0
 
   project     = var.project_id
-  role_id     = "agentRuntimeUser"
-  title       = "Agent runtime user"
-  description = "Allows querying approved Vertex AI Agent Engine runtimes."
+  role_id     = local.generated_invoker_role_id
+  title       = "Agent runtime user - ${var.display_name}"
+  description = "Allows querying one approved Vertex AI Agent Engine runtime."
   permissions = ["aiplatform.reasoningEngines.query"]
 }
 
@@ -77,7 +82,10 @@ resource "google_vertex_ai_reasoning_engine" "this" {
 }
 
 locals {
-  agent_identity_member = startswith(google_vertex_ai_reasoning_engine.this.effective_identity, "principal://") ? google_vertex_ai_reasoning_engine.this.effective_identity : "principal://${google_vertex_ai_reasoning_engine.this.effective_identity}"
+  agent_identity_member = startswith(
+    google_vertex_ai_reasoning_engine.this.effective_identity,
+    "principal://",
+  ) ? google_vertex_ai_reasoning_engine.this.effective_identity : "principal://${google_vertex_ai_reasoning_engine.this.effective_identity}"
 }
 
 resource "google_vertex_ai_reasoning_engine_iam_binding" "invokers" {

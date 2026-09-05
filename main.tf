@@ -18,6 +18,9 @@ locals {
   runtime_config_hash       = substr(sha256(jsonencode(local.published_runtime_config)), 0, 12)
   runtime_config_version_id = "cfg-${var.config_revision}-${local.runtime_config_hash}"
 
+  agent_resource_key       = substr(sha1(join("/", [var.region, var.agent_display_name])), 0, 12)
+  effective_log_bucket_id  = coalesce(var.log_bucket_id, "agent-engine-${local.agent_resource_key}")
+
   developer_agent_identity_principal_set = var.developer_agent_identity_organization_id != null ? (
     "principalSet://agents.global.org-${var.developer_agent_identity_organization_id}.system.id.goog/attribute.platformContainer/aiplatform/projects/${data.google_project.current.number}"
     ) : (
@@ -38,6 +41,13 @@ check "managed_secret_payloads_supplied" {
   assert {
     condition     = length(setsubtract(toset(keys(var.managed_secrets)), toset(keys(var.secret_values)))) == 0
     error_message = "Every managed_secrets key must have a matching secret_values payload at apply time."
+  }
+}
+
+check "valid_scaling_range" {
+  assert {
+    condition     = var.min_instances <= var.max_instances
+    error_message = "min_instances cannot exceed max_instances."
   }
 }
 
@@ -193,9 +203,6 @@ resource "google_project_iam_member" "developer_agent_identity_common" {
   role    = each.value
   member  = local.developer_agent_identity_principal_set
 
-  # Agent Identity trust domains are initialized by Agent Identity usage.
-  # The Terraform-managed runtime is created first so the common dev principal
-  # set can be bound reliably on a new project.
   depends_on = [module.agent_engine]
 }
 
@@ -205,6 +212,7 @@ module "observability" {
   project_id            = var.project_id
   region                = var.region
   reasoning_engine_id   = module.agent_engine.reasoning_engine_id
+  log_bucket_id         = local.effective_log_bucket_id
   log_retention_days    = var.log_retention_days
   notification_channels = var.notification_channels
 
