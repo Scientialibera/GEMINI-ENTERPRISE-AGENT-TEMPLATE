@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from google.api_core.exceptions import NotFound
@@ -118,13 +119,15 @@ def _resource_id(name: str, default: str) -> str:
     return value
 
 
-def _schema_signature(schema: tuple[bigquery.SchemaField, ...] | list[bigquery.SchemaField]) -> tuple[tuple[str, str, str], ...]:
+def _schema_signature(
+    schema: Sequence[bigquery.SchemaField],
+) -> tuple[tuple[str, str, str], ...]:
     return tuple((field.name, field.field_type, field.mode) for field in schema)
 
 
 def _validate_existing_table(table: bigquery.Table) -> None:
     expected = _schema_signature(FIXTURE_SCHEMA)
-    actual = _schema_signature(list(table.schema))
+    actual = _schema_signature(table.schema)
     if actual != expected:
         raise SystemExit(
             f"BigQuery fixture table '{table.full_table_id}' already exists with a different "
@@ -137,7 +140,7 @@ def prepare_bigquery_fixture(
     project_id: str,
     default_location: str,
 ) -> BigQueryFixtureResult | None:
-    """Create/reuse a small deterministic BigQuery dataset and table for dev testing.
+    """Create or reuse a small deterministic BigQuery fixture for dev testing.
 
     Existing non-empty fixture tables are never modified. IAM is intentionally out
     of scope; the caller and delegated Gemini Enterprise test user must already have
