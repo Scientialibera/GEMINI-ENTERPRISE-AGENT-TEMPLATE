@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import logging
 import os
 import threading
 import time
+from datetime import datetime, timezone
 
 from google.adk.integrations.parameter_manager.parameter_client import ParameterManagerClient
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,6 +16,25 @@ from .bootstrap import get_bootstrap_settings
 
 
 LOGGER = logging.getLogger(__name__)
+
+GEMINI_MODEL_ENV = "GEMINI_MODEL"
+AGENT_INSTRUCTION_ENV = "AGENT_INSTRUCTION"
+CONFIG_REVISION_ENV = "CONFIG_REVISION"
+ENVIRONMENT_ENV = "ENVIRONMENT"
+LOG_LEVEL_ENV = "LOG_LEVEL"
+AGENT_IDENTITY_BUCKET_ENV = "AGENT_IDENTITY_BUCKET_NAME"
+STORAGE_OBJECT_LIMIT_ENV = "STORAGE_OBJECT_LIMIT"
+BIGQUERY_QUERY_ROW_LIMIT_ENV = "BIGQUERY_QUERY_ROW_LIMIT"
+MCP_SERVER_URL_ENV = "MCP_SERVER_URL"
+
+LOCAL_REVISION = "local"
+LOCAL_ENVIRONMENT = "local"
+DEFAULT_LOG_LEVEL = "DEBUG"
+DEFAULT_STORAGE_OBJECT_LIMIT = 10
+DEFAULT_BIGQUERY_QUERY_ROW_LIMIT = 100
+LAST_KNOWN_GOOD_RETRY_SECONDS = 30
+PARAMETER_VERSION_SEGMENT = "/versions/"
+LATEST_VERSION = "latest"
 
 
 class RuntimeConfig(BaseModel):
@@ -34,28 +53,39 @@ class RuntimeConfig(BaseModel):
     mcp_server_url: str | None = None
 
 
+def _required_local_value(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(f"{name} is required for local execution.")
+    return value
+
+
 def _local_payload() -> dict[str, object]:
-    model = os.getenv("GEMINI_MODEL", "").strip()
-    instruction = os.getenv("AGENT_INSTRUCTION", "").strip()
-    if not model:
-        raise RuntimeError("GEMINI_MODEL is required for local execution.")
-    if not instruction:
-        raise RuntimeError("AGENT_INSTRUCTION is required for local execution.")
     return {
-        "config_revision": os.getenv("CONFIG_REVISION", "local").strip() or "local",
-        "model": model,
-        "instruction": instruction,
-        "environment": os.getenv("ENVIRONMENT", "local").strip() or "local",
-        "log_level": os.getenv("LOG_LEVEL", "DEBUG").strip() or "DEBUG",
-        "agent_identity_bucket_name": os.getenv("AGENT_IDENTITY_BUCKET_NAME", "").strip() or None,
-        "storage_object_limit": os.getenv("STORAGE_OBJECT_LIMIT", "10"),
-        "bigquery_query_row_limit": os.getenv("BIGQUERY_QUERY_ROW_LIMIT", "100"),
-        "mcp_server_url": os.getenv("MCP_SERVER_URL", "").strip() or None,
+        "config_revision": os.getenv(CONFIG_REVISION_ENV, LOCAL_REVISION).strip()
+        or LOCAL_REVISION,
+        "model": _required_local_value(GEMINI_MODEL_ENV),
+        "instruction": _required_local_value(AGENT_INSTRUCTION_ENV),
+        "environment": os.getenv(ENVIRONMENT_ENV, LOCAL_ENVIRONMENT).strip()
+        or LOCAL_ENVIRONMENT,
+        "log_level": os.getenv(LOG_LEVEL_ENV, DEFAULT_LOG_LEVEL).strip()
+        or DEFAULT_LOG_LEVEL,
+        "agent_identity_bucket_name": os.getenv(AGENT_IDENTITY_BUCKET_ENV, "").strip()
+        or None,
+        "storage_object_limit": os.getenv(
+            STORAGE_OBJECT_LIMIT_ENV,
+            str(DEFAULT_STORAGE_OBJECT_LIMIT),
+        ),
+        "bigquery_query_row_limit": os.getenv(
+            BIGQUERY_QUERY_ROW_LIMIT_ENV,
+            str(DEFAULT_BIGQUERY_QUERY_ROW_LIMIT),
+        ),
+        "mcp_server_url": os.getenv(MCP_SERVER_URL_ENV, "").strip() or None,
     }
 
 
 class RuntimeConfigStore:
-    """TTL cache with last-known-good behavior after the first remote load."""
+    """Thread-safe TTL cache with last-known-good behavior after first remote load."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -70,16 +100,17 @@ class RuntimeConfigStore:
         parameter = bootstrap.config_parameter
         if not parameter:
             return None
-        if "/versions/" in parameter:
+        if PARAMETER_VERSION_SEGMENT in parameter:
             return parameter
         if parameter.startswith("projects/"):
-            return f"{parameter.rstrip('/')}/versions/latest"
+            return f"{parameter.rstrip('/')}{PARAMETER_VERSION_SEGMENT}{LATEST_VERSION}"
         return (
             f"projects/{bootstrap.project_id}/locations/{bootstrap.parameter_location}/"
-            f"parameters/{parameter}/versions/latest"
+            f"parameters/{parameter}/versions/{LATEST_VERSION}"
         )
 
-    def _load_remote(self, resource_name: str) -> RuntimeConfig:
+    @staticmethod
+    def _load_remote(resource_name: str) -> RuntimeConfig:
         bootstrap = get_bootstrap_settings()
         payload = ParameterManagerClient(
             location=bootstrap.parameter_location
@@ -103,13 +134,16 @@ class RuntimeConfigStore:
             try:
                 loaded = self._load_remote(resource_name)
             except Exception:
-                if self._config is not None:
-                    LOGGER.exception(
-                        "Parameter Manager refresh failed; continuing with last-known-good configuration."
-                    )
-                    self._expires_at = now + min(30, bootstrap.refresh_seconds)
-                    return self._config
-                raise
+                if self._config is None:
+                    raise
+                LOGGER.exception(
+                    "Parameter Manager refresh failed; using last-known-good configuration."
+                )
+                self._expires_at = now + min(
+                    LAST_KNOWN_GOOD_RETRY_SECONDS,
+                    bootstrap.refresh_seconds,
+                )
+                return self._config
 
             self._config = loaded
             self._resource_name = resource_name
@@ -119,8 +153,13 @@ class RuntimeConfigStore:
 
     def status(self) -> dict[str, object]:
         config = self.get()
+        source = (
+            "local environment"
+            if self._resource_name is None
+            else "Google Cloud Parameter Manager"
+        )
         return {
-            "source": "local environment" if self._resource_name is None else "Google Cloud Parameter Manager",
+            "source": source,
             "resource": self._resource_name,
             "config_revision": config.config_revision,
             "loaded_at": self._loaded_at.isoformat() if self._loaded_at else None,

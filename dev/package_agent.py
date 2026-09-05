@@ -3,21 +3,30 @@ from __future__ import annotations
 import argparse
 import gzip
 import os
-from pathlib import Path
 import tarfile
+import tempfile
+from pathlib import Path
 
 from common import ROOT, get_agent_spec
+
+
+DEFAULT_ARTIFACT_DIR = ROOT / "artifacts"
+REQUIREMENTS_FILENAME = "requirements.txt"
+GZIP_MTIME = 0
+TAR_MTIME = 0
+NORMALIZED_UID = 0
+NORMALIZED_GID = 0
 
 
 def _normalized_tarinfo(path: Path, arcname: str) -> tarfile.TarInfo:
     info = tarfile.TarInfo(arcname)
     stat = path.stat()
     info.mode = stat.st_mode & 0o777
-    info.uid = 0
-    info.gid = 0
+    info.uid = NORMALIZED_UID
+    info.gid = NORMALIZED_GID
     info.uname = ""
     info.gname = ""
-    info.mtime = 0
+    info.mtime = TAR_MTIME
     if path.is_file():
         info.size = stat.st_size
         info.type = tarfile.REGTYPE
@@ -26,38 +35,40 @@ def _normalized_tarinfo(path: Path, arcname: str) -> tarfile.TarInfo:
     return info
 
 
-def _add_path(tar: tarfile.TarFile, source: Path, arcname: str) -> None:
+def _add_path(archive: tarfile.TarFile, source: Path, arcname: str) -> None:
     if source.is_dir():
-        tar.addfile(_normalized_tarinfo(source, arcname))
+        archive.addfile(_normalized_tarinfo(source, arcname))
         for child in sorted(source.iterdir(), key=lambda item: item.name):
-            _add_path(tar, child, f"{arcname}/{child.name}")
+            _add_path(archive, child, f"{arcname}/{child.name}")
         return
 
     info = _normalized_tarinfo(source, arcname)
     with source.open("rb") as handle:
-        tar.addfile(info, handle)
+        archive.addfile(info, handle)
 
 
-def package(agent_name: str, output: Path) -> Path:
+def package_agent(agent_name: str, output: Path) -> Path:
     spec = get_agent_spec(agent_name)
+    output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    requirements = "\n".join(spec.requirements) + "\n"
-    requirements_path = ROOT / ".package-requirements.tmp"
-    requirements_path.write_text(requirements, encoding="utf-8", newline="\n")
+    with tempfile.TemporaryDirectory(prefix="agent-package-") as temp_dir:
+        requirements_path = Path(temp_dir) / REQUIREMENTS_FILENAME
+        requirements_path.write_text(
+            "\n".join(spec.requirements) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
 
-    try:
         with output.open("wb") as raw:
-            with gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz:
-                with tarfile.open(fileobj=gz, mode="w") as tar:
-                    _add_path(tar, requirements_path, "requirements.txt")
+            with gzip.GzipFile(fileobj=raw, mode="wb", mtime=GZIP_MTIME) as compressed:
+                with tarfile.open(fileobj=compressed, mode="w") as archive:
+                    _add_path(archive, requirements_path, REQUIREMENTS_FILENAME)
                     for package_path in spec.extra_packages:
                         source = ROOT / package_path
                         if not source.exists():
                             raise FileNotFoundError(source)
-                        _add_path(tar, source, source.name)
-    finally:
-        requirements_path.unlink(missing_ok=True)
+                        _add_path(archive, source, source.name)
 
     return output
 
@@ -74,9 +85,9 @@ def main() -> None:
     output = (
         Path(args.output)
         if args.output
-        else ROOT / "artifacts" / f"{args.agent}.tar.gz"
+        else DEFAULT_ARTIFACT_DIR / f"{args.agent}.tar.gz"
     )
-    archive = package(args.agent, output.resolve())
+    archive = package_agent(args.agent, output)
     print(f"AGENT_ARCHIVE={archive}")
 
 

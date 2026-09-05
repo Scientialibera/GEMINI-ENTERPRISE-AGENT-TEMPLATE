@@ -2,8 +2,25 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
+
+
+PROJECT_ENV = "GOOGLE_CLOUD_PROJECT"
+LOCATION_ENV = "GOOGLE_CLOUD_LOCATION"
+CONFIG_PARAMETER_ENV = "CONFIG_PARAMETER"
+CONFIG_PARAMETER_LOCATION_ENV = "CONFIG_PARAMETER_LOCATION"
+CONFIG_REFRESH_SECONDS_ENV = "CONFIG_REFRESH_SECONDS"
+BOOTSTRAP_MODEL_ENV = "BOOTSTRAP_MODEL"
+MODEL_LOCATION_ENV = "GEMINI_MODEL_LOCATION"
+AUTHORIZATION_ID_ENV = "GEMINI_ENTERPRISE_AUTHORIZATION_ID"
+
+DEFAULT_LOCATION = "us-central1"
+DEFAULT_PARAMETER_LOCATION = "global"
+DEFAULT_REFRESH_SECONDS = 30
+MIN_REFRESH_SECONDS = 5
+DEFAULT_BOOTSTRAP_MODEL = "gemini-3.7-flash"
+DEFAULT_MODEL_LOCATION = "global"
 
 
 def _value(name: str, default: str | None = None, *, required: bool = True) -> str | None:
@@ -14,19 +31,25 @@ def _value(name: str, default: str | None = None, *, required: bool = True) -> s
     return value
 
 
+def _required_value(name: str, default: str | None = None) -> str:
+    value = _value(name, default)
+    if value is None:
+        raise RuntimeError(f"{name} is required.")
+    return value
+
+
 def _int_value(name: str, default: int) -> int:
-    raw = _value(name, str(default))
-    assert raw is not None
+    raw = _required_value(name, str(default))
     try:
         value = int(raw)
     except ValueError as exc:
         raise RuntimeError(f"{name} must be an integer.") from exc
-    if value < 5:
-        raise RuntimeError(f"{name} must be at least 5 seconds.")
+    if value < MIN_REFRESH_SECONDS:
+        raise RuntimeError(f"{name} must be at least {MIN_REFRESH_SECONDS} seconds.")
     return value
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BootstrapSettings:
     project_id: str
     location: str
@@ -39,17 +62,19 @@ class BootstrapSettings:
 
 
 def get_bootstrap_settings(*, require_auth: bool = False) -> BootstrapSettings:
-    authorization_id = _value(
-        "GEMINI_ENTERPRISE_AUTHORIZATION_ID",
-        required=require_auth,
-    )
     return BootstrapSettings(
-        project_id=str(_value("GOOGLE_CLOUD_PROJECT")),
-        location=str(_value("GOOGLE_CLOUD_LOCATION", "us-central1")),
-        config_parameter=_value("CONFIG_PARAMETER", required=False),
-        parameter_location=str(_value("CONFIG_PARAMETER_LOCATION", "global")),
-        refresh_seconds=_int_value("CONFIG_REFRESH_SECONDS", 30),
-        bootstrap_model=str(_value("BOOTSTRAP_MODEL", "gemini-3.7-flash")),
-        model_location=str(_value("GEMINI_MODEL_LOCATION", "global")),
-        gemini_enterprise_authorization_id=authorization_id,
+        project_id=_required_value(PROJECT_ENV),
+        location=_required_value(LOCATION_ENV, DEFAULT_LOCATION),
+        config_parameter=_value(CONFIG_PARAMETER_ENV, required=False),
+        parameter_location=_required_value(
+            CONFIG_PARAMETER_LOCATION_ENV,
+            DEFAULT_PARAMETER_LOCATION,
+        ),
+        refresh_seconds=_int_value(CONFIG_REFRESH_SECONDS_ENV, DEFAULT_REFRESH_SECONDS),
+        bootstrap_model=_required_value(BOOTSTRAP_MODEL_ENV, DEFAULT_BOOTSTRAP_MODEL),
+        model_location=_required_value(MODEL_LOCATION_ENV, DEFAULT_MODEL_LOCATION),
+        gemini_enterprise_authorization_id=_value(
+            AUTHORIZATION_ID_ENV,
+            required=require_auth,
+        ),
     )

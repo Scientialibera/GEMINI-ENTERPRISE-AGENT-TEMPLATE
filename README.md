@@ -2,7 +2,7 @@
 
 Application template for independently deployable Google ADK agents that share a common Python runtime package.
 
-This branch contains agent code, shared application libraries, tests and developer-only local/dev deployment helpers. Shared Google Cloud infrastructure, IAM, Parameter Manager, Secret Manager, observability and production deployment belong to the companion Terraform branch.
+This branch contains agent code, shared application libraries, tests, deterministic packaging and developer-only local/dev deployment helpers. Shared Google Cloud infrastructure, IAM, Parameter Manager, Secret Manager, observability and production deployment belong to the companion Terraform branch.
 
 ## Repository layout
 
@@ -20,6 +20,7 @@ dev/
 ├── bootstrap.py
 ├── bootstrap_dev.py
 ├── common.py
+├── package_agent.py
 ├── run_local.py
 ├── deploy_dev.py
 └── update_dev.py
@@ -47,12 +48,16 @@ gcloud auth login
 gcloud auth application-default login
 ```
 
-Install the workspace and run tests:
+Install and validate the workspace:
 
 ```bash
 uv sync --all-packages --group dev
+uv run --group dev ruff format --check .
+uv run --group dev ruff check .
 uv run --group dev pytest
 ```
+
+`ruff` enforces Python 3.12 syntax, PEP 8 conventions, import ordering, bug-prone constructs and security-oriented static checks. Tests use strict marker handling. These checks are part of the template contract; do not rely on README guidance alone.
 
 ## Configuration model
 
@@ -65,7 +70,7 @@ The template separates configuration by runtime behavior.
 | Secrets | Secret Manager | Secret-specific rotation/deployment behavior |
 | Local developer config | `dev/.env.local` / `dev/.env.dev` | Workstation/developer sandbox only |
 
-Live configuration includes values such as model name, instruction, log level, query/result limits, MCP endpoint and runtime resource identifiers. It is JSON validated by `gemini_shared.RuntimeConfig`.
+Live configuration includes values such as model name, instruction, log level, query/result limits, MCP endpoint and runtime resource identifiers. It is validated by `gemini_shared.RuntimeConfig`.
 
 The deployed agent reads the Parameter Manager resource identified by `CONFIG_PARAMETER` and resolves `versions/latest`. `CONFIG_REFRESH_SECONDS` controls the cache TTL. If a refresh fails after at least one successful load, the agent continues with the last-known-good configuration and retries later.
 
@@ -125,10 +130,11 @@ The initial sequence is:
 2. fill dev/.env.dev deployment coordinates
 3. run bootstrap_dev.py
 4. bootstrap reuses or prepares the developer project/APIs/staging bucket
-5. apply the companion Terraform dev stack
-6. copy Terraform output runtime_config_parameter into dev/.env.dev
-7. run tests
-8. run deploy_dev.py
+5. package the selected agent
+6. apply the companion Terraform dev stack where a shared Terraform-managed runtime is required
+7. copy Terraform output runtime_config_parameter into dev/.env.dev
+8. run tests/lint
+9. run deploy_dev.py for a developer-owned Agent Engine copy
 ```
 
 Run the developer platform preflight:
@@ -149,6 +155,26 @@ The preflight is idempotent.
 | IAM | Use existing grants | Never self-grant; fix in Terraform |
 
 Project creation is disabled by default because it affects organization placement, quota and billing.
+
+## Deterministic application packaging
+
+Build the artifact consumed by Terraform with:
+
+```bash
+uv run --group dev python dev/package_agent.py --agent basic_assistant
+```
+
+or:
+
+```bash
+uv run --group dev python dev/package_agent.py --agent auth_reference_agent
+```
+
+The default output is `artifacts/<agent_name>.tar.gz`, which is gitignored. The packager normalizes archive timestamps and ownership metadata and writes a deterministic `requirements.txt`. Rebuilding unchanged source produces the same archive bytes.
+
+The archive contains only the selected agent package and `gemini_shared`; unrelated agents are not bundled into the deployment.
+
+## Developer-owned Agent Engine deployment
 
 After Terraform has created the runtime parameter and IAM, deploy:
 
@@ -197,10 +223,23 @@ when the custom provider class was moved into another module. Shared utility/run
 2. Give the ADK root agent a unique name.
 3. Keep domain prompts/tools/orchestration in that agent package.
 4. Move only genuinely shared runtime behavior into `gemini_shared`.
-5. Add an `AgentSpec` entry in `dev/common.py` if local/dev helpers should support the new agent.
+5. Add an `AgentSpec` entry in `dev/common.py` if the local/dev helpers should support the new agent.
 6. Add live settings to the Terraform-managed Parameter Manager payload.
 7. Add only process-construction values to bootstrap env.
 8. Add required runtime IAM and secrets in Terraform.
+9. Extend tests for agent-specific validation and packaging behavior.
+
+## Code standards
+
+- Python 3.12 and PEP 8 conventions.
+- Constants and repeated configuration keys are declared at module scope rather than embedded throughout logic.
+- Public/shared functions use type hints; dataclasses use immutable/slotted forms where appropriate.
+- Subprocesses use argument arrays, no shell execution and a resolved executable path.
+- Filesystem writes are limited to explicit ignored state/artifact locations or secure temporary directories.
+- External inputs and environment values fail fast with actionable errors.
+- Shared logic belongs in `gemini_shared` or `dev/common.py`; agent domain logic remains local to the agent.
+- No production control flow depends on `assert` statements.
+- No credentials, secrets or raw delegated tokens are logged.
 
 ## Repository rules
 

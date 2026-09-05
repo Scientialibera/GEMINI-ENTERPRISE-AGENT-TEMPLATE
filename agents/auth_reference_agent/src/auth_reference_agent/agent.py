@@ -1,17 +1,18 @@
-"""Reference ADK agent demonstrating Agent Identity and Gemini Enterprise delegated auth.
+"""Reference ADK agent demonstrating Agent Identity and delegated user auth.
 
-The custom delegated-auth scheme, provider class and
-CredentialManager.register_auth_provider(...) intentionally remain in this
-module. A deployed Agent Runtime previously failed with
-"No auth provider registered for custom auth scheme" when the provider class
-was imported through a separate module path. Keep this registration local to
-the deployable agent until that runtime behavior is conclusively disproven.
+The custom delegated-auth scheme, provider class and provider registration
+intentionally remain in this module. A deployed Agent Runtime previously failed
+with ``No auth provider registered for custom auth scheme`` when the provider
+class was imported through a separate module path. Keep this registration local
+to the deployable agent until that runtime behavior is conclusively disproven.
 """
+
+from __future__ import annotations
 
 import datetime
 import decimal
 import os
-from typing import Literal, Optional, override
+from typing import Literal, override
 
 from google.adk.agents import Agent
 from google.adk.agents.callback_context import CallbackContext
@@ -31,21 +32,33 @@ from pydantic import Field
 from gemini_shared import get_bootstrap_settings, get_runtime_config, get_runtime_config_status
 
 
+RUNTIME_ENGINE_ID_ENV = "GOOGLE_CLOUD_AGENT_ENGINE_ID"
+AUTHENTICATION_MODE_AGENT_IDENTITY = "Agent Identity"
+AUTHENTICATION_MODE_LOCAL_ADC = "local ADC"
+EXECUTION_ENVIRONMENT_RUNTIME = "Agent Runtime"
+EXECUTION_ENVIRONMENT_LOCAL = "local development"
+LOCAL_ENGINE_ID = "not available locally"
+
 BOOTSTRAP = get_bootstrap_settings(require_auth=True)
 PROJECT_ID = BOOTSTRAP.project_id
-GEMINI_ENTERPRISE_AUTHORIZATION = BOOTSTRAP.gemini_enterprise_authorization_id
-assert GEMINI_ENTERPRISE_AUTHORIZATION is not None
+GEMINI_ENTERPRISE_AUTHORIZATION_ID = BOOTSTRAP.gemini_enterprise_authorization_id
+if GEMINI_ENTERPRISE_AUTHORIZATION_ID is None:
+    raise RuntimeError("GEMINI_ENTERPRISE_AUTHORIZATION_ID is required for this agent.")
 
 
 class GeminiEnterpriseDelegatedAuthProviderScheme(CustomAuthScheme):
+    """Auth scheme for the token forwarded by Gemini Enterprise."""
+
     type_: Literal["GeminiEnterpriseDelegatedAuthProviderScheme"] = Field(
         default="GeminiEnterpriseDelegatedAuthProviderScheme",
         alias="type",
     )
-    name: Optional[str] = None
+    name: str | None = None
 
 
 class GeminiEnterpriseDelegatedAuthProvider(BaseAuthProvider):
+    """Read a delegated OAuth token from the ADK session state."""
+
     @property
     @override
     def supported_auth_schemes(
@@ -66,16 +79,19 @@ class GeminiEnterpriseDelegatedAuthProvider(BaseAuthProvider):
             )
         if context is None or context.session is None:
             raise ValueError(
-                "GeminiEnterprise delegated auth requires a context with a valid session."
+                "Gemini Enterprise delegated auth requires a context with a valid session."
             )
-        if auth_scheme.name and auth_scheme.name in context.session.state:
-            token = context.session.state[auth_scheme.name]
-        elif len(context.session.state) == 1:
-            token = next(iter(context.session.state.values()))
+
+        state = context.session.state
+        if auth_scheme.name and auth_scheme.name in state:
+            token = state[auth_scheme.name]
+        elif len(state) == 1:
+            token = next(iter(state.values()))
         else:
             raise ValueError(
                 "No matching Gemini Enterprise authorization found in session state."
             )
+
         return AuthCredential(
             auth_type=AuthCredentialTypes.OAUTH2,
             oauth2=OAuth2Auth(access_token=token),
@@ -94,12 +110,14 @@ def _read_delegated_token(credential: AuthCredential) -> str | None:
 
 
 def template_agent_identity_tool() -> dict[str, object]:
+    """List a bounded number of objects using Agent Identity or local ADC."""
     runtime = get_runtime_config()
     bucket_name = runtime.agent_identity_bucket_name
     if not bucket_name:
         raise RuntimeError(
             "agent_identity_bucket_name is required to use the Agent Identity storage example."
         )
+
     client = storage.Client(project=PROJECT_ID)
     object_names = [
         blob.name
@@ -108,11 +126,20 @@ def template_agent_identity_tool() -> dict[str, object]:
             max_results=runtime.storage_object_limit,
         )
     ]
-    runtime_engine_id = os.getenv("GOOGLE_CLOUD_AGENT_ENGINE_ID")
+    runtime_engine_id = os.getenv(RUNTIME_ENGINE_ID_ENV)
+    running_on_runtime = bool(runtime_engine_id)
     return {
-        "authentication_mode": "Agent Identity" if runtime_engine_id else "local ADC",
-        "execution_environment": "Agent Runtime" if runtime_engine_id else "local development",
-        "reasoning_engine_id": runtime_engine_id or "not available locally",
+        "authentication_mode": (
+            AUTHENTICATION_MODE_AGENT_IDENTITY
+            if running_on_runtime
+            else AUTHENTICATION_MODE_LOCAL_ADC
+        ),
+        "execution_environment": (
+            EXECUTION_ENVIRONMENT_RUNTIME
+            if running_on_runtime
+            else EXECUTION_ENVIRONMENT_LOCAL
+        ),
+        "reasoning_engine_id": runtime_engine_id or LOCAL_ENGINE_ID,
         "bucket": bucket_name,
         "object_count_returned": len(object_names),
         "objects": object_names,
@@ -167,6 +194,7 @@ async def _template_bigquery_query(
     client = _delegated_bigquery_client(credential)
     if not sql:
         return _discover_bigquery(client)
+
     rows = [
         {key: _json_safe(value) for key, value in dict(row).items()}
         for row in client.query(sql).result(max_results=runtime.bigquery_query_row_limit)
@@ -178,13 +206,14 @@ template_bigquery_query_tool = AuthenticatedFunctionTool(
     func=_template_bigquery_query,
     auth_config=AuthConfig(
         auth_scheme=GeminiEnterpriseDelegatedAuthProviderScheme(
-            name=GEMINI_ENTERPRISE_AUTHORIZATION,
+            name=GEMINI_ENTERPRISE_AUTHORIZATION_ID,
         )
     ),
 )
 
 
 def template_runtime_config_tool() -> dict[str, object]:
+    """Return non-sensitive metadata about the active runtime configuration."""
     return get_runtime_config_status()
 
 
