@@ -118,7 +118,9 @@ Use an organization ID for organization projects, or `developer_agent_identity_o
 
 ## Secret handling
 
-`managed_secrets` describes Secret Manager objects owned by this stack. Payloads arrive through the sensitive, ephemeral `secret_values` variable and use Terraform write-only secret arguments. Do not store payloads in `terraform.tfvars` or source control.
+`managed_secrets` describes Secret Manager objects owned by this stack. Payloads arrive through the sensitive, ephemeral `secret_values` variable and are referenced only by Secret Manager's write-only argument. Do not store payloads in `terraform.tfvars` or source control.
+
+Terraform restricts ephemeral values to ephemeral/write-only contexts. Do not reuse `secret_values` in outputs, ordinary locals, validation/check expressions or non-write-only resource arguments.
 
 Use `external_secret_env` for secrets owned elsewhere.
 
@@ -194,11 +196,13 @@ The root files in this branch are a compact workload template. Split them into e
 
 - Run `terraform fmt -check -recursive` and `terraform validate` before every plan.
 - Pin provider versions and upgrade intentionally.
-- Use typed variables, validation blocks and top-level `check` blocks for cross-variable invariants.
+- Use typed variables and variable validation for single-variable constraints.
+- Use blocking lifecycle preconditions for cross-variable deployment invariants; do not use warning-only `check` blocks for conditions that must prevent apply.
 - Keep repeated derived values in `locals`; do not duplicate resource-name or configuration formulas.
 - Use `for_each` for repeatable IAM/config resources rather than copied blocks.
 - Prefer resource-level IAM for sensitive data access.
 - Do not use `Owner`/`Editor` as convenience roles in the template.
+- Keep ephemeral secret values exclusively in supported write-only/ephemeral contexts.
 - Do not put secret payloads in Git, tfvars, plan output or normal state.
 - Do not bootstrap the permissions of the Terraform identity from the workload stack it is already executing.
 - Do not let a live-config-only change accidentally modify Agent Engine deployment fields.
