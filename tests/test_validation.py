@@ -215,3 +215,32 @@ def test_model_callback(monkeypatch):
     request = SimpleNamespace(model="old")
     module._apply_runtime_model(None, request)
     assert request.model == "test-model"
+
+
+@pytest.mark.parametrize("agent", ["basic_assistant", "auth_reference_agent"])
+def test_every_tool_is_described_to_the_model(agent):
+    """ADK builds the tool declaration from the function itself, so a tool
+    without a docstring reaches the model with no description."""
+    from google.adk.tools.function_tool import FunctionTool
+
+    module = importlib.import_module(f"{agent}.agent")
+    undescribed = []
+    for tool in module.root_agent.tools:
+        declaration = (
+            tool._get_declaration()
+            if hasattr(tool, "_get_declaration")
+            else FunctionTool(tool)._get_declaration()
+        )
+        description = getattr(declaration, "description", None)
+        if not (description and description.strip()):
+            undescribed.append(getattr(declaration, "name", str(tool)))
+    assert not undescribed, f"tools advertised to the model without a description: {undescribed}"
+
+
+@pytest.mark.parametrize("agent", ["basic_assistant", "auth_reference_agent"])
+def test_instruction_resolves_from_runtime_configuration(agent):
+    """Prompt text belongs in runtime configuration, not in the agent package."""
+    module = importlib.import_module(f"{agent}.agent")
+    assert callable(module.root_agent.instruction), (
+        f"{agent} must resolve its instruction from runtime configuration"
+    )

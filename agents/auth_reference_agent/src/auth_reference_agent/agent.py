@@ -188,6 +188,15 @@ async def _template_bigquery_query(
     credential: AuthCredential,
     sql: str | None = None,
 ) -> dict[str, object]:
+    """Query BigQuery as the signed-in user, using their delegated credentials.
+
+    Call without `sql` first to discover the datasets, tables and columns that
+    the user is authorized to see, then call again with a SQL statement built
+    from that schema. Results are truncated to the configured row limit.
+
+    Args:
+        sql: BigQuery Standard SQL to run. Omit to return the schema instead.
+    """
     runtime = get_runtime_config()
     client = _delegated_bigquery_client(credential)
     if not sql:

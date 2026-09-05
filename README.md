@@ -24,13 +24,18 @@ dev/
 ├── package_agent.py
 ├── run_local.py
 ├── deploy_dev.py
-└── update_dev.py
+├── update_dev.py
+└── register_agent.py
 
 tests/
 pyproject.toml
 ```
 
-Each folder under `agents/` is an independently deployable ADK application. Shared runtime behavior belongs in `packages/gemini_shared`. Agent-specific prompts, tools and orchestration stay inside the agent package.
+Each folder under `agents/` is an independently deployable ADK application. Shared runtime behavior belongs in `packages/gemini_shared`. Agent-specific tools and orchestration stay inside the agent package.
+
+Tool schemas are code. ADK derives the function declaration sent to the model from each tool's signature, type hints and docstring, so a tool without a docstring is advertised to the model with no description.
+
+Instruction text is not code. Both agents resolve `instruction` through a callable that reads the live runtime configuration per request, so the prompt is authored in the Terraform `runtime_config` desired state, delivered through Parameter Manager, and supplied locally by `AGENT_INSTRUCTION`. No agent package contains a prompt literal.
 
 ## Before first use
 
@@ -139,7 +144,10 @@ The initial sequence is:
 8. copy Terraform output runtime_config_parameter into dev/.env.dev
 9. run tests/lint
 10. run deploy_dev.py for a developer-owned Agent Engine copy
+11. run register_agent.py to publish that runtime into a Gemini Enterprise app
 ```
+
+Deploying an Agent Engine does not make it visible in Gemini Enterprise. Step 11 is what puts it on the Agents page and enables the delegated consent flow.
 
 Run the developer platform preflight:
 
@@ -274,7 +282,7 @@ when the custom provider class was moved into another module. Shared utility/run
 
 1. Create `agents/<agent_name>/` with its own Python package.
 2. Give the ADK root agent a unique name.
-3. Keep domain prompts/tools/orchestration in that agent package.
+3. Keep domain tools and orchestration in that agent package, and give every tool a docstring. Resolve the instruction from runtime configuration rather than hardcoding prompt text.
 4. Move only genuinely shared runtime behavior into `gemini_shared`.
 5. Add an `AgentSpec` entry in `dev/common.py` if the local/dev helpers should support the new agent.
 6. Add live settings to the Terraform-managed Parameter Manager payload.

@@ -12,6 +12,12 @@ BOOTSTRAP = get_bootstrap_settings()
 
 
 def runtime_config_tool() -> dict[str, object]:
+    """Return non-sensitive metadata about the active runtime configuration.
+
+    The docstring and type hints are the tool contract: ADK derives the
+    function declaration sent to the model from them, so a tool without a
+    docstring is advertised with no description.
+    """
     return get_runtime_config_status()
 
 

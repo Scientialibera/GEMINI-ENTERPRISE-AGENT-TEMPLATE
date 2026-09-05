@@ -187,6 +187,18 @@ uv run --group dev python dev/update_dev.py --agent basic_assistant
 
 Normal live config changes are made in Parameter Manager/Terraform and do not require this update helper.
 
+## Register in Gemini Enterprise
+
+A deployed Agent Engine is not visible in Gemini Enterprise until it is registered:
+
+```bash
+uv run --group dev python dev/register_agent.py --agent basic_assistant
+```
+
+Requires `GEMINI_ENTERPRISE_APP_ID`, the app/engine id rather than the web app client id shown in the console URL. Re-running patches the existing agent instead of creating a duplicate.
+
+Agents with delegated tools also need a Gemini Enterprise authorization. The helper reuses `GEMINI_ENTERPRISE_AUTHORIZATION_ID` when it already exists, and creates it when `GEMINI_ENTERPRISE_OAUTH_CLIENT_ID` and `GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET` are supplied for that run. One authorization serves one agent.
+
 ## Guardrails
 
 - Remote helpers refuse to run unless `ENVIRONMENT=dev`.
