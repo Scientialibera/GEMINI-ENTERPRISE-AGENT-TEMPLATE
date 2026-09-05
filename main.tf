@@ -1,0 +1,212 @@
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
+resource "google_project_service" "required" {
+  for_each = var.required_services
+
+  project            = var.project_id
+  service            = each.value
+  disable_on_destroy = false
+}
+
+locals {
+  published_runtime_config = merge(
+    var.runtime_config,
+    { config_revision = var.config_revision }
+  )
+  runtime_config_hash       = substr(sha256(jsonencode(local.published_runtime_config)), 0, 12)
+  runtime_config_version_id = "cfg-${var.config_revision}-${local.runtime_config_hash}"
+
+  developer_agent_identity_principal_set = var.developer_agent_identity_organization_id != null ? (
+    "principalSet://agents.global.org-${var.developer_agent_identity_organization_id}.system.id.goog/attribute.platformContainer/aiplatform/projects/${data.google_project.current.number}"
+    ) : (
+    "principalSet://agents.global.project-${data.google_project.current.number}.system.id.goog/attribute.platformContainer/aiplatform/projects/${data.google_project.current.number}"
+  )
+}
+
+check "developer_agent_identity_trust_domain" {
+  assert {
+    condition = length(var.developer_deployer_members) == 0 || (
+      (var.developer_agent_identity_organization_id != null) != var.developer_agent_identity_orgless
+    )
+    error_message = "When developer_deployer_members is non-empty, set developer_agent_identity_organization_id for an organization project or developer_agent_identity_orgless=true for an orgless project. Set exactly one."
+  }
+}
+
+check "managed_secret_payloads_supplied" {
+  assert {
+    condition     = length(setsubtract(toset(keys(var.managed_secrets)), toset(keys(var.secret_values)))) == 0
+    error_message = "Every managed_secrets key must have a matching secret_values payload at apply time."
+  }
+}
+
+resource "google_parameter_manager_parameter" "runtime_config" {
+  project      = var.project_id
+  parameter_id = var.config_parameter_id
+  format       = "JSON"
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_parameter_manager_parameter_version" "runtime_config" {
+  parameter            = google_parameter_manager_parameter.runtime_config.id
+  parameter_version_id = local.runtime_config_version_id
+  parameter_data       = jsonencode(local.published_runtime_config)
+
+  deletion_policy = "ABANDON"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "google_secret_manager_secret" "managed" {
+  for_each = var.managed_secrets
+
+  project   = var.project_id
+  secret_id = each.value.secret_id
+  labels    = each.value.labels
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_secret_manager_secret_version" "managed" {
+  for_each = var.managed_secrets
+
+  secret                 = google_secret_manager_secret.managed[each.key].id
+  secret_data_wo         = var.secret_values[each.key]
+  secret_data_wo_version = each.value.value_version
+  deletion_policy        = "DISABLE"
+}
+
+locals {
+  managed_secret_env = {
+    for env_name, config in var.managed_secrets : env_name => {
+      secret  = config.secret_id
+      version = "latest"
+    }
+  }
+
+  runtime_secret_env = merge(local.managed_secret_env, var.external_secret_env)
+
+  agent_bootstrap_env = merge(
+    var.bootstrap_env,
+    {
+      CONFIG_PARAMETER                            = google_parameter_manager_parameter.runtime_config.id
+      CONFIG_PARAMETER_LOCATION                   = "global"
+      CONFIG_REFRESH_SECONDS                      = tostring(var.config_refresh_seconds)
+      GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY = "true"
+      OTEL_SEMCONV_STABILITY_OPT_IN               = "gen_ai_latest_experimental"
+    }
+  )
+}
+
+check "bootstrap_and_secret_env_names_do_not_overlap" {
+  assert {
+    condition = length(setintersection(
+      toset(keys(local.agent_bootstrap_env)),
+      toset(keys(local.runtime_secret_env))
+    )) == 0
+    error_message = "An environment variable name cannot be defined in both bootstrap_env and secret configuration."
+  }
+}
+
+resource "google_project_iam_member" "developer_agent_deployer" {
+  for_each = var.developer_deployer_members
+
+  project = var.project_id
+  role    = var.developer_deployer_role
+  member  = each.value
+}
+
+resource "google_project_iam_member" "developer_parameter_accessor" {
+  for_each = var.developer_parameter_access ? var.developer_deployer_members : toset([])
+
+  project = var.project_id
+  role    = "roles/parametermanager.parameterAccessor"
+  member  = each.value
+}
+
+resource "google_storage_bucket_iam_member" "developer_staging_bucket_writer" {
+  for_each = var.developer_staging_bucket_name == null ? toset([]) : var.developer_deployer_members
+
+  bucket = var.developer_staging_bucket_name
+  role   = "roles/storage.objectAdmin"
+  member = each.value
+}
+
+resource "google_secret_manager_secret_iam_member" "agent_platform_accessor" {
+  for_each = local.runtime_secret_env
+
+  project   = var.project_id
+  secret_id = each.value.secret
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-aiplatform.iam.gserviceaccount.com"
+
+  depends_on = [google_secret_manager_secret.managed]
+}
+
+module "agent_engine" {
+  source = "./modules/agent_engine"
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+  }
+
+  project_id            = var.project_id
+  region                = var.region
+  display_name          = var.agent_display_name
+  description           = var.agent_description
+  source_archive_path   = var.source_archive_path
+  entrypoint_module     = var.entrypoint_module
+  entrypoint_object     = var.entrypoint_object
+  python_version        = var.python_version
+  requirements_file     = var.requirements_file
+  runtime_env           = local.agent_bootstrap_env
+  secret_env            = local.runtime_secret_env
+  invoker_members       = var.invoker_members
+  invoker_role          = var.invoker_role
+  agent_project_roles   = var.agent_project_roles
+  min_instances         = var.min_instances
+  max_instances         = var.max_instances
+  container_concurrency = var.container_concurrency
+  resource_limits       = var.resource_limits
+
+  depends_on = [
+    google_project_service.required,
+    google_parameter_manager_parameter_version.runtime_config,
+    google_secret_manager_secret_version.managed,
+    google_secret_manager_secret_iam_member.agent_platform_accessor,
+  ]
+}
+
+resource "google_project_iam_member" "developer_agent_identity_common" {
+  for_each = length(var.developer_deployer_members) == 0 ? toset([]) : var.developer_agent_identity_project_roles
+
+  project = var.project_id
+  role    = each.value
+  member  = local.developer_agent_identity_principal_set
+
+  # Agent Identity trust domains are initialized by Agent Identity usage.
+  # The Terraform-managed runtime is created first so the common dev principal
+  # set can be bound reliably on a new project.
+  depends_on = [module.agent_engine]
+}
+
+module "observability" {
+  source = "./modules/observability"
+
+  project_id            = var.project_id
+  region                = var.region
+  reasoning_engine_id   = module.agent_engine.reasoning_engine_id
+  log_retention_days    = var.log_retention_days
+  notification_channels = var.notification_channels
+
+  depends_on = [google_project_service.required]
+}
