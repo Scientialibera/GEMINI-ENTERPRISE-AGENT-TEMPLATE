@@ -98,6 +98,20 @@ Parameter values are immutable. Each approved config publish creates a new versi
 
 Rollback is a new reviewed Git/Terraform change that republishes the prior desired values under a new version. Do not make production rollback depend on manually repointing to an unmanaged old version.
 
+Retaining those versions is deliberate, and it means `terraform destroy` cannot delete the parameter while abandoned versions still exist:
+
+```text
+Error: Resource '...parameters/<id>' has nested resources.
+```
+
+Tearing an environment down completely therefore requires deleting the abandoned versions first:
+
+```bash
+gcloud parametermanager parameters versions list <parameter-id> --location=global
+gcloud parametermanager parameters versions delete <version-id> \
+  --parameter=<parameter-id> --location=global
+```
+
 ## Developer deployment IAM
 
 The companion agent repository can create developer-owned Agent Engine instances. Those helpers use developer ADC and never grant IAM to themselves.
