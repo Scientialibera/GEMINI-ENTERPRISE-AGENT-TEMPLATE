@@ -26,7 +26,6 @@ DEFAULT_PARAMETER_LOCATION = "global"
 
 REQUIRED_DEV_SERVICES = (
     "aiplatform.googleapis.com",
-    "bigquery.googleapis.com",
     "parametermanager.googleapis.com",
     "serviceusage.googleapis.com",
     "storage.googleapis.com",
@@ -135,7 +134,11 @@ def ensure_project(project_id: str) -> None:
     )
 
 
-def ensure_required_services(project_id: str) -> None:
+def ensure_required_services(
+    project_id: str,
+    additional_services: Sequence[str] = (),
+) -> None:
+    services = tuple(dict.fromkeys((*REQUIRED_DEV_SERVICES, *additional_services)))
     result = _run(
         (
             "services",
@@ -146,7 +149,7 @@ def ensure_required_services(project_id: str) -> None:
         )
     )
     enabled = {line.strip() for line in result.stdout.splitlines() if line.strip()}
-    missing = tuple(service for service in REQUIRED_DEV_SERVICES if service not in enabled)
+    missing = tuple(service for service in services if service not in enabled)
     if not missing:
         return
 
@@ -233,10 +236,16 @@ def ensure_runtime_parameter(project_id: str) -> None:
         )
 
 
-def prepare_dev_platform(project_id: str, location: str, staging_bucket: str) -> None:
+def prepare_dev_platform(
+    project_id: str,
+    location: str,
+    staging_bucket: str,
+    *,
+    additional_services: Sequence[str] = (),
+) -> None:
     require_gcloud_auth()
     ensure_project(project_id)
-    ensure_required_services(project_id)
+    ensure_required_services(project_id, additional_services)
     ensure_staging_bucket(project_id, location, staging_bucket)
 
 
