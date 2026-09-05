@@ -16,7 +16,9 @@ async def _run(agent_name: str, message: str) -> None:
         message=message,
     ):
         received = True
-        print(event)
+        for part in event.get("content", {}).get("parts", []):
+            if part.get("text") and not part.get("thought"):
+                print(part["text"])
     if not received:
         raise RuntimeError("The local ADK run returned no events.")
 

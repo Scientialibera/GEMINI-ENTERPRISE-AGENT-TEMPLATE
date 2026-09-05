@@ -9,7 +9,6 @@ from pathlib import Path
 
 from common import ROOT, get_agent_spec
 
-
 DEFAULT_ARTIFACT_DIR = ROOT / "artifacts"
 REQUIREMENTS_FILENAME = "requirements.txt"
 GZIP_HEADER_FILENAME = ""
@@ -40,6 +39,10 @@ def _normalized_tarinfo(path: Path, arcname: str) -> tarfile.TarInfo:
 
 
 def _add_path(archive: tarfile.TarFile, source: Path, arcname: str) -> None:
+    if source.is_symlink():
+        raise ValueError(f"Package sources must not contain symbolic links: {source}")
+    if source.name == "__pycache__" or source.suffix in {".pyc", ".pyo"}:
+        return
     if source.is_dir():
         archive.addfile(_normalized_tarinfo(source, arcname))
         for child in sorted(source.iterdir(), key=lambda item: item.name):
@@ -64,20 +67,22 @@ def package_agent(agent_name: str, output: Path) -> Path:
             newline="\n",
         )
 
-        with output.open("wb") as raw:
-            with gzip.GzipFile(
+        with (
+            output.open("wb") as raw,
+            gzip.GzipFile(
                 filename=GZIP_HEADER_FILENAME,
                 mode="wb",
                 fileobj=raw,
                 mtime=GZIP_MTIME,
-            ) as compressed:
-                with tarfile.open(fileobj=compressed, mode="w") as archive:
-                    _add_path(archive, requirements_path, REQUIREMENTS_FILENAME)
-                    for package_path in spec.extra_packages:
-                        source = ROOT / package_path
-                        if not source.exists():
-                            raise FileNotFoundError(source)
-                        _add_path(archive, source, source.name)
+            ) as compressed,
+            tarfile.open(fileobj=compressed, mode="w") as archive,
+        ):
+            _add_path(archive, requirements_path, REQUIREMENTS_FILENAME)
+            for package_path in spec.extra_packages:
+                source = ROOT / package_path
+                if not source.exists():
+                    raise FileNotFoundError(source)
+                _add_path(archive, source, source.name)
 
     return output
 
@@ -91,11 +96,7 @@ def main() -> None:
     args = parser.parse_args()
 
     os.chdir(ROOT)
-    output = (
-        Path(args.output)
-        if args.output
-        else DEFAULT_ARTIFACT_DIR / f"{args.agent}.tar.gz"
-    )
+    output = Path(args.output) if args.output else DEFAULT_ARTIFACT_DIR / f"{args.agent}.tar.gz"
     archive = package_agent(args.agent, output)
     print(f"AGENT_ARCHIVE={archive}")
 

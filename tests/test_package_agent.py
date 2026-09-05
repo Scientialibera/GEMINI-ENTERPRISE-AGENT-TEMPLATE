@@ -5,7 +5,6 @@ import sys
 import tarfile
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 DEV_DIR = ROOT / "dev"
 PACKAGE_MODULE_PATH = DEV_DIR / "package_agent.py"

@@ -3,8 +3,6 @@ from __future__ import annotations
 import argparse
 import os
 
-from vertexai import types
-
 from bootstrap import ensure_dev_prerequisites
 from common import (
     ROOT,
@@ -15,8 +13,10 @@ from common import (
     load_environment,
     require_dev_environment,
     save_state,
+    staged_extra_packages,
     validate_agent_remote_environment,
 )
+from vertexai import types
 
 
 def main() -> None:
@@ -34,14 +34,16 @@ def main() -> None:
     ensure_dev_prerequisites(project_id, location, staging_bucket)
 
     client = build_client(project_id, location, staging_bucket)
-    remote = client.agent_engines.create(
-        agent=build_app(spec),
-        config={
-            "display_name": f"{spec.display_name} [dev]",
-            **deployment_config(spec, staging_bucket),
-            "identity_type": types.IdentityType.AGENT_IDENTITY,
-        },
-    )
+    app = build_app(spec)
+    with staged_extra_packages(spec) as extra_packages:
+        remote = client.agent_engines.create(
+            agent=app,
+            config={
+                "display_name": f"{spec.display_name} [dev]",
+                **deployment_config(spec, staging_bucket, extra_packages),
+                "identity_type": types.IdentityType.AGENT_IDENTITY,
+            },
+        )
     resource_name = remote.api_resource.name
     save_state(args.agent, resource_name)
     print(f"DEPLOYED_DEV_RESOURCE={resource_name}")

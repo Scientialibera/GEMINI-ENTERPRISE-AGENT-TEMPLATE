@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 
-
 PREPARE_FIXTURE_ENV = "DEV_PREPARE_BIGQUERY_FIXTURE"
 CREATE_FIXTURE_ENV = "DEV_CREATE_BIGQUERY_FIXTURE_IF_MISSING"
 DATASET_ID_ENV = "DEV_BIGQUERY_DATASET_ID"
@@ -203,9 +202,7 @@ def prepare_bigquery_fixture(
     if first_row is None:
         errors = client.insert_rows_json(table, list(FIXTURE_ROWS))
         if errors:
-            raise RuntimeError(
-                f"Failed to seed BigQuery fixture table '{table_ref}': {errors}"
-            )
+            raise RuntimeError(f"Failed to seed BigQuery fixture table '{table_ref}': {errors}")
         seeded_rows = len(FIXTURE_ROWS)
 
     return BigQueryFixtureResult(

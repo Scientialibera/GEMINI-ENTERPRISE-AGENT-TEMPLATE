@@ -1,13 +1,12 @@
 """Minimal independently deployable ADK agent using the shared runtime contract."""
 
+from gemini_shared import get_bootstrap_settings, get_runtime_config, get_runtime_config_status
 from google.adk.agents import Agent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.models import Gemini
 from google.adk.models.llm_request import LlmRequest
-
-from gemini_shared import get_bootstrap_settings, get_runtime_config, get_runtime_config_status
-
+from vertexai.agent_engines import AdkApp
 
 BOOTSTRAP = get_bootstrap_settings()
 
@@ -40,3 +39,8 @@ root_agent = Agent(
     before_model_callback=_apply_runtime_model,
     tools=[runtime_config_tool],
 )
+
+# Agent Runtime binds the class methods declared on the deployment (create_session,
+# stream_query, ...). A bare Agent exposes none of them, so the served object must
+# be the AdkApp wrapper. root_agent stays exported for local `adk` execution.
+app = AdkApp(agent=root_agent, enable_tracing=True)

@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 DEV_DIR = ROOT / "dev"
 MODULE_PATH = DEV_DIR / "bigquery_fixture.py"

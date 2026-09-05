@@ -7,13 +7,13 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from google.adk.integrations.parameter_manager.parameter_client import ParameterManagerClient
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .bootstrap import DEFAULT_PARAMETER_LOCATION as GLOBAL_PARAMETER_LOCATION
 from .bootstrap import get_bootstrap_settings
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -52,6 +52,21 @@ class RuntimeConfig(BaseModel):
     bigquery_query_row_limit: int = Field(default=100, ge=1, le=10_000)
     mcp_server_url: str | None = None
 
+    @field_validator("model", "instruction", "config_revision", "environment")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        if not value.strip() or "REPLACE" in value or value.startswith("<"):
+            raise ValueError("Required runtime settings must contain real, non-empty values.")
+        return value
+
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, value: str) -> str:
+        value = value.upper()
+        if value not in logging.getLevelNamesMapping():
+            raise ValueError("log_level must be a Python logging level name.")
+        return value
+
 
 def _required_local_value(name: str) -> str:
     value = os.getenv(name, "").strip()
@@ -62,16 +77,12 @@ def _required_local_value(name: str) -> str:
 
 def _local_payload() -> dict[str, object]:
     return {
-        "config_revision": os.getenv(CONFIG_REVISION_ENV, LOCAL_REVISION).strip()
-        or LOCAL_REVISION,
+        "config_revision": os.getenv(CONFIG_REVISION_ENV, LOCAL_REVISION).strip() or LOCAL_REVISION,
         "model": _required_local_value(GEMINI_MODEL_ENV),
         "instruction": _required_local_value(AGENT_INSTRUCTION_ENV),
-        "environment": os.getenv(ENVIRONMENT_ENV, LOCAL_ENVIRONMENT).strip()
-        or LOCAL_ENVIRONMENT,
-        "log_level": os.getenv(LOG_LEVEL_ENV, DEFAULT_LOG_LEVEL).strip()
-        or DEFAULT_LOG_LEVEL,
-        "agent_identity_bucket_name": os.getenv(AGENT_IDENTITY_BUCKET_ENV, "").strip()
-        or None,
+        "environment": os.getenv(ENVIRONMENT_ENV, LOCAL_ENVIRONMENT).strip() or LOCAL_ENVIRONMENT,
+        "log_level": os.getenv(LOG_LEVEL_ENV, DEFAULT_LOG_LEVEL).strip() or DEFAULT_LOG_LEVEL,
+        "agent_identity_bucket_name": os.getenv(AGENT_IDENTITY_BUCKET_ENV, "").strip() or None,
         "storage_object_limit": os.getenv(
             STORAGE_OBJECT_LIMIT_ENV,
             str(DEFAULT_STORAGE_OBJECT_LIMIT),
@@ -112,15 +123,25 @@ class RuntimeConfigStore:
     @staticmethod
     def _load_remote(resource_name: str) -> RuntimeConfig:
         bootstrap = get_bootstrap_settings()
-        payload = ParameterManagerClient(
-            location=bootstrap.parameter_location
-        ).get_parameter(resource_name)
+        # ParameterManagerClient builds a regional endpoint whenever location is
+        # truthy, so passing "global" yields the nonexistent host
+        # parametermanager.global.rep.googleapis.com. The global endpoint is the
+        # client default and must be selected by omitting the location.
+        location = bootstrap.parameter_location
+        client = (
+            ParameterManagerClient()
+            if location == GLOBAL_PARAMETER_LOCATION
+            else ParameterManagerClient(location=location)
+        )
+        payload = client.get_parameter(resource_name)
         return RuntimeConfig.model_validate(json.loads(payload))
 
     def get(self, *, force_refresh: bool = False) -> RuntimeConfig:
         resource_name = self._version_name()
         if resource_name is None:
-            return RuntimeConfig.model_validate(_local_payload())
+            config = RuntimeConfig.model_validate(_local_payload())
+            logging.getLogger().setLevel(config.log_level)
+            return config
 
         bootstrap = get_bootstrap_settings()
         now = time.monotonic()
@@ -136,7 +157,7 @@ class RuntimeConfigStore:
             except Exception:
                 if self._config is None:
                     raise
-                LOGGER.exception(
+                LOGGER.warning(
                     "Parameter Manager refresh failed; using last-known-good configuration."
                 )
                 self._expires_at = now + min(
@@ -146,17 +167,16 @@ class RuntimeConfigStore:
                 return self._config
 
             self._config = loaded
+            logging.getLogger().setLevel(loaded.log_level)
             self._resource_name = resource_name
-            self._loaded_at = datetime.now(timezone.utc)
+            self._loaded_at = datetime.now(UTC)
             self._expires_at = now + bootstrap.refresh_seconds
             return loaded
 
     def status(self) -> dict[str, object]:
         config = self.get()
         source = (
-            "local environment"
-            if self._resource_name is None
-            else "Google Cloud Parameter Manager"
+            "local environment" if self._resource_name is None else "Google Cloud Parameter Manager"
         )
         return {
             "source": source,

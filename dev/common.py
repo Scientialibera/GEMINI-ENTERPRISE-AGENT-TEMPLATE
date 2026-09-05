@@ -3,6 +3,10 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import shutil
+import tempfile
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,7 +14,6 @@ from typing import Any
 import vertexai
 from dotenv import load_dotenv
 from vertexai.agent_engines import AdkApp
-
 
 ROOT = Path(__file__).resolve().parents[1]
 DEV_DIR = ROOT / "dev"
@@ -128,8 +131,7 @@ def require_dev_environment(*, require_parameter: bool = True) -> tuple[str, str
     missing = [name for name in required if is_missing_or_placeholder(name)]
     if missing:
         raise SystemExit(
-            "Missing required dev settings: "
-            f"{', '.join(missing)}. Fill them in dev/.env.dev."
+            f"Missing required dev settings: {', '.join(missing)}. Fill them in dev/.env.dev."
         )
 
     project_id = os.environ[PROJECT_ENV].strip()
@@ -142,23 +144,16 @@ def require_dev_environment(*, require_parameter: bool = True) -> tuple[str, str
 
 def validate_agent_remote_environment(spec: AgentSpec) -> None:
     missing = [
-        name
-        for name in spec.required_remote_bootstrap_env
-        if is_missing_or_placeholder(name)
+        name for name in spec.required_remote_bootstrap_env if is_missing_or_placeholder(name)
     ]
     if missing:
         raise SystemExit(
-            f"{spec.package_name} requires additional bootstrap settings: "
-            f"{', '.join(missing)}."
+            f"{spec.package_name} requires additional bootstrap settings: {', '.join(missing)}."
         )
 
 
 def runtime_env() -> dict[str, str]:
-    return {
-        key: os.environ[key]
-        for key in RUNTIME_ENV_KEYS
-        if not is_missing_or_placeholder(key)
-    }
+    return {key: os.environ[key] for key in RUNTIME_ENV_KEYS if not is_missing_or_placeholder(key)}
 
 
 def load_root_agent(spec: AgentSpec) -> Any:
@@ -179,10 +174,44 @@ def build_client(project_id: str, location: str, staging_bucket: str) -> vertexa
     )
 
 
-def deployment_config(spec: AgentSpec, staging_bucket: str) -> dict[str, object]:
+@contextmanager
+def staged_extra_packages(spec: AgentSpec) -> Iterator[list[str]]:
+    """Yield flattened extra_package paths for upload.
+
+    The SDK tars each extra_package with its repository-relative path intact and
+    the runtime extracts that tar at the container root. A src-layout package at
+    agents/<agent>/src/<pkg> would therefore land at the same nested path and not
+    be importable as <pkg>. Copying each package into a flat staging directory
+    makes the uploaded layout match what the runtime imports, and mirrors the
+    archive layout produced by package_agent.py.
+    """
+    with tempfile.TemporaryDirectory(prefix="agent-deploy-") as temp_dir:
+        staged_root = Path(temp_dir)
+        staged: list[str] = []
+        for package_path in spec.extra_packages:
+            source = ROOT / package_path
+            if not source.exists():
+                raise FileNotFoundError(source)
+            destination = staged_root / source.name
+            shutil.copytree(source, destination, ignore=shutil.ignore_patterns("__pycache__"))
+            staged.append(str(destination))
+        previous_cwd = Path.cwd()
+        os.chdir(staged_root)
+        try:
+            # Relative names keep the uploaded tar entries flat.
+            yield [Path(path).name for path in staged]
+        finally:
+            os.chdir(previous_cwd)
+
+
+def deployment_config(
+    spec: AgentSpec,
+    staging_bucket: str,
+    extra_packages: Sequence[str],
+) -> dict[str, object]:
     return {
         "requirements": list(spec.requirements),
-        "extra_packages": list(spec.extra_packages),
+        "extra_packages": list(extra_packages),
         "staging_bucket": staging_bucket,
         "env_vars": runtime_env(),
     }

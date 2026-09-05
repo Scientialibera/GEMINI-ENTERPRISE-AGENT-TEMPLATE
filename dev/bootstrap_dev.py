@@ -10,21 +10,18 @@ from bigquery_fixture import (
 from bootstrap import ensure_runtime_parameter, prepare_dev_platform
 from common import ROOT, load_environment, require_dev_environment
 
-
-PLACEHOLDER_TOKEN = "REPLACE"
+PLACEHOLDER_MARKER = "REPLACE"
 
 
 def _configured_value(name: str) -> bool:
     value = os.getenv(name, "").strip()
-    return bool(value and PLACEHOLDER_TOKEN not in value and not value.startswith("<"))
+    return bool(value and PLACEHOLDER_MARKER not in value and not value.startswith("<"))
 
 
 def main() -> None:
     os.chdir(ROOT)
     load_environment(".env.dev")
-    project_id, location, staging_bucket = require_dev_environment(
-        require_parameter=False
-    )
+    project_id, location, staging_bucket = require_dev_environment(require_parameter=False)
 
     fixture_enabled = bigquery_fixture_enabled()
     additional_services = (BIGQUERY_API_SERVICE,) if fixture_enabled else ()

@@ -5,12 +5,11 @@ import shutil
 import subprocess
 from collections.abc import Sequence
 
-
 GCLOUD = shutil.which("gcloud")
 
 TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 FALSE_VALUES = frozenset({"0", "false", "no", "off"})
-PLACEHOLDER_TOKEN = "REPLACE"
+PLACEHOLDER_MARKER = "REPLACE"
 
 CREATE_PROJECT_ENV = "DEV_CREATE_PROJECT_IF_MISSING"
 BILLING_ACCOUNT_ENV = "DEV_BILLING_ACCOUNT_ID"
@@ -57,8 +56,7 @@ def _run(args: Sequence[str], *, check: bool = True) -> subprocess.CompletedProc
     if check and result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise SystemExit(
-            f"Command failed: {' '.join(command)}\n"
-            f"{detail or 'No error details returned.'}"
+            f"Command failed: {' '.join(command)}\n{detail or 'No error details returned.'}"
         )
     return result
 
@@ -69,7 +67,7 @@ def _exists(args: Sequence[str]) -> bool:
 
 def _real_env_value(name: str) -> str:
     value = os.getenv(name, "").strip()
-    if not value or PLACEHOLDER_TOKEN in value or value.startswith("<"):
+    if not value or PLACEHOLDER_MARKER in value or value.startswith("<"):
         raise SystemExit(f"{name} must contain a real value.")
     return value
 
@@ -111,9 +109,7 @@ def ensure_project(project_id: str) -> None:
     folder_id = os.getenv(PROJECT_FOLDER_ENV, "").strip()
     organization_id = os.getenv(PROJECT_ORGANIZATION_ENV, "").strip()
     if folder_id and organization_id:
-        raise SystemExit(
-            f"Set at most one of {PROJECT_FOLDER_ENV} or {PROJECT_ORGANIZATION_ENV}."
-        )
+        raise SystemExit(f"Set at most one of {PROJECT_FOLDER_ENV} or {PROJECT_ORGANIZATION_ENV}.")
 
     create_args = ["projects", "create", project_id, "--quiet"]
     if folder_id:
@@ -204,36 +200,29 @@ def ensure_staging_bucket(project_id: str, location: str, bucket_uri: str) -> No
 
 
 def ensure_runtime_parameter(project_id: str) -> None:
+    """Verify the runtime parameter is readable by the identity the agent will use.
+
+    This must resolve through Application Default Credentials rather than the
+    gcloud CLI. `gcloud` authenticates with its own OAuth client, which can be
+    denied while ADC is authorized for the same user, so a CLI-based check
+    reports a perfectly valid parameter as missing and blocks deployment.
+    """
+    del project_id  # CONFIG_PARAMETER and ADC determine the project.
     parameter = _real_env_value(CONFIG_PARAMETER_ENV)
-    location = (
-        os.getenv(CONFIG_PARAMETER_LOCATION_ENV, DEFAULT_PARAMETER_LOCATION).strip()
-        or DEFAULT_PARAMETER_LOCATION
-    )
 
-    if parameter.startswith("projects/"):
-        command = (
-            "parametermanager",
-            "parameters",
-            "describe",
-            parameter,
-            "--format=value(name)",
-        )
-    else:
-        command = (
-            "parametermanager",
-            "parameters",
-            "describe",
-            parameter,
-            f"--project={project_id}",
-            f"--location={location}",
-            "--format=value(name)",
-        )
+    # Reuse the shared loader so the preflight validates exactly what the
+    # deployed agent resolves, including the versions/latest suffix and the
+    # runtime config schema.
+    try:
+        from gemini_shared import get_runtime_config
 
-    if not _exists(command):
+        get_runtime_config(force_refresh=True)
+    except Exception as exc:
         raise SystemExit(
-            f"Parameter Manager resource '{parameter}' was not found or is not readable. "
-            "Apply the companion Terraform stack or correct CONFIG_PARAMETER."
-        )
+            f"Parameter Manager resource '{parameter}' was not readable with Application "
+            f"Default Credentials: {exc}. Apply the companion Terraform stack, correct "
+            "CONFIG_PARAMETER, or re-run `gcloud auth application-default login`."
+        ) from exc
 
 
 def prepare_dev_platform(

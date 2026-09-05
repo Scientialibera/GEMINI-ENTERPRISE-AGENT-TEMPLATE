@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-
 PROJECT_ENV = "GOOGLE_CLOUD_PROJECT"
 LOCATION_ENV = "GOOGLE_CLOUD_LOCATION"
 CONFIG_PARAMETER_ENV = "CONFIG_PARAMETER"
@@ -26,6 +25,10 @@ DEFAULT_MODEL_LOCATION = "global"
 def _value(name: str, default: str | None = None, *, required: bool = True) -> str | None:
     raw = os.getenv(name)
     value = raw.strip() if raw is not None else (default.strip() if default else None)
+    if value and ("REPLACE" in value or value.startswith("<")):
+        if not required:
+            return None
+        raise RuntimeError(f"{name} must contain a real value, not a placeholder.")
     if required and not value:
         raise RuntimeError(f"{name} is required.")
     return value
@@ -61,9 +64,42 @@ class BootstrapSettings:
     gemini_enterprise_authorization_id: str | None
 
 
+def _resolve_project_id() -> str:
+    """Resolve the project id from the environment, else from ADC.
+
+    Agent Runtime injects GOOGLE_CLOUD_PROJECT and refuses it as a caller-set
+    deployment variable, so it cannot be supplied by Terraform. Falling back to
+    Application Default Credentials keeps import from failing when the platform
+    has not populated the variable, which otherwise crashes the process before
+    logging is initialised and yields no diagnosable runtime output.
+    """
+    # A placeholder must fail loudly rather than fall through to ADC, so it is
+    # validated with required=True. Only a genuinely absent value falls back.
+    if os.getenv(PROJECT_ENV):
+        return _required_value(PROJECT_ENV)
+
+    try:
+        import google.auth
+
+        _, adc_project = google.auth.default()
+    except Exception as exc:
+        raise RuntimeError(
+            f"{PROJECT_ENV} is not set and Application Default Credentials could not be "
+            f"resolved to determine the project: {exc}"
+        ) from exc
+
+    if not adc_project:
+        raise RuntimeError(
+            f"{PROJECT_ENV} is not set and Application Default Credentials did not supply a "
+            "project. Set GOOGLE_CLOUD_PROJECT locally, or verify the Agent Runtime "
+            "environment."
+        )
+    return adc_project
+
+
 def get_bootstrap_settings(*, require_auth: bool = False) -> BootstrapSettings:
     return BootstrapSettings(
-        project_id=_required_value(PROJECT_ENV),
+        project_id=_resolve_project_id(),
         location=_required_value(LOCATION_ENV, DEFAULT_LOCATION),
         config_parameter=_value(CONFIG_PARAMETER_ENV, required=False),
         parameter_location=_required_value(

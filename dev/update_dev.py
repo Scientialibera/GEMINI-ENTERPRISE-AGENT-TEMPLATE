@@ -13,6 +13,7 @@ from common import (
     load_environment,
     load_resource_name,
     require_dev_environment,
+    staged_extra_packages,
     validate_agent_remote_environment,
 )
 
@@ -33,11 +34,13 @@ def main() -> None:
     resource_name = load_resource_name(args.agent)
 
     client = build_client(project_id, location, staging_bucket)
-    updated = client.agent_engines.update(
-        name=resource_name,
-        agent=build_app(spec),
-        config=deployment_config(spec, staging_bucket),
-    )
+    app = build_app(spec)
+    with staged_extra_packages(spec) as extra_packages:
+        updated = client.agent_engines.update(
+            name=resource_name,
+            agent=app,
+            config=deployment_config(spec, staging_bucket, extra_packages),
+        )
     print(f"UPDATED_DEV_RESOURCE={updated.api_resource.name}")
 
 

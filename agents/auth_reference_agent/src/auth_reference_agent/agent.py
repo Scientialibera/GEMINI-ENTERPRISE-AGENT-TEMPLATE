@@ -14,6 +14,7 @@ import decimal
 import os
 from typing import Literal, override
 
+from gemini_shared import get_bootstrap_settings, get_runtime_config, get_runtime_config_status
 from google.adk.agents import Agent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.readonly_context import ReadonlyContext
@@ -28,9 +29,7 @@ from google.adk.tools.authenticated_function_tool import AuthenticatedFunctionTo
 from google.cloud import bigquery, storage
 from google.oauth2.credentials import Credentials as OAuth2Credentials
 from pydantic import Field
-
-from gemini_shared import get_bootstrap_settings, get_runtime_config, get_runtime_config_status
-
+from vertexai.agent_engines import AdkApp
 
 RUNTIME_ENGINE_ID_ENV = "GOOGLE_CLOUD_AGENT_ENGINE_ID"
 AUTHENTICATION_MODE_AGENT_IDENTITY = "Agent Identity"
@@ -88,9 +87,7 @@ class GeminiEnterpriseDelegatedAuthProvider(BaseAuthProvider):
         elif len(state) == 1:
             token = next(iter(state.values()))
         else:
-            raise ValueError(
-                "No matching Gemini Enterprise authorization found in session state."
-            )
+            raise ValueError("No matching Gemini Enterprise authorization found in session state.")
 
         return AuthCredential(
             auth_type=AuthCredentialTypes.OAUTH2,
@@ -135,9 +132,7 @@ def template_agent_identity_tool() -> dict[str, object]:
             else AUTHENTICATION_MODE_LOCAL_ADC
         ),
         "execution_environment": (
-            EXECUTION_ENVIRONMENT_RUNTIME
-            if running_on_runtime
-            else EXECUTION_ENVIRONMENT_LOCAL
+            EXECUTION_ENVIRONMENT_RUNTIME if running_on_runtime else EXECUTION_ENVIRONMENT_LOCAL
         ),
         "reasoning_engine_id": runtime_engine_id or LOCAL_ENGINE_ID,
         "bucket": bucket_name,
@@ -167,8 +162,7 @@ def _discover_bigquery(client: bigquery.Client) -> dict[str, object]:
                     "table": f"{PROJECT_ID}.{dataset.dataset_id}.{table_ref.table_id}",
                     "row_count": table.num_rows,
                     "columns": [
-                        {"name": field.name, "type": field.field_type}
-                        for field in table.schema
+                        {"name": field.name, "type": field.field_type} for field in table.schema
                     ],
                 }
             )
@@ -177,6 +171,10 @@ def _discover_bigquery(client: bigquery.Client) -> dict[str, object]:
 
 
 def _json_safe(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
     if isinstance(value, (datetime.date, datetime.datetime, datetime.time)):
         return value.isoformat()
     if isinstance(value, decimal.Decimal):
@@ -247,3 +245,8 @@ root_agent = Agent(
         template_bigquery_query_tool,
     ],
 )
+
+# Agent Runtime binds the class methods declared on the deployment (create_session,
+# stream_query, ...). A bare Agent exposes none of them, so the served object must
+# be the AdkApp wrapper. root_agent stays exported for local `adk` execution.
+app = AdkApp(agent=root_agent, enable_tracing=True)
