@@ -225,6 +225,24 @@ uv run --group dev python dev/update_dev.py --agent basic_assistant
 
 Do not run `update_dev.py` for normal Parameter Manager changes. The already-running agent reads those changes automatically after the refresh TTL.
 
+## Gemini Enterprise registration
+
+Deployment and registration are separate. `deploy_dev.py` creates the Agent Engine; the agent only appears in a Gemini Enterprise app after it is registered:
+
+```bash
+uv run --group dev python dev/register_agent.py --agent basic_assistant
+```
+
+Set `GEMINI_ENTERPRISE_APP_ID` in `dev/.env.dev` to the app (engine) id. This is not the web app client id shown in the console URL.
+
+Registration is idempotent. An agent with the same display name is patched to point at the current Reasoning Engine rather than duplicated.
+
+Each agent's registration metadata — description, invocation description and starter prompts — lives in its `AgentSpec` in `dev/common.py`, so the registered listing stays in the repository rather than being maintained by hand in the console.
+
+Agents with delegated tools additionally need a Gemini Enterprise authorization, which triggers the user consent flow and forwards the resulting token to the agent. `register_agent.py` reuses `GEMINI_ENTERPRISE_AUTHORIZATION_ID` when it already exists, and creates it when `GEMINI_ENTERPRISE_OAUTH_CLIENT_ID` and `GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET` are supplied for that run. The secret is read from the environment and is never written to the repository.
+
+One authorization serves one agent. Registering a second agent against an authorization already bound elsewhere fails with `is used by another agent`; create a separate authorization id for each agent that needs delegated access.
+
 ## Identity model
 
 Developer helpers authenticate with the developer's ADC identity. They do not create or modify IAM.

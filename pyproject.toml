@@ -18,6 +18,7 @@ dev = [
   "google-cloud-bigquery==3.43.0",
   "python-dotenv>=1.0.1,<2.0.0",
   "pytest>=8.3.0,<9.0.0",
+  "requests>=2.32.0,<3.0.0",
   "ruff>=0.12.0,<1.0.0",
 ]
 
@@ -35,3 +36,6 @@ select = ["E", "F", "I", "UP", "B", "S", "SIM", "RUF"]
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]
 "dev/bootstrap.py" = ["S603"]
+# S105 flags the environment variable name that holds the OAuth client secret
+# and the public Google token endpoint. Neither is a credential value.
+"dev/register_agent.py" = ["S105"]

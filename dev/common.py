@@ -71,6 +71,10 @@ class AgentSpec:
     extra_packages: tuple[str, ...]
     requirements: tuple[str, ...]
     required_remote_bootstrap_env: tuple[str, ...] = ()
+    # Gemini Enterprise registration metadata, used by register_agent.py.
+    registration_description: str = ""
+    invocation_description: str = ""
+    starter_prompts: tuple[str, ...] = ()
 
 
 AGENTS: dict[str, AgentSpec] = {
@@ -83,6 +87,19 @@ AGENTS: dict[str, AgentSpec] = {
             "packages/gemini_shared/src/gemini_shared",
         ),
         requirements=COMMON_REQUIREMENTS,
+        registration_description=(
+            "Minimal pro-code ADK agent. Reads its model and instruction from Parameter "
+            "Manager at request time, so live configuration changes take effect without "
+            "redeploying the runtime."
+        ),
+        invocation_description=(
+            "Use this agent to check the active runtime configuration of the pro-code "
+            "template, such as the published config revision or the model in use."
+        ),
+        starter_prompts=(
+            "Report the active config revision and model.",
+            "Which Parameter Manager resource is this agent reading?",
+        ),
     ),
     "auth_reference_agent": AgentSpec(
         package_name="auth-reference-agent",
@@ -94,6 +111,21 @@ AGENTS: dict[str, AgentSpec] = {
         ),
         requirements=COMMON_REQUIREMENTS + AUTH_REFERENCE_REQUIREMENTS,
         required_remote_bootstrap_env=(AUTHORIZATION_ID_ENV,),
+        registration_description=(
+            "Reference pro-code ADK agent for the two supported authentication patterns. "
+            "Agent Identity is used for agent-scoped access to Cloud Storage, while a "
+            "Gemini Enterprise delegated user token is used to query BigQuery under the "
+            "signed-in user's own permissions."
+        ),
+        invocation_description=(
+            "Use this agent to demonstrate agent authentication: report which identity the "
+            "runtime is using, or query BigQuery as the signed-in user."
+        ),
+        starter_prompts=(
+            "Which identity is this agent running as?",
+            "List the BigQuery datasets and tables I can access.",
+            "Show total revenue by region from the sample orders table.",
+        ),
     ),
 }
 
