@@ -1,7 +1,0 @@
-google-cloud-aiplatform[agent_engines,adk]==1.164.0
-google-adk[agent-identity,extensions]==2.7.1
-google-cloud-parametermanager==0.4.1
-cloudpickle==3.1.2
-pydantic==2.13.4
-google-cloud-storage==3.13.1
-google-cloud-bigquery==3.43.0

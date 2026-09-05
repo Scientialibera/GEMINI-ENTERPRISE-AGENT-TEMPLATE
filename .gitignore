@@ -12,19 +12,20 @@ dist/
 *.egg-info/
 *.log
 
-# Local environment and editor state
 .env
 .env.*
-!.env.example
+!dev/.env.local.example
+!dev/.env.dev.example
+
 .idea/
 .vscode/
 *.swp
 *.tmp
 
-# Generated deployment state
-deployment_result.json
+dev/.env.local
+dev/.env.dev
+dev/.state/
 
-# OAuth client credentials and delegated-token artifacts
 client_secret*.json
 *oauth*client*.json
 .oauth/
@@ -32,10 +33,6 @@ client_secret*.json
 *.key
 *.p12
 *.pfx
-
-# Local project identifiers and test account
-config/config.py
-
-# Real runtime payload (contains your project's bucket name); copy
-# runtime_config.example.json to runtime_config.json and edit locally.
-runtime_config.json
+credentials.json
+application_default_credentials.json
+deployment_result*.json
