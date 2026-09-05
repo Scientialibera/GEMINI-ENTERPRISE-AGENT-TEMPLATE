@@ -17,6 +17,7 @@ packages/
 dev/
 ├── .env.local.example
 ├── .env.dev.example
+├── bigquery_fixture.py
 ├── bootstrap.py
 ├── bootstrap_dev.py
 ├── common.py
@@ -115,6 +116,8 @@ uv run --group dev python dev/run_local.py --agent auth_reference_agent
 
 Local execution intentionally omits `CONFIG_PARAMETER`; the shared runtime reads live values directly from the local process environment.
 
+The delegated BigQuery tool itself requires a delegated Gemini Enterprise user token, so a direct local ADK invocation cannot fully reproduce that authorization path. The optional BigQuery fixture described below is created from the developer workstation with ADC and provides a real dataset/table for debugging and for the final deployed Gemini Enterprise end-to-end test.
+
 ## First remote developer deployment
 
 Copy the remote example:
@@ -130,11 +133,12 @@ The initial sequence is:
 2. fill dev/.env.dev deployment coordinates
 3. run bootstrap_dev.py
 4. bootstrap reuses or prepares the developer project/APIs/staging bucket
-5. package the selected agent
-6. apply the companion Terraform dev stack where a shared Terraform-managed runtime is required
-7. copy Terraform output runtime_config_parameter into dev/.env.dev
-8. run tests/lint
-9. run deploy_dev.py for a developer-owned Agent Engine copy
+5. bootstrap optionally creates/reuses the BigQuery test fixture
+6. package the selected agent
+7. apply the companion Terraform dev stack where a shared Terraform-managed runtime is required
+8. copy Terraform output runtime_config_parameter into dev/.env.dev
+9. run tests/lint
+10. run deploy_dev.py for a developer-owned Agent Engine copy
 ```
 
 Run the developer platform preflight:
@@ -151,10 +155,39 @@ The preflight is idempotent.
 | Billing | Leave unchanged | Required only when the helper creates a project |
 | Required APIs | Reuse enabled APIs | Enable only missing APIs when allowed |
 | Dev staging bucket | Reuse | Create when `DEV_CREATE_STAGING_BUCKET_IF_MISSING=true` |
+| Optional BigQuery test fixture | Reuse and validate | Create/seed when enabled; otherwise skip/fail according to fixture flags |
 | Parameter Manager runtime config | Verify when configured | Stop at deploy time and require Terraform |
-| IAM | Use existing grants | Never self-grant; fix in Terraform |
+| IAM | Use existing grants | Never self-grant; fix through the appropriate platform/IAM process |
 
 Project creation is disabled by default because it affects organization placement, quota and billing.
+
+## Optional BigQuery developer fixture
+
+`auth_reference_agent` includes a delegated BigQuery tool. A clean project may not contain any queryable data, which makes it difficult to verify the complete delegated-auth flow. The developer bootstrap therefore includes a small optional BigQuery fixture.
+
+Default behavior:
+
+```text
+DEV_PREPARE_BIGQUERY_FIXTURE=true
+DEV_CREATE_BIGQUERY_FIXTURE_IF_MISSING=true
+DEV_BIGQUERY_DATASET_ID=gemini_agent_template_dev
+DEV_BIGQUERY_TABLE_ID=sample_orders
+DEV_BIGQUERY_LOCATION=
+```
+
+On a fresh sandbox, `bootstrap_dev.py` enables the BigQuery API, creates the dataset/table when missing and inserts five deterministic sample order rows only when the table is empty. Existing non-empty fixture tables are not modified.
+
+The fixture is not an application dependency and is not production infrastructure. If the project already contains BigQuery data that the signed-in Gemini Enterprise test user can query, set:
+
+```text
+DEV_PREPARE_BIGQUERY_FIXTURE=false
+```
+
+The agent does not hardcode the fixture dataset or table. Its BigQuery discovery flow lists the datasets/tables visible to the delegated user, so an existing real development dataset can be used instead.
+
+The fixture helper does not grant BigQuery IAM. The identity running `bootstrap_dev.py` must already be allowed to create/read the fixture resources when creation is enabled. To exercise the deployed delegated tool, the signed-in Gemini Enterprise user must independently have permission to create BigQuery query jobs and read the target dataset/table. If those permissions are missing, fix IAM outside the application helper rather than adding self-grant logic.
+
+Terraform intentionally does not create or seed this sample dataset. The fixture belongs to developer test support in this branch.
 
 ## Deterministic application packaging
 
@@ -199,6 +232,8 @@ Developer helpers authenticate with the developer's ADC identity. They do not cr
 The companion Terraform stack should grant the developer/group the required Agent Engine deployment access, Parameter Manager read access when needed and object access to the developer staging bucket.
 
 A developer-created Agent Engine receives a separate Agent Identity. The developer's permissions do not transfer to that runtime identity. The Terraform branch therefore supports pre-authorizing the project Agent Identity principal set for common non-sensitive runtime roles such as Parameter Manager access. Sensitive data access should remain specific to the individual agent.
+
+Delegated BigQuery access is different: the BigQuery tool executes with the signed-in Gemini Enterprise user's forwarded OAuth token. BigQuery permissions for that user remain user-scoped and are not inherited from the Agent Identity.
 
 ## Authentication reference agent
 
@@ -250,3 +285,4 @@ when the custom provider class was moved into another module. Shared utility/run
 - No duplicated shared configuration between `.env`, Parameter Manager and Terraform.
 - No QA/prod deployment through developer helper scripts.
 - No accidental extraction of the custom delegated-auth provider into shared code.
+- Developer test fixtures must remain optional, bounded and separate from production/shared infrastructure.
