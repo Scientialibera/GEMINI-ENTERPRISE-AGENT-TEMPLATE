@@ -22,6 +22,8 @@ Terraform manages:
 
 A separate foundation/bootstrap layer should manage project creation, billing association, Terraform remote state, GitHub OIDC, Workload Identity Federation and the Terraform execution service account.
 
+Terraform does not manage Gemini Enterprise agent registration or the Discovery Engine authorization used for delegated user consent. Both are application-release concerns tied to a specific Reasoning Engine, the Google provider exposes no resource for either, and the authorization requires an OAuth client secret that must not enter Terraform state. The agent repository owns them through `dev/register_agent.py`.
+
 ## Before first apply
 
 Confirm:
