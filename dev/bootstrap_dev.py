@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import os
 
-from bigquery_fixture import prepare_bigquery_fixture
+from bigquery_fixture import (
+    BIGQUERY_API_SERVICE,
+    bigquery_fixture_enabled,
+    prepare_bigquery_fixture,
+)
 from bootstrap import ensure_runtime_parameter, prepare_dev_platform
 from common import ROOT, load_environment, require_dev_environment
 
@@ -21,9 +25,17 @@ def main() -> None:
     project_id, location, staging_bucket = require_dev_environment(
         require_parameter=False
     )
-    prepare_dev_platform(project_id, location, staging_bucket)
 
-    fixture = prepare_bigquery_fixture(project_id, location)
+    fixture_enabled = bigquery_fixture_enabled()
+    additional_services = (BIGQUERY_API_SERVICE,) if fixture_enabled else ()
+    prepare_dev_platform(
+        project_id,
+        location,
+        staging_bucket,
+        additional_services=additional_services,
+    )
+
+    fixture = prepare_bigquery_fixture(project_id, location) if fixture_enabled else None
     if fixture is not None:
         print(f"BIGQUERY_FIXTURE_TABLE={fixture.table_id}")
         print(f"BIGQUERY_FIXTURE_DATASET_CREATED={str(fixture.created_dataset).lower()}")
