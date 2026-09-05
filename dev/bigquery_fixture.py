@@ -20,6 +20,7 @@ CREATE_FIXTURE_ENV = "DEV_CREATE_BIGQUERY_FIXTURE_IF_MISSING"
 DATASET_ID_ENV = "DEV_BIGQUERY_DATASET_ID"
 TABLE_ID_ENV = "DEV_BIGQUERY_TABLE_ID"
 LOCATION_ENV = "DEV_BIGQUERY_LOCATION"
+BIGQUERY_API_SERVICE = "bigquery.googleapis.com"
 
 DEFAULT_DATASET_ID = "gemini_agent_template_dev"
 DEFAULT_TABLE_ID = "sample_orders"
@@ -109,6 +110,11 @@ def _env_bool(name: str, default: bool) -> bool:
     raise SystemExit(f"{name} must be true or false.")
 
 
+def bigquery_fixture_enabled() -> bool:
+    """Return whether developer bootstrap should prepare the BigQuery fixture."""
+    return _env_bool(PREPARE_FIXTURE_ENV, True)
+
+
 def _resource_id(name: str, default: str) -> str:
     value = os.getenv(name, default).strip() or default
     if not RESOURCE_ID_PATTERN.fullmatch(value):
@@ -146,7 +152,7 @@ def prepare_bigquery_fixture(
     of scope; the caller and delegated Gemini Enterprise test user must already have
     the required BigQuery permissions.
     """
-    if not _env_bool(PREPARE_FIXTURE_ENV, True):
+    if not bigquery_fixture_enabled():
         return None
 
     allow_create = _env_bool(CREATE_FIXTURE_ENV, True)
