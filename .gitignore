@@ -25,6 +25,7 @@ dist/
 dev/.env.local
 dev/.env.dev
 dev/.state/
+artifacts/
 
 client_secret*.json
 *oauth*client*.json
