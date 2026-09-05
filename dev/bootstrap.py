@@ -48,7 +48,7 @@ def _run(args: Sequence[str], *, check: bool = True) -> subprocess.CompletedProc
     if GCLOUD is None:
         raise SystemExit("Google Cloud CLI is required and must be available on PATH.")
     command = [GCLOUD, *args]
-    result = subprocess.run(  # noqa: S603 - fixed executable resolved with shutil.which; shell is disabled.
+    result = subprocess.run(
         command,
         check=False,
         capture_output=True,
