@@ -26,6 +26,7 @@ DEFAULT_PARAMETER_LOCATION = "global"
 
 REQUIRED_DEV_SERVICES = (
     "aiplatform.googleapis.com",
+    "bigquery.googleapis.com",
     "parametermanager.googleapis.com",
     "serviceusage.googleapis.com",
     "storage.googleapis.com",
