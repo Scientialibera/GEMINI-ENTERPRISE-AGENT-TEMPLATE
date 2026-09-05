@@ -1,0 +1,41 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+*.log
+
+# Local environment and editor state
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+*.swp
+*.tmp
+
+# Generated deployment state
+deployment_result.json
+
+# OAuth client credentials and delegated-token artifacts
+client_secret*.json
+*oauth*client*.json
+.oauth/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local project identifiers and test account
+config/config.py
+
+# Real runtime payload (contains your project's bucket name); copy
+# runtime_config.example.json to runtime_config.json and edit locally.
+runtime_config.json
