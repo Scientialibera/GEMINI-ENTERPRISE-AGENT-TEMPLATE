@@ -18,36 +18,59 @@ locals {
   runtime_config_hash       = substr(sha256(jsonencode(local.published_runtime_config)), 0, 12)
   runtime_config_version_id = "cfg-${var.config_revision}-${local.runtime_config_hash}"
 
-  agent_resource_key       = substr(sha1(join("/", [var.region, var.agent_display_name])), 0, 12)
-  effective_log_bucket_id  = coalesce(var.log_bucket_id, "agent-engine-${local.agent_resource_key}")
+  agent_resource_key      = substr(sha1(join("/", [var.region, var.agent_display_name])), 0, 12)
+  effective_log_bucket_id = coalesce(var.log_bucket_id, "agent-engine-${local.agent_resource_key}")
 
   developer_agent_identity_principal_set = var.developer_agent_identity_organization_id != null ? (
     "principalSet://agents.global.org-${var.developer_agent_identity_organization_id}.system.id.goog/attribute.platformContainer/aiplatform/projects/${data.google_project.current.number}"
     ) : (
     "principalSet://agents.global.project-${data.google_project.current.number}.system.id.goog/attribute.platformContainer/aiplatform/projects/${data.google_project.current.number}"
   )
-}
 
-check "developer_agent_identity_trust_domain" {
-  assert {
-    condition = length(var.developer_deployer_members) == 0 || (
-      (var.developer_agent_identity_organization_id != null) != var.developer_agent_identity_orgless
-    )
-    error_message = "When developer_deployer_members is non-empty, set developer_agent_identity_organization_id for an organization project or developer_agent_identity_orgless=true for an orgless project. Set exactly one."
+  bootstrap_env_names = setunion(
+    toset(keys(var.bootstrap_env)),
+    toset([
+      "CONFIG_PARAMETER",
+      "CONFIG_PARAMETER_LOCATION",
+      "CONFIG_REFRESH_SECONDS",
+      "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY",
+      "OTEL_SEMCONV_STABILITY_OPT_IN",
+    ])
+  )
+
+  managed_secret_env = {
+    for env_name, config in var.managed_secrets : env_name => {
+      secret  = config.secret_id
+      version = "latest"
+    }
   }
+
+  runtime_secret_env = merge(local.managed_secret_env, var.external_secret_env)
 }
 
-check "managed_secret_payloads_supplied" {
-  assert {
-    condition     = length(setsubtract(toset(keys(var.managed_secrets)), toset(keys(var.secret_values)))) == 0
-    error_message = "Every managed_secrets key must have a matching secret_values payload at apply time."
-  }
-}
+resource "terraform_data" "configuration_validation" {
+  input = "agent-template-configuration"
 
-check "valid_scaling_range" {
-  assert {
-    condition     = var.min_instances <= var.max_instances
-    error_message = "min_instances cannot exceed max_instances."
+  lifecycle {
+    precondition {
+      condition = length(var.developer_deployer_members) == 0 || (
+        (var.developer_agent_identity_organization_id != null) != var.developer_agent_identity_orgless
+      )
+      error_message = "When developer_deployer_members is non-empty, set developer_agent_identity_organization_id for an organization project or developer_agent_identity_orgless=true for an orgless project. Set exactly one."
+    }
+
+    precondition {
+      condition     = var.min_instances <= var.max_instances
+      error_message = "min_instances cannot exceed max_instances."
+    }
+
+    precondition {
+      condition = length(setintersection(
+        local.bootstrap_env_names,
+        toset(keys(local.runtime_secret_env))
+      )) == 0
+      error_message = "An environment variable name cannot be defined in both bootstrap_env/platform bootstrap variables and secret configuration."
+    }
   }
 }
 
@@ -56,7 +79,10 @@ resource "google_parameter_manager_parameter" "runtime_config" {
   parameter_id = var.config_parameter_id
   format       = "JSON"
 
-  depends_on = [google_project_service.required]
+  depends_on = [
+    google_project_service.required,
+    terraform_data.configuration_validation,
+  ]
 }
 
 resource "google_parameter_manager_parameter_version" "runtime_config" {
@@ -82,7 +108,10 @@ resource "google_secret_manager_secret" "managed" {
     auto {}
   }
 
-  depends_on = [google_project_service.required]
+  depends_on = [
+    google_project_service.required,
+    terraform_data.configuration_validation,
+  ]
 }
 
 resource "google_secret_manager_secret_version" "managed" {
@@ -95,15 +124,6 @@ resource "google_secret_manager_secret_version" "managed" {
 }
 
 locals {
-  managed_secret_env = {
-    for env_name, config in var.managed_secrets : env_name => {
-      secret  = config.secret_id
-      version = "latest"
-    }
-  }
-
-  runtime_secret_env = merge(local.managed_secret_env, var.external_secret_env)
-
   agent_bootstrap_env = merge(
     var.bootstrap_env,
     {
@@ -114,16 +134,6 @@ locals {
       OTEL_SEMCONV_STABILITY_OPT_IN               = "gen_ai_latest_experimental"
     }
   )
-}
-
-check "bootstrap_and_secret_env_names_do_not_overlap" {
-  assert {
-    condition = length(setintersection(
-      toset(keys(local.agent_bootstrap_env)),
-      toset(keys(local.runtime_secret_env))
-    )) == 0
-    error_message = "An environment variable name cannot be defined in both bootstrap_env and secret configuration."
-  }
 }
 
 resource "google_project_iam_member" "developer_agent_deployer" {
@@ -189,6 +199,7 @@ module "agent_engine" {
   resource_limits       = var.resource_limits
 
   depends_on = [
+    terraform_data.configuration_validation,
     google_project_service.required,
     google_parameter_manager_parameter_version.runtime_config,
     google_secret_manager_secret_version.managed,
