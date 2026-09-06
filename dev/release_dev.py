@@ -44,7 +44,7 @@ def main() -> None:
     spec = get_agent_spec(args.agent)
 
     print("STEP=preflight")
-    ensure_dev_prerequisites(project_id, location, staging_bucket)
+    ensure_dev_prerequisites(project_id, location, staging_bucket, spec)
 
     print("STEP=package")
     archive = package_agent(args.agent, ARTIFACTS_DIR / f"{spec.package_name}.tar.gz")

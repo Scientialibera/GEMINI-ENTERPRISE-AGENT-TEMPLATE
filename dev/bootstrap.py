@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -200,20 +201,54 @@ def ensure_staging_bucket(project_id: str, location: str, bucket_uri: str) -> No
     )
 
 
-def _create_runtime_parameter(project_id: str, parameter: str, location: str) -> None:
-    """Create the agent's runtime parameter with a starter payload.
+def _parameter_client(location: str):
+    """Parameter Manager client bound to the right endpoint.
+
+    Must go through ADC, not the gcloud CLI: gcloud uses its own OAuth client,
+    which is denied write access while ADC is authorized for the same user.
+    """
+    from google.cloud import parametermanager_v1
+
+    return parametermanager_v1.ParameterManagerClient(
+        client_options={"api_endpoint": _parameter_endpoint(location)}
+    )
+
+
+def _add_parameter_version(project_id, parameter, location, version_id, payload) -> None:
+    from google.cloud import parametermanager_v1
+
+    _parameter_client(location).create_parameter_version(
+        parent=f"projects/{project_id}/locations/{location}/parameters/{parameter}",
+        parameter_version_id=version_id,
+        parameter_version=parametermanager_v1.ParameterVersion(
+            payload=parametermanager_v1.ParameterVersionPayload(data=payload.encode("utf-8"))
+        ),
+    )
+
+
+def _publish_instruction(project_id, parameter, location, current, prompt: str) -> None:
+    """Publish a new version carrying an edited prompt, keeping other settings."""
+    config = current.model_dump()
+    config["instruction"] = prompt
+    revision = f"prompt-{hashlib.sha256(prompt.encode('utf-8')).hexdigest()[:12]}"
+    config["config_revision"] = revision
+    _add_parameter_version(project_id, parameter, location, revision, json.dumps(config))
+    print(f"INSTRUCTION_PUBLISHED={revision}")
+
+
+def _create_runtime_parameter(project_id: str, parameter: str, location: str, prompt: str) -> None:
+    """Create the agent's runtime parameter, seeded with the agent's prompt.
 
     Runtime configuration is per-agent developer state, not shared
     infrastructure, so deploying a new agent should not require a manual step.
-    The payload is deliberately minimal: publishing real configuration later
-    replaces it with a new version.
     """
     payload = json.dumps(
         {
             "config_revision": "bootstrap-v1",
             "model": os.getenv("BOOTSTRAP_MODEL", "").strip() or "gemini-3.7-flash",
             "instruction": (
-                os.getenv("AGENT_INSTRUCTION", "").strip()
+                prompt
+                or os.getenv("AGENT_INSTRUCTION", "").strip()
                 or "You are a helpful enterprise assistant. Answer concisely."
             ),
             "environment": os.getenv("ENVIRONMENT", "dev").strip() or "dev",
@@ -221,26 +256,14 @@ def _create_runtime_parameter(project_id: str, parameter: str, location: str) ->
         }
     )
 
-    # Must go through ADC, not the gcloud CLI: gcloud uses its own OAuth client,
-    # which is denied write access while ADC is authorized for the same user.
     from google.cloud import parametermanager_v1
 
-    client = parametermanager_v1.ParameterManagerClient(
-        client_options={"api_endpoint": _parameter_endpoint(location)}
-    )
-    parent = f"projects/{project_id}/locations/{location}"
-    client.create_parameter(
-        parent=parent,
+    _parameter_client(location).create_parameter(
+        parent=f"projects/{project_id}/locations/{location}",
         parameter_id=parameter,
         parameter=parametermanager_v1.Parameter(format_=parametermanager_v1.ParameterFormat.JSON),
     )
-    client.create_parameter_version(
-        parent=f"{parent}/parameters/{parameter}",
-        parameter_version_id="bootstrap-v1",
-        parameter_version=parametermanager_v1.ParameterVersion(
-            payload=parametermanager_v1.ParameterVersionPayload(data=payload.encode("utf-8"))
-        ),
-    )
+    _add_parameter_version(project_id, parameter, location, "bootstrap-v1", payload)
     print(f"RUNTIME_PARAMETER_CREATED={parameter}")
 
 
@@ -251,7 +274,7 @@ def _parameter_endpoint(location: str) -> str:
     return f"parametermanager.{location}.rep.googleapis.com"
 
 
-def ensure_runtime_parameter(project_id: str) -> None:
+def ensure_runtime_parameter(project_id: str, spec=None) -> None:
     """Ensure the agent's runtime parameter exists and is readable.
 
     The readability check must resolve through ADC, not the gcloud CLI: gcloud
@@ -260,12 +283,12 @@ def ensure_runtime_parameter(project_id: str) -> None:
     """
     parameter = _real_env_value(CONFIG_PARAMETER_ENV)
     location = os.getenv(CONFIG_PARAMETER_LOCATION_ENV, "").strip() or DEFAULT_PARAMETER_LOCATION
+    prompt = spec.read_prompt() if spec is not None else ""
 
     from gemini_shared import get_runtime_config
 
     try:
-        get_runtime_config(force_refresh=True)
-        return
+        current = get_runtime_config(force_refresh=True)
     except Exception as exc:
         if "RESOURCE_NOT_FOUND" not in str(exc) and "does not exist" not in str(exc):
             raise SystemExit(
@@ -273,13 +296,18 @@ def ensure_runtime_parameter(project_id: str) -> None:
                 f"Default Credentials: {exc}. Correct {CONFIG_PARAMETER_ENV}, or re-run "
                 "`gcloud auth application-default login`."
             ) from exc
+        _create_runtime_parameter(project_id, parameter, location, prompt)
+        try:
+            get_runtime_config(force_refresh=True)
+        except Exception as exc:
+            raise SystemExit(f"Created '{parameter}' but it is still not readable: {exc}.") from exc
+        return
 
-    _create_runtime_parameter(project_id, parameter, location)
-
-    try:
-        get_runtime_config(force_refresh=True)
-    except Exception as exc:
-        raise SystemExit(f"Created '{parameter}' but it is still not readable: {exc}.") from exc
+    # The prompt is the agent's behaviour, so an edit to prompt.md must reach
+    # the runtime. Publishing a version only when it differs keeps repeated
+    # deployments from accumulating identical ones.
+    if prompt and prompt != current.instruction:
+        _publish_instruction(project_id, parameter, location, current, prompt)
 
 
 def prepare_dev_platform(
@@ -295,6 +323,8 @@ def prepare_dev_platform(
     ensure_staging_bucket(project_id, location, staging_bucket)
 
 
-def ensure_dev_prerequisites(project_id: str, location: str, staging_bucket: str) -> None:
+def ensure_dev_prerequisites(
+    project_id: str, location: str, staging_bucket: str, spec=None
+) -> None:
     prepare_dev_platform(project_id, location, staging_bucket)
-    ensure_runtime_parameter(project_id)
+    ensure_runtime_parameter(project_id, spec)

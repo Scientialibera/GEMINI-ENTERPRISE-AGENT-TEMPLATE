@@ -197,6 +197,21 @@ class AgentSpec:
         """Per-agent prefix for environment variables, derived from the package."""
         return self.package_name.upper().replace("-", "_")
 
+    @property
+    def prompt_path(self) -> Path:
+        """File holding this agent's instruction.
+
+        The prompt is the agent's behaviour, so it is reviewed in the
+        repository like code. It is delivered through Parameter Manager rather
+        than packaged, which is what lets it change without a redeployment.
+        """
+        return ROOT / "agents" / self.module.split(".")[0] / "prompt.md"
+
+    def read_prompt(self) -> str:
+        """Return the agent's instruction, or empty when it has no prompt file."""
+        path = self.prompt_path
+        return path.read_text(encoding="utf-8").strip() if path.exists() else ""
+
 
 AGENTS: dict[str, AgentSpec] = {
     "basic_assistant": AgentSpec(

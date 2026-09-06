@@ -372,3 +372,16 @@ def test_oauth_scopes_cover_only_delegated_services(agent):
         assert scope in spec.oauth_scopes
     # cloud-platform would grant far more than any one tool needs.
     assert common.CLOUD_PLATFORM_SCOPE not in spec.delegated_oauth_scopes
+
+
+@pytest.mark.parametrize("agent", ALL_AGENTS)
+def test_every_agent_has_a_prompt(agent):
+    """The prompt is the agent's behaviour, so it is reviewed here like code.
+
+    Without one the agent deploys with a generic placeholder and silently
+    behaves like every other agent.
+    """
+    spec = common.get_agent_spec(agent)
+    prompt = spec.read_prompt()
+    assert prompt, f"{agent} has no prompt.md at {spec.prompt_path}"
+    assert len(prompt) > 40, f"{agent} prompt is too short to be a real instruction"

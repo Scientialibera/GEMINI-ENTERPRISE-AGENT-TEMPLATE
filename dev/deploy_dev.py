@@ -57,7 +57,7 @@ def main() -> None:
     load_environment(".env.dev")
     spec = get_agent_spec(args.agent)
     project_id, location, staging_bucket = require_dev_environment(spec=spec)
-    ensure_dev_prerequisites(project_id, location, staging_bucket)
+    ensure_dev_prerequisites(project_id, location, staging_bucket, spec)
 
     resource_name = deploy_agent(args.agent, project_id, location, staging_bucket, spec)
     print(f"DEPLOYED_DEV_RESOURCE={resource_name}")
