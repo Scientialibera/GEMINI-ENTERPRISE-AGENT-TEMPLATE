@@ -43,16 +43,9 @@ REQUEST_TIMEOUT_SECONDS = 60
 
 OAUTH_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 OAUTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+# Where Google returns the user after consent. This is Gemini Enterprise's own
+# callback, so it is the same for every agent and every scope.
 OAUTH_REDIRECT_URI = "https://vertexaisearch.cloud.google.com/static/oauth/oauth.html"
-# Scopes the signed-in user consents to. The bigquery scope covers both the
-# delegated BigQuery tool and the BigQuery MCP server, which authenticates the
-# same token per tool call.
-DELEGATED_OAUTH_SCOPES = (
-    "openid",
-    "email",
-    "profile",
-    "https://www.googleapis.com/auth/bigquery",
-)
 
 
 def _access_token() -> str:
@@ -220,6 +213,9 @@ def ensure_authorization(project_id: str, authorization_id: str, spec: AgentSpec
             "  Application type: Web application\n"
             f"  Name: {spec.oauth_client_name}\n"
             f"  Authorized redirect URI: {OAUTH_REDIRECT_URI}\n\n"
+            "The consent screen must allow the scopes this agent requests:\n"
+            + "".join(f"  {scope}\n" for scope in spec.oauth_scopes)
+            + "\n"
             "Store its secret in Secret Manager:\n"
             f"  gcloud secrets create {spec.default_oauth_secret_name} "
             f"--project={project_id} --data-file=-\n\n"
@@ -228,7 +224,7 @@ def ensure_authorization(project_id: str, authorization_id: str, spec: AgentSpec
             f"  {spec.oauth_client_secret_name_env}={spec.default_oauth_secret_name}\n"
         )
 
-    scope_value = urllib.parse.quote(" ".join(DELEGATED_OAUTH_SCOPES))
+    scope_value = urllib.parse.quote(" ".join(spec.oauth_scopes))
     redirect_value = urllib.parse.quote(OAUTH_REDIRECT_URI, safe="")
     authorization_uri = (
         f"{OAUTH_AUTHORIZATION_ENDPOINT}?client_id={client_id}"

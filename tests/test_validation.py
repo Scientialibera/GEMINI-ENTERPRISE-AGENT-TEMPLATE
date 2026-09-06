@@ -354,3 +354,21 @@ def test_delegated_agents_name_their_own_oauth_client(agent):
         assert spec.oauth_client_id_env != other.oauth_client_id_env
         assert spec.default_oauth_secret_name != other.default_oauth_secret_name
         assert spec.authorization_id != other.authorization_id
+
+
+@pytest.mark.parametrize("agent", ALL_AGENTS)
+def test_oauth_scopes_cover_only_delegated_services(agent):
+    """Scopes bound what the user's token may reach, so they are per agent.
+
+    A tool running as the Agent Identity adds no scope: it acts as the runtime,
+    not as the user.
+    """
+    spec = common.get_agent_spec(agent)
+    if not spec.uses_delegated_auth:
+        assert spec.delegated_oauth_scopes == ()
+        return
+    assert spec.delegated_oauth_scopes, f"{agent} takes a user token but requests no scope"
+    for scope in common.IDENTITY_OAUTH_SCOPES:
+        assert scope in spec.oauth_scopes
+    # cloud-platform would grant far more than any one tool needs.
+    assert common.CLOUD_PLATFORM_SCOPE not in spec.delegated_oauth_scopes

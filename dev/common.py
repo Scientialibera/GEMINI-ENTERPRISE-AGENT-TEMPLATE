@@ -40,6 +40,16 @@ AUTHORIZATION_ID_ENV = "GEMINI_ENTERPRISE_AUTHORIZATION_ID"
 # what marks an agent as needing its own OAuth client.
 DELEGATED_AUTH_MARKER = AUTHORIZATION_ID_ENV
 
+# Identity scopes every consent screen carries, regardless of what the agent
+# goes on to call.
+IDENTITY_OAUTH_SCOPES = ("openid", "email", "profile")
+
+# Scopes for the Google services an agent's delegated tools can reach. Named
+# here so an agent declares a service rather than repeating a URL.
+BIGQUERY_SCOPE = "https://www.googleapis.com/auth/bigquery"
+CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+CLOUD_STORAGE_READONLY_SCOPE = "https://www.googleapis.com/auth/devstorage.read_only"
+
 COMMON_REQUIRED_REMOTE_ENV = (
     PROJECT_ENV,
     LOCATION_ENV,
@@ -88,6 +98,11 @@ class AgentSpec:
     extra_packages: tuple[str, ...]
     requirements: tuple[str, ...]
     required_remote_bootstrap_env: tuple[str, ...] = ()
+    # OAuth scopes the signed-in user consents to, beyond identity. These bound
+    # what this agent's delegated tools may reach, so an agent declares only the
+    # services it actually calls with the user's token. A tool using Agent
+    # Identity instead needs no scope here: it runs as the runtime, not the user.
+    delegated_oauth_scopes: tuple[str, ...] = ()
     # Gemini Enterprise registration metadata, used by register_agent.py.
     registration_description: str = ""
     invocation_description: str = ""
@@ -159,6 +174,11 @@ class AgentSpec:
         return f"{self.package_name}-oauth-client-secret"
 
     @property
+    def oauth_scopes(self) -> tuple[str, ...]:
+        """Full scope list for this agent's authorization, identity included."""
+        return IDENTITY_OAUTH_SCOPES + self.delegated_oauth_scopes
+
+    @property
     def env_prefix(self) -> str:
         """Per-agent prefix for environment variables, derived from the package."""
         return self.package_name.upper().replace("-", "_")
@@ -198,6 +218,9 @@ AGENTS: dict[str, AgentSpec] = {
         ),
         requirements=COMMON_REQUIREMENTS + AUTH_REFERENCE_REQUIREMENTS,
         required_remote_bootstrap_env=(AUTHORIZATION_ID_ENV,),
+        # Only BigQuery: the Cloud Storage tool runs as the Agent Identity, not
+        # as the user, so it needs no delegated scope.
+        delegated_oauth_scopes=(BIGQUERY_SCOPE,),
         registration_description=(
             "Reference pro-code ADK agent for the two supported authentication patterns. "
             "Agent Identity is used for agent-scoped access to Cloud Storage, while a "
@@ -226,6 +249,8 @@ AGENTS: dict[str, AgentSpec] = {
         ),
         requirements=COMMON_REQUIREMENTS + BIGQUERY_MCP_REQUIREMENTS,
         required_remote_bootstrap_env=(AUTHORIZATION_ID_ENV,),
+        # The MCP server authenticates this same token on every tool call.
+        delegated_oauth_scopes=(BIGQUERY_SCOPE,),
         registration_description=(
             "Pro-code ADK agent whose data tools come from Google's managed BigQuery MCP "
             "server rather than from this repository. Nothing is deployed to obtain them, "
