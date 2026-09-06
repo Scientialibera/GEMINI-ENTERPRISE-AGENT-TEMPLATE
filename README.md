@@ -73,7 +73,7 @@ Each folder under `agents/` deploys on its own. Inside one: `agent.py` construct
 Two rules follow from how ADK works:
 
 - **Tool schemas are code.** ADK builds the declaration from the signature, type hints and docstring. No docstring, no description.
-- **Prompts are not code.** `instruction` is a callable reading live config per request. Authored in Terraform `runtime_config`, delivered by Parameter Manager, set locally by `AGENT_INSTRUCTION`. No agent package holds prompt text.
+- **Prompts are not code.** `instruction` is a callable reading live config per request. Authored in the agent's Parameter Manager parameter, delivered from there, set locally by `AGENT_INSTRUCTION`. No agent package holds prompt text.
 
 ## Before first use
 
@@ -154,10 +154,11 @@ Fill the required values, then run:
 uv run --group dev python dev/run_local.py --agent basic_assistant
 ```
 
-or:
+or any other agent in `AGENTS`:
 
 ```bash
 uv run --group dev python dev/run_local.py --agent auth_reference_agent
+uv run --group dev python dev/run_local.py --agent bigquery_mcp_agent
 ```
 
 Local execution intentionally omits `CONFIG_PARAMETER`; the shared runtime reads live values directly from the local process environment.
@@ -181,16 +182,15 @@ The initial sequence is:
 4. bootstrap reuses or prepares the developer project/APIs/staging bucket
 5. bootstrap optionally creates/reuses the BigQuery test fixture
 6. package the selected agent
-7. apply the companion Terraform dev stack where a shared Terraform-managed runtime is required
-8. copy Terraform output runtime_config_parameter into dev/.env.dev
-9. run tests/lint
-10. run deploy_dev.py for a developer-owned Agent Engine copy
-11. run register_agent.py to publish that runtime into a Gemini Enterprise app
+7. apply the companion Terraform platform stack once per project, for APIs, IAM and observability
+8. run tests/lint
+9. run deploy_dev.py for a developer-owned Agent Engine copy
+10. run register_agent.py to publish that runtime into a Gemini Enterprise app
 ```
 
-`release_dev.py --agent <name>` runs steps 6, 10 and 11 in one command.
+`release_dev.py --agent <name>` runs steps 6, 9 and 10 in one command.
 
-Deploying an Agent Engine does not make it visible in Gemini Enterprise. Step 11 is what puts it on the Agents page and enables the delegated consent flow.
+Deploying an Agent Engine does not make it visible in Gemini Enterprise. Step 10 is what puts it on the Agents page and enables the delegated consent flow.
 
 Run the developer platform preflight:
 
@@ -207,7 +207,7 @@ The preflight is idempotent.
 | Required APIs | Reuse enabled APIs | Enable only missing APIs when allowed |
 | Dev staging bucket | Reuse | Create when `DEV_CREATE_STAGING_BUCKET_IF_MISSING=true` |
 | Optional BigQuery test fixture | Reuse and validate | Create/seed when enabled; otherwise skip/fail according to fixture flags |
-| Parameter Manager runtime config | Verify when configured | Stop at deploy time and require Terraform |
+| Parameter Manager runtime config | Verify the agent's own parameter | Stop at deploy time and name the missing parameter |
 | IAM | Use existing grants | Never self-grant; fix through the appropriate platform/IAM process |
 
 Project creation is disabled by default because it affects organization placement, quota and billing.
@@ -245,7 +245,7 @@ Fix missing permissions through IAM, never by adding self-grant logic. Terraform
 
 ## Deterministic application packaging
 
-Build the artifact Terraform consumes:
+Build the deployment artifact:
 
 ```bash
 uv run --group dev python dev/package_agent.py --agent <agent>
@@ -257,7 +257,7 @@ The archive holds only the selected agent and `gemini_shared`. Other agents are 
 
 ## Developer-owned Agent Engine deployment
 
-After Terraform has created the runtime parameter and IAM:
+Once the agent's runtime parameter exists:
 
 ```bash
 uv run --group dev python dev/deploy_dev.py --agent <agent>   # create
@@ -282,9 +282,11 @@ Registration is idempotent. An agent with the same display name is patched to po
 
 Each agent's registration metadata — description, invocation description and starter prompts — lives in its `AgentSpec` in `dev/common.py`, so the registered listing stays in the repository rather than being maintained by hand in the console.
 
-Agents with delegated tools additionally need a Gemini Enterprise authorization, which triggers the user consent flow and forwards the resulting token to the agent. `register_agent.py` reuses `GEMINI_ENTERPRISE_AUTHORIZATION_ID` when it already exists, and creates it otherwise. Set `GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET_NAME` to a Secret Manager secret so the payload never reaches a workstation; `GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET` remains available for a sandbox with no managed secret yet.
+Agents with delegated tools additionally need a Gemini Enterprise authorization, which triggers the user consent flow and forwards the resulting token to the agent. `register_agent.py` reuses the authorization when it already exists, and creates it otherwise. Set `GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET_NAME` to a Secret Manager secret so the payload never reaches a workstation; `GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET` remains available for a sandbox with no managed secret yet.
 
-One authorization serves one agent. Registering a second agent against an authorization already bound elsewhere fails with `is used by another agent`; create a separate authorization id for each agent that needs delegated access.
+One authorization serves one agent: registering a second agent against an authorization already bound elsewhere fails with `is used by another agent`. Each agent therefore defaults to its own, named `<package-name>-authz`, so adding a delegated-auth agent needs no shared configuration change. `GEMINI_ENTERPRISE_AUTHORIZATION_ID` overrides that default for a single run.
+
+The authorization's OAuth scopes must cover everything that agent's delegated tools call.
 
 ## Identity model
 
@@ -484,7 +486,7 @@ Used by more than one agent? Put the URL, scopes and tool list in `packages/gemi
 
 | Downstream access | Use | Needs |
 |---|---|---|
-| Same for all users | Agent Identity | Terraform IAM grant on the runtime |
+| Same for all users | Agent Identity | Covered by the platform stack's project-wide roles |
 | Varies by user | Delegated token | Authorization id + OAuth scopes covering every call |
 
 Delegated tools and MCP servers share one token, so the authorization's scopes must cover both.
@@ -512,7 +514,7 @@ Add an `AgentSpec` to `AGENTS` in `dev/common.py`. Without it the dev scripts ca
 
 ### 6. Configure and deploy
 
-Live settings (model, instruction, limits) go in the Terraform `runtime_config`; bootstrap values go in the deployed env map. Never both.
+Live settings (model, instruction, limits) go in the agent's own Parameter Manager parameter, `<package-name>-config`; bootstrap values go in the deployed env map. Never both. A delegated-auth agent likewise gets its own authorization, `<package-name>-authz`. Both names are derived from the spec, so no shared configuration changes and no Terraform apply is needed to add an agent.
 
 ```bash
 uv run --group dev ruff format . && uv run --group dev ruff check . && uv run --group dev pytest
@@ -524,7 +526,9 @@ uv run --group dev python dev/release_dev.py --agent <agent>
 
 ### 7. Extend the tests
 
-`tests/test_validation.py` parametrizes over agent names. Add the new agent so it inherits the checks that every tool has a description and the instruction resolves from runtime configuration.
+`tests/test_validation.py` parametrizes over `AGENTS`, so the new agent inherits the checks that every tool has a description and that the instruction resolves from runtime configuration as soon as its spec exists.
+
+Two places still name agents explicitly: add the agent's `src` directory to `pythonpath` in the root `pyproject.toml`, and add an import test to `tests/test_imports.py`.
 
 ## Code standards
 
