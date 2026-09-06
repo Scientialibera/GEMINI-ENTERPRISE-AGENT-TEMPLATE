@@ -96,6 +96,18 @@ class AgentSpec:
         """
         return f"{self.package_name}-config"
 
+    @property
+    def authorization_id(self) -> str:
+        """Gemini Enterprise authorization supplying this agent's delegated token.
+
+        Gemini Enterprise rejects an authorization that another agent already
+        uses, so agents cannot share one. Deriving the name per agent is what
+        allows a second delegated-auth agent to be registered without editing
+        shared configuration. GEMINI_ENTERPRISE_AUTHORIZATION_ID in the
+        environment still wins when set.
+        """
+        return f"{self.package_name}-authz"
+
 
 AGENTS: dict[str, AgentSpec] = {
     "basic_assistant": AgentSpec(
@@ -210,11 +222,17 @@ def require_dev_environment(
             f"'{DEV_ENVIRONMENT}'. Shared QA/prod deployment belongs to Terraform."
         )
 
-    # An agent defaults to its own parameter. Resolving it into the environment
-    # here keeps every later reader — the deployed env_vars, the prerequisite
-    # check and gemini_shared itself — on the same value.
-    if require_parameter and spec is not None and is_missing_or_placeholder(CONFIG_PARAMETER_ENV):
-        os.environ[CONFIG_PARAMETER_ENV] = spec.config_parameter_id
+    # An agent defaults to its own parameter and its own authorization.
+    # Resolving them into the environment here keeps every later reader — the
+    # deployed env_vars, the prerequisite check, the registration call and
+    # gemini_shared itself — on the same values.
+    if spec is not None:
+        if require_parameter and is_missing_or_placeholder(CONFIG_PARAMETER_ENV):
+            os.environ[CONFIG_PARAMETER_ENV] = spec.config_parameter_id
+        if AUTHORIZATION_ID_ENV in spec.required_remote_bootstrap_env and (
+            is_missing_or_placeholder(AUTHORIZATION_ID_ENV)
+        ):
+            os.environ[AUTHORIZATION_ID_ENV] = spec.authorization_id
 
     required = list(COMMON_REQUIRED_REMOTE_ENV)
     if require_parameter:

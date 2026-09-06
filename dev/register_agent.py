@@ -281,9 +281,10 @@ def main() -> None:
     os.chdir(ROOT)
     load_environment(".env.dev")
     # Registration points Gemini Enterprise at an existing runtime and never
-    # reads live configuration, so no config parameter is required here.
-    project_id, _, _ = require_dev_environment(require_parameter=False)
+    # reads live configuration, so no config parameter is required here. The
+    # spec still resolves the agent's own authorization.
     spec = get_agent_spec(args.agent)
+    project_id, _, _ = require_dev_environment(require_parameter=False, spec=spec)
 
     app_id = (args.app_id or os.getenv(APP_ENGINE_ID_ENV, "")).strip()
     if not app_id:
