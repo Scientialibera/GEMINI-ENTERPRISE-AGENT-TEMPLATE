@@ -2,20 +2,18 @@
 
 Infrastructure template for the Google Cloud runtime used by the companion ADK agent repository.
 
-This branch owns shared infrastructure, IAM, configuration delivery, secrets, observability and Terraform-managed Agent Engine deployment. It contains no agent prompts, tools or business logic.
+This branch owns shared, agent-agnostic platform state: APIs, IAM, secrets and observability. It contains no agent prompts, tools or business logic, and it deploys no agents.
 
 ## Repository layout
 
 ```text
-main.tf                     APIs, Parameter Manager, Secret Manager, IAM
+main.tf                     APIs, IAM, Secret Manager, Agent Identity roles
 variables.tf                input contract with blocking validation
 outputs.tf                  values the agent repository consumes
 versions.tf                 Terraform and provider version constraints
 terraform.tfvars.example    copy per environment; replace every placeholder
 
 modules/
-├── agent_engine/           Reasoning Engine, Agent Identity, invoker IAM
-│   └── adk_class_methods.json   serving methods declared on the deployment
 └── observability/          log bucket, retention, metrics, dashboard
 
 CONFIGURATION.md            which setting lives where and how it changes
@@ -27,20 +25,21 @@ IDENTITY_AND_IAM.md         the principals involved and what each may do
 Terraform manages:
 
 - required Google Cloud APIs
-- Agent Engine / Reasoning Engine
-- Agent Identity
-- Parameter Manager live configuration
 - Secret Manager resources
 - developer deployment IAM
-- common IAM for developer-created Agent Identities
-- caller access
-- Terraform-managed Agent Identity permissions
-- Cloud Logging retention and Log Analytics
+- project-wide runtime IAM for every Agent Identity
+- Cloud Logging retention and Log Analytics for all agent runtimes
 - log-based metrics, dashboard and alerting
 
 A separate foundation/bootstrap layer should manage project creation, billing association, Terraform remote state, GitHub OIDC, Workload Identity Federation and the Terraform execution service account.
 
-Terraform does not manage Gemini Enterprise agent registration or the Discovery Engine authorization used for delegated user consent. Both are application-release concerns tied to a specific Reasoning Engine, the Google provider exposes no resource for either, and the authorization requires an OAuth client secret that must not enter Terraform state. The agent repository owns them through `dev/register_agent.py`.
+## What Terraform deliberately does not manage
+
+Terraform does not create Agent Engines, their runtime configuration, their Gemini Enterprise registration, or the Discovery Engine authorization used for delegated user consent.
+
+The agent repository owns all four, through `dev/deploy_dev.py` and `dev/register_agent.py`. That split is what makes the monorepo extensible: adding an agent is an entry in `AGENTS`, and it inherits this stack's IAM and observability without a Terraform change. Registration and the authorization are additionally unsuited to Terraform because the provider exposes no resource for either and the authorization requires an OAuth client secret that must not enter Terraform state.
+
+Each agent reads its own Parameter Manager parameter, named after its package. The agent repository creates and publishes that parameter, so config changes never require an infrastructure change.
 
 ## Before first apply
 
@@ -50,16 +49,9 @@ Confirm:
 2. The target GCP project already exists and has billing enabled.
 3. The Terraform execution identity is already authorized.
 4. A remote backend exists for shared environments.
-5. The agent repository produced the archive referenced by `source_archive_path`.
-6. `terraform.tfvars.example` was copied and every applicable placeholder was replaced.
-7. Secret payloads are supplied outside `terraform.tfvars`.
-8. Developer, caller and Agent Identity roles match the intended environment.
-
-Set the config publish revision:
-
-```bash
-export TF_VAR_config_revision="$(git rev-parse --short=12 HEAD)"
-```
+5. `terraform.tfvars.example` was copied and every applicable placeholder was replaced.
+6. Secret payloads are supplied outside `terraform.tfvars`.
+7. Developer and Agent Identity roles match the intended environment.
 
 Validate and apply:
 
@@ -71,64 +63,20 @@ terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
-Do not apply a plan that contains unexpected Agent Engine source/bootstrap changes when the intended change is runtime configuration only.
+This stack is applied once per project and then changes rarely. Deploying an agent does not require an apply.
 
 ## Configuration ownership
 
 | Configuration | Authoritative source | Runtime delivery | Change behavior |
 |---|---|---|---|
 | Infrastructure and IAM | Terraform | Google Cloud resources | Terraform apply |
-| Live non-secret settings | Terraform `runtime_config` | Parameter Manager | No Agent Runtime revision |
-| Process/bootstrap settings | Terraform `bootstrap_env` | Agent Engine env | New Agent Runtime revision possible |
+| Live non-secret settings | Agent repository | Parameter Manager | No Agent Runtime revision |
+| Process/bootstrap settings | Agent repository `dev/.env.dev` | Agent Engine env | New Agent Runtime revision possible |
 | Secrets | Approved secret process + Terraform metadata | Secret Manager | Secret-specific behavior |
 
-`runtime_config` is published as JSON. Terraform injects `config_revision`, computes a content hash and creates an immutable Parameter Manager version named from both values.
+Only the first and last rows belong to this stack. Runtime and bootstrap configuration moved to the agent repository so that adding an agent is not an infrastructure change.
 
-The agent reads `<parameter>/versions/latest` and refreshes after `config_refresh_seconds`. Changing only `runtime_config` does not modify Agent Engine source or deployment environment.
-
-Git/Terraform is the desired-state source of truth. Parameter Manager is the runtime delivery store. A direct UI version may be used for dev experimentation; retained values must be reconciled into Terraform.
-
-## Bootstrap environment
-
-Keep `bootstrap_env` small. Typical values are:
-
-```text
-BOOTSTRAP_MODEL
-GEMINI_MODEL_LOCATION
-GEMINI_ENTERPRISE_AUTHORIZATION_ID   # auth_reference_agent only
-```
-
-Terraform automatically adds:
-
-```text
-CONFIG_PARAMETER
-CONFIG_PARAMETER_LOCATION
-CONFIG_REFRESH_SECONDS
-GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY
-OTEL_SEMCONV_STABILITY_OPT_IN
-```
-
-Do not set Agent Runtime-reserved values such as `GOOGLE_CLOUD_PROJECT` or `GOOGLE_CLOUD_LOCATION`.
-
-## Parameter Manager lifecycle
-
-Parameter values are immutable. Each approved config publish creates a new version. Previous versions use `deletion_policy = "ABANDON"`, so they remain in Parameter Manager for history after Terraform stops managing the previous current version.
-
-Rollback is a new reviewed Git/Terraform change that republishes the prior desired values under a new version. Do not make production rollback depend on manually repointing to an unmanaged old version.
-
-Retaining those versions is deliberate, and it means `terraform destroy` cannot delete the parameter while abandoned versions still exist:
-
-```text
-Error: Resource '...parameters/<id>' has nested resources.
-```
-
-Tearing an environment down completely therefore requires deleting the abandoned versions first:
-
-```bash
-gcloud parametermanager parameters versions list <parameter-id> --location=global
-gcloud parametermanager parameters versions delete <version-id> \
-  --parameter=<parameter-id> --location=global
-```
+Each agent reads its own parameter at `<parameter>/versions/latest` and refreshes on a cache interval, so a published configuration change takes effect without redeploying the runtime.
 
 ## Developer deployment IAM
 
@@ -146,7 +94,7 @@ The staging bucket may be created by the developer-sandbox bootstrap; this workl
 
 A developer-created Agent Engine receives a separate Agent Identity. Developer ADC permissions do not transfer to it.
 
-This stack can pre-authorize all Agent Runtime Agent Identities in the dev project for common non-sensitive roles using Google's project Agent Identity principal-set format. The Terraform-managed Agent Engine is created first so the Agent Identity trust domain is initialized before the common principal-set bindings are applied.
+This stack pre-authorizes every Agent Runtime Agent Identity in the project for common non-sensitive roles, using Google's project Agent Identity principal-set format. Because the grant targets the trust domain rather than a named identity, an agent deployed later inherits it with no Terraform change. That is what keeps the agent repository extensible.
 
 Use an organization ID for organization projects, or `developer_agent_identity_orgless=true` for orgless projects. Do not grant sensitive datasets, buckets or production data through the all-agent principal set; grant those to the specific Agent Identity that requires them.
 
@@ -164,40 +112,26 @@ Use `accessor_members` to grant read access to a principal that must read a payl
 
 Keep these principals separate:
 
-1. Developer identity: local execution and developer-owned dev deployment.
+1. Developer identity: local execution and developer-owned deployment.
 2. Terraform execution identity: infrastructure changes; normally GitHub OIDC -> WIF -> dedicated Terraform service account.
-3. Terraform-managed Agent Identity: runtime access for the shared Reasoning Engine.
-4. Developer-created Agent Identity: runtime identity for each developer Agent Engine copy.
-5. Agent caller: user/group/workload allowed to query the Reasoning Engine.
-6. Delegated end user: user-scoped OAuth token used by delegated tools.
-7. Agent Platform service agent: Google-managed identity used for platform operations.
+3. Agent Identity: runtime identity for each deployed Agent Engine, covered by this stack's principal-set roles.
+4. Agent caller: user/group/workload allowed to query a Reasoning Engine.
+5. Delegated end user: user-scoped OAuth token used by delegated tools.
+6. Agent Platform service agent: Google-managed identity used for platform operations.
 
 Do not reuse the Terraform execution service account as an Agent Identity.
 
 ## Agent source boundary
 
-Terraform consumes a deterministic `.tar.gz` from the application repository:
-
-```hcl
-source_archive_path = "./artifacts/example-agent.tar.gz"
-entrypoint_module   = "auth_reference_agent.agent"
-entrypoint_object   = "app"
-requirements_file   = "requirements.txt"
-```
-
-Build the archive with the companion agent repository's `dev/package_agent.py`. Application packaging is not implemented in Terraform.
+Terraform never sees agent source. The agent repository builds a deterministic `.tar.gz` with `dev/package_agent.py` and deploys it with `dev/deploy_dev.py`, which owns the entrypoint, requirements and bootstrap environment for that agent.
 
 ## Multi-agent safety
 
-This root template deploys one Agent Engine workload. A production IaC repository may instantiate the module once per independently deployable agent or use separate environment/workload roots.
+This stack is applied once per project and carries no per-agent resources, so agents cannot collide in it. Observability is project-wide and groups by runtime id, which means a new agent appears in the existing dashboard and alert without configuration.
 
-Generated shared-project resource names must not collide across agents. The template therefore:
+Agents that need more than the shared roles are a deliberate exception: grant those on the specific resource, to the specific Agent Identity, rather than widening the all-agent principal set.
 
-- derives a deterministic custom invoker-role ID from project, region and agent display name when `invoker_role` is not supplied;
-- derives a deterministic per-agent Logging bucket ID when `log_bucket_id` is null;
-- requires callers to provide a unique `config_parameter_id` for each independently managed runtime config.
-
-For broader platform-wide resources such as WIF, Terraform runner IAM or remote state, use the foundation/bootstrap layer rather than duplicating them per agent.
+For broader platform-wide resources such as WIF, Terraform runner IAM or remote state, use the foundation/bootstrap layer.
 
 ## Environment layout
 
@@ -210,21 +144,20 @@ environments/
 └── prod/
 
 modules/
-├── agent_engine/
 └── observability/
 ```
 
-The root files in this branch are a compact workload template. Split them into environment roots when adopting the template for a real platform repository.
+The root files in this branch are a compact platform template. Split them into environment roots when adopting the template for a real platform repository.
 
 ## Change behavior
 
-| Change | New Parameter version | New Agent Runtime revision |
+| Change | Terraform apply | New Agent Runtime revision |
 |---|---:|---:|
-| `runtime_config` | Yes | No |
-| `bootstrap_env` | No | Yes/possible |
-| source archive | No | Yes |
-| IAM only | No | No unless deployment config also changes |
-| Parameter Manager UI version in dev | Yes | No |
+| Agent runtime config (agent repository) | No | No |
+| Agent bootstrap env (agent repository) | No | Yes/possible |
+| Agent source archive (agent repository) | No | Yes |
+| Adding an agent to the monorepo | No | n/a |
+| IAM, APIs, secrets, observability | Yes | No |
 
 ## Terraform standards
 

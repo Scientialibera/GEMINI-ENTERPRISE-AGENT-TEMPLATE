@@ -1,44 +1,16 @@
 # Copy to terraform.tfvars for the target environment.
 # Replace every applicable REPLACE_... value.
 # Do not put secret payloads in this file.
-# Before plan/apply:
-#   export TF_VAR_config_revision="$(git rev-parse --short=12 HEAD)"
+#
+# This stack owns shared platform state only: APIs, IAM, Secret Manager and
+# observability. It does not create Agent Engines or their runtime
+# configuration. Agents are built, deployed and registered from the agent
+# repository's dev helpers, and each agent reads its own Parameter Manager
+# parameter. Adding an agent therefore needs no change here.
 
 # EXISTING TARGET PROJECT
 project_id = "REPLACE_WITH_GCP_PROJECT_ID"
 region     = "us-central1"
-
-# AGENT ARTIFACT
-agent_display_name = "REPLACE_WITH_AGENT_DISPLAY_NAME"
-source_archive_path = "./artifacts/REPLACE_WITH_AGENT_ARCHIVE.tar.gz"
-entrypoint_module   = "auth_reference_agent.agent"
-entrypoint_object   = "app"
-python_version      = "3.12"
-requirements_file   = "requirements.txt"
-
-# LIVE NON-SECRET RUNTIME CONFIG
-# Terraform injects config_revision automatically.
-config_parameter_id    = "REPLACE_WITH_AGENT_CONFIG_PARAMETER_ID"
-config_refresh_seconds = 30
-runtime_config = {
-  model                      = "gemini-3.7-flash"
-  instruction                = "You are a concise enterprise assistant."
-  environment                = "dev"
-  log_level                  = "INFO"
-  agent_identity_bucket_name = "REPLACE_IF_USING_AGENT_IDENTITY_STORAGE_TOOL"
-  storage_object_limit       = "10"
-  bigquery_query_row_limit   = "100"
-}
-
-# BOOTSTRAP ONLY. Changing these values can create a new Agent Runtime revision.
-# MCP_SERVER_URL belongs here, not in runtime_config: the toolset is bound when
-# the agent is constructed, and RuntimeConfig rejects keys it does not define.
-bootstrap_env = {
-  BOOTSTRAP_MODEL                    = "gemini-3.7-flash"
-  GEMINI_MODEL_LOCATION              = "global"
-  GEMINI_ENTERPRISE_AUTHORIZATION_ID = "REPLACE_IF_USING_AUTH_REFERENCE_AGENT"
-  MCP_SERVER_URL                     = "https://bigquery.googleapis.com/mcp"
-}
 
 # SECRETS
 # Keep payloads out of terraform.tfvars. Populate managed_secrets only when this
@@ -61,13 +33,10 @@ developer_agent_identity_orgless         = false
 # developer_agent_identity_organization_id = null
 # developer_agent_identity_orgless         = true
 
-# CALLER ACCESS
-invoker_members = [
-  "group:REPLACE_WITH_AGENT_USERS@example.com",
-]
-
-# TERRAFORM-MANAGED AGENT IDENTITY ACCESS
-agent_project_roles = [
+# ROLES FOR EVERY AGENT IDENTITY IN THE PROJECT
+# Granted through a trust-domain principal set, so agents added later inherit
+# them without a Terraform change.
+agent_identity_project_roles = [
   "roles/aiplatform.expressUser",
   "roles/serviceusage.serviceUsageConsumer",
   "roles/parametermanager.parameterAccessor",
@@ -75,7 +44,6 @@ agent_project_roles = [
 ]
 
 # OBSERVABILITY
-# log_bucket_id may be omitted/null. Terraform generates a deterministic per-agent
-# bucket ID so multiple agent stacks in the same project do not collide.
-log_bucket_id        = null
-log_retention_days   = 90
+# Covers every Agent Engine runtime in the project, grouped by runtime id.
+log_bucket_id      = null
+log_retention_days = 90

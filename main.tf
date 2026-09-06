@@ -11,33 +11,14 @@ resource "google_project_service" "required" {
 }
 
 locals {
-  published_runtime_config = merge(
-    var.runtime_config,
-    { config_revision = var.config_revision }
-  )
-  runtime_config_hash       = substr(sha256(jsonencode(local.published_runtime_config)), 0, 12)
-  runtime_config_version_id = "cfg-${var.config_revision}-${local.runtime_config_hash}"
-
-  agent_resource_key      = substr(sha1(join("/", [var.region, var.agent_display_name])), 0, 12)
-  effective_log_bucket_id = coalesce(var.log_bucket_id, "agent-engine-${local.agent_resource_key}")
+  effective_log_bucket_id = coalesce(var.log_bucket_id, "agent-engine-runtimes")
 
   # Orgless trust domains use "proj-". Documentation shows "project-", which
   # IAM rejects as an unknown member type.
-  developer_agent_identity_principal_set = var.developer_agent_identity_organization_id != null ? (
+  agent_identity_principal_set = var.developer_agent_identity_organization_id != null ? (
     "principalSet://agents.global.org-${var.developer_agent_identity_organization_id}.system.id.goog/attribute.platformContainer/aiplatform/projects/${data.google_project.current.number}"
     ) : (
     "principalSet://agents.global.proj-${data.google_project.current.number}.system.id.goog/attribute.platformContainer/aiplatform/projects/${data.google_project.current.number}"
-  )
-
-  bootstrap_env_names = setunion(
-    toset(keys(var.bootstrap_env)),
-    toset([
-      "CONFIG_PARAMETER",
-      "CONFIG_PARAMETER_LOCATION",
-      "CONFIG_REFRESH_SECONDS",
-      "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY",
-      "OTEL_SEMCONV_STABILITY_OPT_IN",
-    ])
   )
 
   # Secrets are stored, never injected. An agent that needs a secret reads it
@@ -54,7 +35,7 @@ locals {
 }
 
 resource "terraform_data" "configuration_validation" {
-  input = "agent-template-configuration"
+  input = "agent-platform-configuration"
 
   lifecycle {
     precondition {
@@ -63,35 +44,6 @@ resource "terraform_data" "configuration_validation" {
       )
       error_message = "When developer_deployer_members is non-empty, set developer_agent_identity_organization_id for an organization project or developer_agent_identity_orgless=true for an orgless project. Set exactly one."
     }
-
-    precondition {
-      condition     = var.min_instances <= var.max_instances
-      error_message = "min_instances cannot exceed max_instances."
-    }
-
-  }
-}
-
-resource "google_parameter_manager_parameter" "runtime_config" {
-  project      = var.project_id
-  parameter_id = var.config_parameter_id
-  format       = "JSON"
-
-  depends_on = [
-    google_project_service.required,
-    terraform_data.configuration_validation,
-  ]
-}
-
-resource "google_parameter_manager_parameter_version" "runtime_config" {
-  parameter            = google_parameter_manager_parameter.runtime_config.id
-  parameter_version_id = local.runtime_config_version_id
-  parameter_data       = jsonencode(local.published_runtime_config)
-
-  deletion_policy = "ABANDON"
-
-  lifecycle {
-    create_before_destroy = true
   }
 }
 
@@ -126,19 +78,6 @@ resource "google_secret_manager_secret_version" "managed" {
       error_message = "managed_secrets[\"${each.key}\"] has no payload in secret_values. Supply it at apply time from an approved ephemeral secret source (never in tfvars or state)."
     }
   }
-}
-
-locals {
-  agent_bootstrap_env = merge(
-    var.bootstrap_env,
-    {
-      CONFIG_PARAMETER                           = google_parameter_manager_parameter.runtime_config.id
-      CONFIG_PARAMETER_LOCATION                  = "global"
-      CONFIG_REFRESH_SECONDS                     = tostring(var.config_refresh_seconds)
-      GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY = "true"
-      OTEL_SEMCONV_STABILITY_OPT_IN              = "gen_ai_latest_experimental"
-    }
-  )
 }
 
 resource "google_project_iam_member" "developer_agent_deployer" {
@@ -178,50 +117,20 @@ resource "google_secret_manager_secret_iam_member" "managed_secret_readers" {
   depends_on = [google_secret_manager_secret.managed]
 }
 
-module "agent_engine" {
-  source = "./modules/agent_engine"
-
-  providers = {
-    google      = google
-    google-beta = google-beta
-  }
-
-  project_id            = var.project_id
-  region                = var.region
-  display_name          = var.agent_display_name
-  description           = var.agent_description
-  source_archive_path   = var.source_archive_path
-  entrypoint_module     = var.entrypoint_module
-  entrypoint_object     = var.entrypoint_object
-  python_version        = var.python_version
-  requirements_file     = var.requirements_file
-  runtime_env           = local.agent_bootstrap_env
-  invoker_members       = var.invoker_members
-  invoker_role          = var.invoker_role
-  agent_project_roles   = var.agent_project_roles
-  min_instances         = var.min_instances
-  max_instances         = var.max_instances
-  container_concurrency = var.container_concurrency
-  resource_limits       = var.resource_limits
-
-  depends_on = [
-    terraform_data.configuration_validation,
-    google_project_service.required,
-    google_parameter_manager_parameter_version.runtime_config,
-    google_secret_manager_secret_version.managed,
-  ]
-}
-
-resource "google_project_iam_member" "developer_agent_identity_common" {
-  for_each = length(var.developer_deployer_members) == 0 ? toset([]) : var.developer_agent_identity_project_roles
+# Runtime permissions for every Agent Identity in this project. The principal
+# set covers Agent Engines this stack never sees, which is what lets a developer
+# add an agent to the repository and deploy it without a Terraform change.
+resource "google_project_iam_member" "agent_identity_common" {
+  for_each = var.agent_identity_project_roles
 
   project = var.project_id
   role    = each.value
-  member  = local.developer_agent_identity_principal_set
+  member  = local.agent_identity_principal_set
 
-  # Independent of module.agent_engine: developer-created Agent Engines need
-  # this grant even when no Terraform-managed engine exists yet.
-  depends_on = [google_project_service.required]
+  depends_on = [
+    google_project_service.required,
+    terraform_data.configuration_validation,
+  ]
 }
 
 module "observability" {
@@ -229,7 +138,6 @@ module "observability" {
 
   project_id            = var.project_id
   region                = var.region
-  reasoning_engine_id   = module.agent_engine.reasoning_engine_id
   log_bucket_id         = local.effective_log_bucket_id
   log_retention_days    = var.log_retention_days
   notification_channels = var.notification_channels

@@ -4,109 +4,9 @@ variable "project_id" {
 }
 
 variable "region" {
-  description = "Agent Engine region."
+  description = "Region the agent runtimes in this project are deployed to."
   type        = string
   default     = "us-central1"
-}
-
-variable "agent_display_name" {
-  description = "Human-readable Agent Engine name."
-  type        = string
-}
-
-variable "agent_description" {
-  description = "Agent Engine description."
-  type        = string
-  default     = "Managed Gemini Enterprise ADK agent"
-}
-
-variable "source_archive_path" {
-  description = "Path to the deterministic agent source archive produced by the application build."
-  type        = string
-}
-
-variable "entrypoint_module" {
-  description = "Python module containing the ADK root agent."
-  type        = string
-}
-
-variable "entrypoint_object" {
-  description = "Python object exported by entrypoint_module. Must be the AdkApp wrapper that exposes the declared class methods, not a bare Agent."
-  type        = string
-  default     = "app"
-}
-
-variable "python_version" {
-  description = "Python runtime version for source deployment."
-  type        = string
-  default     = "3.12"
-}
-
-variable "requirements_file" {
-  description = "Requirements file inside the supplied source archive."
-  type        = string
-  default     = "requirements.txt"
-}
-
-variable "config_parameter_id" {
-  description = "Parameter Manager parameter ID containing live non-secret runtime configuration."
-  type        = string
-}
-
-variable "config_revision" {
-  description = "Unique source-control revision used when publishing runtime configuration. A 12-character Git SHA is recommended."
-  type        = string
-
-  validation {
-    condition     = can(regex("^[a-z0-9][a-z0-9_-]{0,19}$", var.config_revision))
-    error_message = "config_revision must be 1-20 lowercase letters, numbers, underscores or hyphens."
-  }
-}
-
-variable "config_refresh_seconds" {
-  description = "Maximum runtime config cache interval before the agent checks Parameter Manager latest again."
-  type        = number
-  default     = 30
-
-  validation {
-    condition     = var.config_refresh_seconds >= 5
-    error_message = "config_refresh_seconds must be at least 5 seconds."
-  }
-}
-
-variable "runtime_config" {
-  description = "Live non-secret application configuration. Terraform/Git is authoritative; config_revision is injected automatically."
-  type        = map(string)
-
-  validation {
-    condition = alltrue([
-      for required_key in ["model", "instruction"] : contains(keys(var.runtime_config), required_key)
-    ])
-    error_message = "runtime_config must define model and instruction."
-  }
-}
-
-variable "bootstrap_env" {
-  description = "Process-construction Agent Engine environment variables only. Normal live settings belong in runtime_config."
-  type        = map(string)
-  default     = {}
-
-  validation {
-    condition = length(setintersection(
-      toset(keys(var.bootstrap_env)),
-      toset([
-        "GOOGLE_CLOUD_PROJECT",
-        "GOOGLE_CLOUD_QUOTA_PROJECT",
-        "GOOGLE_CLOUD_LOCATION",
-        "PORT",
-        "K_SERVICE",
-        "K_REVISION",
-        "K_CONFIGURATION",
-        "GOOGLE_APPLICATION_CREDENTIALS",
-      ])
-    )) == 0
-    error_message = "bootstrap_env contains a reserved Agent Runtime environment variable."
-  }
 }
 
 variable "managed_secrets" {
@@ -149,7 +49,7 @@ variable "developer_deployer_role" {
 }
 
 variable "developer_parameter_access" {
-  description = "Whether developer_deployer_members may read the shared dev Parameter Manager config."
+  description = "Whether developer_deployer_members may read agent runtime configuration in Parameter Manager."
   type        = bool
   default     = true
 }
@@ -169,95 +69,37 @@ variable "developer_agent_identity_organization_id" {
 }
 
 variable "developer_agent_identity_orgless" {
-  description = "Set true when the dev project does not belong to a Google Cloud organization."
+  description = "Set true when the project does not belong to a Google Cloud organization."
   type        = bool
   default     = false
 }
 
-variable "developer_agent_identity_project_roles" {
-  description = "Common non-sensitive project roles granted to all Agent Runtime Agent Identities in this dev project."
+variable "agent_identity_project_roles" {
+  description = <<-EOT
+    Project roles granted to every Agent Identity in this project, through a
+    trust-domain principal set rather than per-agent bindings. This is what lets
+    a developer add an agent to the repository and deploy it without a Terraform
+    change. An agent needing more than these roles is a deliberate exception and
+    should be granted separately on the specific resource it reads.
+  EOT
   type        = set(string)
   default = [
     "roles/aiplatform.expressUser",
     "roles/serviceusage.serviceUsageConsumer",
     "roles/parametermanager.parameterAccessor",
+    "roles/storage.objectViewer",
   ]
-}
-
-variable "invoker_members" {
-  description = "Users, groups or service accounts allowed to invoke the Terraform-managed Reasoning Engine."
-  type        = set(string)
-  default     = []
-}
-
-variable "invoker_role" {
-  description = "Optional existing Reasoning Engine invoker role. When null, a deterministic query-only custom role is created."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "agent_project_roles" {
-  description = "Project-level roles granted directly to the Terraform-managed Agent Identity."
-  type        = set(string)
-  default = [
-    "roles/aiplatform.expressUser",
-    "roles/serviceusage.serviceUsageConsumer",
-    "roles/parametermanager.parameterAccessor",
-  ]
-}
-
-variable "min_instances" {
-  description = "Minimum Agent Engine runtime instances."
-  type        = number
-  default     = 1
-
-  validation {
-    condition     = var.min_instances >= 0
-    error_message = "min_instances cannot be negative."
-  }
-}
-
-variable "max_instances" {
-  description = "Maximum Agent Engine runtime instances."
-  type        = number
-  default     = 10
-
-  validation {
-    condition     = var.max_instances >= 1
-    error_message = "max_instances must be at least 1."
-  }
-}
-
-variable "container_concurrency" {
-  description = "Maximum concurrent requests per runtime container."
-  type        = number
-  default     = 9
-
-  validation {
-    condition     = var.container_concurrency >= 1
-    error_message = "container_concurrency must be at least 1."
-  }
-}
-
-variable "resource_limits" {
-  description = "Agent Runtime resource limits."
-  type        = map(string)
-  default = {
-    cpu    = "4"
-    memory = "4Gi"
-  }
 }
 
 variable "log_bucket_id" {
-  description = "Optional Cloud Logging bucket ID. Null generates a deterministic per-agent ID to avoid collisions in shared projects."
+  description = "Optional Cloud Logging bucket ID for agent runtime logs."
   type        = string
   default     = null
   nullable    = true
 }
 
 variable "log_retention_days" {
-  description = "Retention for the dedicated Agent Engine log bucket."
+  description = "Retention for the Agent Engine log bucket."
   type        = number
   default     = 90
 

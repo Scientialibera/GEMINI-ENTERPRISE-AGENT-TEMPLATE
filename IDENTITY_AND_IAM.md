@@ -7,11 +7,10 @@ No application helper grants IAM to itself.
 | Actor | Authentication | Access assigned by | Purpose |
 |---|---|---|---|
 | Developer local run | User ADC | Terraform/platform IAM | Local agent and permitted dev resources |
-| Developer deploy/update | User ADC | This stack | Developer Agent Engine operations |
+| Developer deploy/update | User ADC | This stack | Agent Engine deploy and update operations |
 | Terraform runner | GitHub OIDC -> WIF -> dedicated service account | Foundation/bootstrap IaC | Infrastructure changes |
-| Terraform-managed runtime | Agent Identity | This stack | Shared agent downstream access |
-| Developer-created runtime | Agent Identity | Common project principal-set roles plus specific grants | Developer Agent Engine runtime access |
-| Caller | User/group/workload identity | This stack | Reasoning Engine invocation |
+| Agent runtime | Agent Identity | Common project principal-set roles plus specific grants | Agent Engine runtime access |
+| Caller | User/group/workload identity | Granted per runtime outside this stack | Reasoning Engine invocation |
 | Delegated user | Forwarded OAuth credential | Gemini Enterprise/auth flow | User-scoped downstream calls |
 | Agent Platform service agent | Google-managed | This stack grants secret access | Platform operations |
 
@@ -21,15 +20,15 @@ The agent repository `deploy_dev.py` and `update_dev.py` use ADC. Terraform can 
 
 The helpers do not change IAM when an operation is denied.
 
-## Developer-created Agent Identity
+## Agent Identity
 
 Every Agent Engine created with `identity_type=AGENT_IDENTITY` receives a distinct runtime identity. Developer permissions are not inherited by that identity.
 
-For common non-sensitive dev permissions, this stack uses the Agent Identity principal set for all Agent Runtime agents in the project. Organization and orgless projects use different trust-domain prefixes; configure exactly one through the provided variables.
+This stack grants `agent_identity_project_roles` to the Agent Identity principal set covering all Agent Runtime agents in the project, rather than to named identities. An agent deployed later therefore inherits those roles with no Terraform change, which is what allows agents to be added to the monorepo independently of infrastructure.
 
-The Terraform-managed Agent Engine is created before the project-wide principal-set grants. This ensures the Agent Identity trust domain has been initialized before Terraform applies common bindings.
+Organization and orgless projects use different trust-domain prefixes; configure exactly one through the provided variables.
 
-Common roles should be limited to runtime basics such as model/quota use and Parameter Manager reads. Sensitive data permissions should target an individual Agent Identity.
+Common roles should be limited to runtime basics such as model/quota use and Parameter Manager reads. Sensitive data permissions should target an individual Agent Identity on the specific resource.
 
 ## Terraform runner
 
@@ -45,11 +44,11 @@ The workload stack assumes its execution identity already exists and is authoriz
 
 Do not use downloaded long-lived service-account keys.
 
-## Terraform-managed Agent Identity
+## Caller access
 
-The Agent Engine module obtains the runtime's effective Agent Identity and grants only `agent_project_roles`. Prefer resource-level IAM for sensitive resources when practical.
+This stack does not grant Reasoning Engine invocation. Callers are granted on the specific runtime by whatever deploys it, because the resource does not exist until then.
 
-Do not grant Terraform administration permissions to the Agent Identity and do not reuse the Terraform runner service account as the runtime identity.
+Do not grant Terraform administration permissions to an Agent Identity, and do not reuse the Terraform runner service account as a runtime identity.
 
 ## Secrets
 

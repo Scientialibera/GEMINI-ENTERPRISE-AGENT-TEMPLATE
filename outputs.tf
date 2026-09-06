@@ -1,25 +1,6 @@
-output "reasoning_engine_name" {
-  value = module.agent_engine.reasoning_engine_name
-}
-
-output "reasoning_engine_id" {
-  value = module.agent_engine.reasoning_engine_id
-}
-
-output "agent_identity" {
-  value = module.agent_engine.agent_identity
-}
-
-output "runtime_config_parameter" {
-  value = google_parameter_manager_parameter.runtime_config.id
-}
-
-output "runtime_config_version" {
-  value = google_parameter_manager_parameter_version.runtime_config.id
-}
-
-output "runtime_config_hash" {
-  value = local.runtime_config_hash
+output "agent_identity_principal_set" {
+  description = "Trust-domain principal set covering every Agent Identity in this project. Roles granted to it apply to agents this stack never sees."
+  value       = local.agent_identity_principal_set
 }
 
 output "log_bucket" {
