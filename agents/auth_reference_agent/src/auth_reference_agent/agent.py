@@ -1,8 +1,9 @@
-"""Reference agent for the supported authentication and tool patterns.
+"""Reference agent for the two supported authentication patterns.
 
 Agent Identity reads Cloud Storage with the runtime's own identity. Delegated
-auth queries BigQuery with the signed-in user's forwarded token, both through a
-tool written here and through Google's managed BigQuery MCP server.
+auth queries BigQuery with the signed-in user's forwarded token. Both tools are
+written here, against the Google Cloud APIs directly; reaching the same data
+through a remote MCP server instead is what bigquery_mcp_agent demonstrates.
 """
 
 from __future__ import annotations
@@ -14,7 +15,6 @@ from vertexai.agent_engines import AdkApp
 
 from .config import BOOTSTRAP
 from .tools import (
-    bigquery_mcp_toolset,
     bigquery_query_tool,
     list_storage_objects,
     report_runtime_config,
@@ -27,8 +27,8 @@ root_agent = Agent(
         client_kwargs={"location": BOOTSTRAP.model_location},
     ),
     description=(
-        "Reference agent demonstrating Agent Identity, Gemini Enterprise delegated auth "
-        "and a remote MCP server called with the signed-in user's token."
+        "Reference agent demonstrating Agent Identity for agent-scoped access and "
+        "Gemini Enterprise delegated auth for access as the signed-in user."
     ),
     instruction=runtime_instruction,
     before_model_callback=apply_runtime_model,
@@ -36,7 +36,6 @@ root_agent = Agent(
         report_runtime_config,
         list_storage_objects,
         bigquery_query_tool,
-        bigquery_mcp_toolset,
     ],
 )
 

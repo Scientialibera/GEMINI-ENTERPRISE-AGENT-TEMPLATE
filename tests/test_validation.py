@@ -32,6 +32,10 @@ common = importlib.import_module("common")
 packaging = importlib.import_module("package_agent")
 sys.path.remove(str(DEV))
 
+# Derived from the registry so an agent added to AGENTS is covered here without
+# editing this file.
+ALL_AGENTS = sorted(common.AGENTS)
+
 
 @pytest.fixture(autouse=True)
 def environment(monkeypatch):
@@ -113,7 +117,7 @@ def test_only_missing_services_enabled(monkeypatch):
         bootstrap.ensure_required_services("test-project", (fixture.BIGQUERY_API_SERVICE,))
 
 
-@pytest.mark.parametrize("agent", ["basic_assistant", "auth_reference_agent"])
+@pytest.mark.parametrize("agent", ALL_AGENTS)
 def test_packaging_excludes_cache_and_other_agent(tmp_path, monkeypatch, agent):
     source = tmp_path / agent
     source.mkdir()
@@ -223,12 +227,12 @@ def test_model_callback(monkeypatch):
     apply_runtime_model(None, request)
     assert request.model == "test-model"
 
-    for agent in ("basic_assistant", "auth_reference_agent"):
+    for agent in ALL_AGENTS:
         module = importlib.import_module(f"{agent}.agent")
         assert module.root_agent.before_model_callback is apply_runtime_model
 
 
-@pytest.mark.parametrize("agent", ["basic_assistant", "auth_reference_agent"])
+@pytest.mark.parametrize("agent", ALL_AGENTS)
 def test_every_tool_is_described_to_the_model(agent):
     """ADK builds the tool declaration from the function itself, so a tool
     without a docstring reaches the model with no description."""
@@ -253,7 +257,7 @@ def test_every_tool_is_described_to_the_model(agent):
     assert not undescribed, f"tools advertised to the model without a description: {undescribed}"
 
 
-@pytest.mark.parametrize("agent", ["basic_assistant", "auth_reference_agent"])
+@pytest.mark.parametrize("agent", ALL_AGENTS)
 def test_instruction_resolves_from_runtime_configuration(agent):
     """Prompt text belongs in runtime configuration, not in the agent package."""
     module = importlib.import_module(f"{agent}.agent")
@@ -320,7 +324,7 @@ def test_mcp_toolset_is_wired_to_a_remote_server():
     from gemini_shared.mcp.mcp_google_cloud import BIGQUERY_READONLY_TOOLS
     from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 
-    module = importlib.import_module("auth_reference_agent.tools.bigquery_mcp")
+    module = importlib.import_module("bigquery_mcp_agent.tools.bigquery_mcp")
     params = module.bigquery_mcp_toolset._connection_params
     assert isinstance(params, StreamableHTTPConnectionParams)
     assert params.url.startswith("https://")

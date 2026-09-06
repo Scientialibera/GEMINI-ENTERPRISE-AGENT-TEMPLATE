@@ -27,10 +27,12 @@ dev = [
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
 # Import workspace packages from source, so tests run without an editable install.
+# Add a line here when adding an agent.
 pythonpath = [
   "packages/gemini_shared/src",
   "agents/basic_assistant/src",
   "agents/auth_reference_agent/src",
+  "agents/bigquery_mcp_agent/src",
 ]
 
 [tool.ruff]

@@ -58,11 +58,17 @@ COMMON_REQUIREMENTS = (
 )
 
 AUTH_REFERENCE_REQUIREMENTS = (
-    # The mcp extra pulls the MCP client used to reach remote MCP servers.
-    "google-adk[agent-identity,extensions,mcp]==2.7.1",
+    # The agent-identity extra supplies the runtime's own credentials.
+    "google-adk[agent-identity,extensions]==2.7.1",
     "google-cloud-storage==3.13.1",
     "google-cloud-bigquery==3.43.0",
     "google-auth>=2.35.0,<3.0.0",
+)
+
+BIGQUERY_MCP_REQUIREMENTS = (
+    # The mcp extra pulls the client used to reach remote MCP servers. No
+    # BigQuery client library: the server owns the calls, not this agent.
+    "google-adk[extensions,mcp]==2.7.1",
 )
 
 
@@ -129,19 +135,45 @@ AGENTS: dict[str, AgentSpec] = {
             "Reference pro-code ADK agent for the two supported authentication patterns. "
             "Agent Identity is used for agent-scoped access to Cloud Storage, while a "
             "Gemini Enterprise delegated user token is used to query BigQuery under the "
-            "signed-in user's own permissions, both from a tool in this repository and "
-            "from Google's managed BigQuery MCP server."
+            "signed-in user's own permissions. Both tools are written in this repository "
+            "against the Google Cloud APIs."
         ),
         invocation_description=(
             "Use this agent to demonstrate agent authentication: report which identity the "
-            "runtime is using, or query BigQuery as the signed-in user through either a "
-            "local tool or a remote MCP server."
+            "runtime is using, read Cloud Storage as the agent itself, or query BigQuery as "
+            "the signed-in user."
         ),
         starter_prompts=(
             "Which identity is this agent running as?",
             "List the BigQuery datasets and tables I can access.",
             "Show total revenue by region from the sample orders table.",
-            "Use the MCP tools to list my BigQuery datasets.",
+        ),
+    ),
+    "bigquery_mcp_agent": AgentSpec(
+        package_name="bigquery-mcp-agent",
+        module="bigquery_mcp_agent.agent",
+        display_name="BigQuery MCP Agent",
+        extra_packages=(
+            "agents/bigquery_mcp_agent/src/bigquery_mcp_agent",
+            "packages/gemini_shared/src/gemini_shared",
+        ),
+        requirements=COMMON_REQUIREMENTS + BIGQUERY_MCP_REQUIREMENTS,
+        required_remote_bootstrap_env=(AUTHORIZATION_ID_ENV,),
+        registration_description=(
+            "Pro-code ADK agent whose data tools come from Google's managed BigQuery MCP "
+            "server rather than from this repository. Nothing is deployed to obtain them, "
+            "the tool list is filtered to read-only operations, and each call carries the "
+            "signed-in user's delegated token."
+        ),
+        invocation_description=(
+            "Use this agent to explore BigQuery through a remote MCP server: list datasets "
+            "and tables, inspect their schemas, or run a read-only query as the signed-in "
+            "user."
+        ),
+        starter_prompts=(
+            "List my BigQuery datasets using the MCP tools.",
+            "Describe the schema of the sample orders table.",
+            "Which MCP tools are available to you?",
         ),
     ),
 }

@@ -16,9 +16,15 @@ agents/                     one independently deployable ADK application each
 │       ├── config.py       bootstrap values resolved once at import
 │       └── tools/          one module per tool
 │           ├── bigquery_query.py        BigQuery as the signed-in user
-│           ├── bigquery_mcp.py          the same, via a remote MCP server
 │           ├── storage_objects.py       Cloud Storage as the agent
 │           └── runtime_config_status.py active runtime configuration
+├── bigquery_mcp_agent/     tools served by a remote MCP server, not written here
+│   └── src/bigquery_mcp_agent/
+│       ├── agent.py
+│       ├── config.py
+│       └── tools/
+│           ├── bigquery_mcp.py          BigQuery via Google's managed server
+│           └── runtime_config_status.py
 └── basic_assistant/        minimal agent; the shape to copy for a new one
     └── src/basic_assistant/
         ├── agent.py
@@ -298,13 +304,14 @@ Developer helpers never create or modify IAM.
 
 ## Authentication reference agent
 
-`auth_reference_agent` shows both patterns:
+`auth_reference_agent` shows both patterns, using tools written here against the Google Cloud APIs:
 
 | Tool | Identity | Reaches |
 |---|---|---|
 | `list_storage_objects` | Agent Identity | Cloud Storage |
 | `query_bigquery` | delegated user token | BigQuery |
-| `bigquery_mcp_toolset` | delegated user token | BigQuery, via MCP |
+
+Reaching BigQuery through a remote MCP server instead is a separate agent, `bigquery_mcp_agent`, so each agent demonstrates one way of obtaining its tools.
 
 The scheme, provider and registration live in `gemini_shared.auth.delegated`, shared by every agent.
 
@@ -320,7 +327,7 @@ A new scheme must set a `type_` default; rehydration matches on that value.
 
 ## Remote MCP servers
 
-An MCP server supplies tools the agent did not write. `auth_reference_agent` uses Google's managed BigQuery server, so nothing is deployed:
+An MCP server supplies tools the agent did not write. `bigquery_mcp_agent` uses Google's managed BigQuery server, so nothing is deployed:
 
 ```python
 bigquery_mcp_toolset = bigquery_readonly_toolset(
