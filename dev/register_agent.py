@@ -143,12 +143,16 @@ def _build_agent(spec: AgentSpec, reasoning_engine: str, project_id: str) -> dic
     return agent
 
 
-def _resolve_client_secret(project_id: str) -> str:
+def _resolve_client_secret(project_id: str, spec: AgentSpec) -> str:
     """Return the OAuth client secret, preferring Secret Manager over the environment.
 
-    Secret Manager keeps the payload off developer workstations.
+    Secret Manager keeps the payload off developer workstations. The agent's own
+    secret name is used unless the environment overrides it for a single run.
     """
-    secret_name = os.getenv(OAUTH_CLIENT_SECRET_NAME_ENV, "").strip()
+    secret_name = (
+        os.getenv(spec.oauth_client_secret_name_env, "").strip()
+        or os.getenv(OAUTH_CLIENT_SECRET_NAME_ENV, "").strip()
+    )
     if secret_name:
         resource = (
             secret_name
@@ -157,10 +161,17 @@ def _resolve_client_secret(project_id: str) -> str:
         )
         if "/versions/" not in resource:
             resource = f"{resource}/versions/latest"
+        from google.api_core.exceptions import NotFound
         from google.cloud import secretmanager
 
         client = secretmanager.SecretManagerServiceClient()
-        return client.access_secret_version(name=resource).payload.data.decode("utf-8").strip()
+        try:
+            payload = client.access_secret_version(name=resource).payload.data
+        except NotFound:
+            # Not fatal here: the caller reports what to create, naming both the
+            # OAuth client and this secret, rather than surfacing a bare 404.
+            return ""
+        return payload.decode("utf-8").strip()
 
     return os.getenv(OAUTH_CLIENT_SECRET_ENV, "").strip()
 
@@ -180,24 +191,35 @@ def _authorization_exists(project_id: str, authorization_id: str) -> bool:
     return False
 
 
-def ensure_authorization(project_id: str, authorization_id: str) -> None:
+def ensure_authorization(project_id: str, authorization_id: str, spec: AgentSpec) -> None:
     """Create the Gemini Enterprise authorization when it does not exist.
 
-    One authorization serves one agent, so each agent needing delegated access
-    requires its own.
+    One authorization serves one agent, and one OAuth client backs one
+    authorization: Gemini Enterprise caches the user's consent per OAuth
+    client, so two agents sharing a client share a grant and the second never
+    receives a token of its own.
     """
     if _authorization_exists(project_id, authorization_id):
         print(f"AUTHORIZATION_EXISTS={authorization_id}")
         return
 
-    client_id = os.getenv(OAUTH_CLIENT_ID_ENV, "").strip()
-    client_secret = _resolve_client_secret(project_id)
+    client_id = (
+        os.getenv(spec.oauth_client_id_env, "").strip()
+        or os.getenv(OAUTH_CLIENT_ID_ENV, "").strip()
+    )
+    client_secret = _resolve_client_secret(project_id, spec)
     if not client_id or not client_secret:
         raise SystemExit(
-            f"Authorization '{authorization_id}' does not exist and cannot be created without "
-            f"{OAUTH_CLIENT_ID_ENV} and an OAuth client secret. Set "
-            f"{OAUTH_CLIENT_SECRET_NAME_ENV} to a Secret Manager secret holding the value "
-            f"(preferred), or {OAUTH_CLIENT_SECRET_ENV} for a one-off run."
+            f"{spec.display_name} needs its own OAuth client to create authorization "
+            f"'{authorization_id}'. Gemini Enterprise caches the user's consent per OAuth "
+            "client, so an agent sharing another agent's client never receives a token of its "
+            "own.\n\n"
+            "OAuth clients cannot be created from the CLI. In the Google Cloud console, under "
+            "APIs & Services > Credentials, create a Web application OAuth client and add this "
+            f"authorized redirect URI:\n  {OAUTH_REDIRECT_URI}\n\n"
+            "Then put these in dev/.env.dev:\n"
+            f"  {spec.oauth_client_id_env}=<the new client id>\n"
+            f"  {spec.oauth_client_secret_name_env}=<Secret Manager secret holding its secret>\n"
         )
 
     scope_value = urllib.parse.quote(" ".join(DELEGATED_OAUTH_SCOPES))
@@ -250,8 +272,8 @@ def register_agent(
     """
     del agent_name  # spec carries everything the registration needs.
     authorization_id = os.getenv(AUTHORIZATION_ID_ENV, "").strip()
-    if AUTHORIZATION_ID_ENV in spec.required_remote_bootstrap_env and authorization_id:
-        ensure_authorization(project_id, authorization_id)
+    if spec.uses_delegated_auth and authorization_id:
+        ensure_authorization(project_id, authorization_id, spec)
 
     agent = _build_agent(spec, reasoning_engine, project_id)
 

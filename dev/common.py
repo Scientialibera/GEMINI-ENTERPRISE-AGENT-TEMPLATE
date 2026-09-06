@@ -108,6 +108,33 @@ class AgentSpec:
         """
         return f"{self.package_name}-authz"
 
+    @property
+    def uses_delegated_auth(self) -> bool:
+        """Whether this agent receives a delegated user token."""
+        return AUTHORIZATION_ID_ENV in self.required_remote_bootstrap_env
+
+    @property
+    def oauth_client_id_env(self) -> str:
+        """Environment variable naming this agent's own OAuth client.
+
+        Gemini Enterprise caches the user's consent per OAuth client, so two
+        agents sharing a client share one grant and the second never receives a
+        token of its own. Each delegated-auth agent therefore needs its own
+        client. The id identifies a real project resource, so it lives in the
+        gitignored dev/.env.dev rather than in this registry.
+        """
+        return f"{self.env_prefix}_OAUTH_CLIENT_ID"
+
+    @property
+    def oauth_client_secret_name_env(self) -> str:
+        """Environment variable naming the Secret Manager secret for that client."""
+        return f"{self.env_prefix}_OAUTH_CLIENT_SECRET_NAME"
+
+    @property
+    def env_prefix(self) -> str:
+        """Per-agent prefix for environment variables, derived from the package."""
+        return self.package_name.upper().replace("-", "_")
+
 
 AGENTS: dict[str, AgentSpec] = {
     "basic_assistant": AgentSpec(
