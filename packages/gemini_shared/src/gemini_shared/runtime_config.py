@@ -123,10 +123,8 @@ class RuntimeConfigStore:
     @staticmethod
     def _load_remote(resource_name: str) -> RuntimeConfig:
         bootstrap = get_bootstrap_settings()
-        # ParameterManagerClient builds a regional endpoint whenever location is
-        # truthy, so passing "global" yields the nonexistent host
-        # parametermanager.global.rep.googleapis.com. The global endpoint is the
-        # client default and must be selected by omitting the location.
+        # Passing location="global" builds a nonexistent regional endpoint. The
+        # global endpoint is the client default, selected by omitting location.
         location = bootstrap.parameter_location
         client = (
             ParameterManagerClient()

@@ -1,13 +1,9 @@
 """Take one agent from source to a usable Gemini Enterprise agent.
 
-Runs the whole developer chain in order so a new developer does not have to
-know which helpers exist or how they sequence:
-
     preflight -> package -> deploy (or update) -> register
 
 Each step is idempotent, so re-running is the normal way to ship a change.
-Shared infrastructure remains Terraform's responsibility; this only drives the
-developer-owned Agent Engine and its Gemini Enterprise registration.
+Shared infrastructure remains Terraform's responsibility.
 """
 
 from __future__ import annotations

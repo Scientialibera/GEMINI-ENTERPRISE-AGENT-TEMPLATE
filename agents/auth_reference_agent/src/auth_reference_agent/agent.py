@@ -1,10 +1,11 @@
-"""Reference ADK agent demonstrating Agent Identity and delegated user auth.
+"""Reference agent for the two supported authentication patterns.
 
-The custom delegated-auth scheme, provider class and provider registration
-intentionally remain in this module. A deployed Agent Runtime previously failed
-with ``No auth provider registered for custom auth scheme`` when the provider
-class was imported through a separate module path. Keep this registration local
-to the deployable agent until that runtime behavior is conclusively disproven.
+Agent Identity reads Cloud Storage with the runtime's own identity. Delegated
+auth queries BigQuery with the signed-in user's forwarded token.
+
+Keep the delegated-auth scheme, provider and registration in this module.
+Importing them from a shared module makes the deployed runtime fail with
+``No auth provider registered for custom auth scheme``.
 """
 
 from __future__ import annotations
@@ -255,7 +256,6 @@ root_agent = Agent(
     ],
 )
 
-# Agent Runtime binds the class methods declared on the deployment (create_session,
-# stream_query, ...). A bare Agent exposes none of them, so the served object must
-# be the AdkApp wrapper. root_agent stays exported for local `adk` execution.
+# Agent Runtime serves the AdkApp wrapper; a bare Agent exposes none of the
+# declared class methods. root_agent stays exported for local `adk` runs.
 app = AdkApp(agent=root_agent, enable_tracing=True)

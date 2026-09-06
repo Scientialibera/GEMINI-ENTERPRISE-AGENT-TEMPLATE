@@ -25,7 +25,8 @@ dev/
 ├── run_local.py
 ├── deploy_dev.py
 ├── update_dev.py
-└── register_agent.py
+├── register_agent.py
+└── release_dev.py
 
 tests/
 pyproject.toml
@@ -147,6 +148,8 @@ The initial sequence is:
 11. run register_agent.py to publish that runtime into a Gemini Enterprise app
 ```
 
+`release_dev.py --agent <name>` runs steps 6, 10 and 11 in one command.
+
 Deploying an Agent Engine does not make it visible in Gemini Enterprise. Step 11 is what puts it on the Agents page and enables the delegated consent flow.
 
 Run the developer platform preflight:
@@ -247,7 +250,7 @@ Registration is idempotent. An agent with the same display name is patched to po
 
 Each agent's registration metadata — description, invocation description and starter prompts — lives in its `AgentSpec` in `dev/common.py`, so the registered listing stays in the repository rather than being maintained by hand in the console.
 
-Agents with delegated tools additionally need a Gemini Enterprise authorization, which triggers the user consent flow and forwards the resulting token to the agent. `register_agent.py` reuses `GEMINI_ENTERPRISE_AUTHORIZATION_ID` when it already exists, and creates it when `GEMINI_ENTERPRISE_OAUTH_CLIENT_ID` and `GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET` are supplied for that run. The secret is read from the environment and is never written to the repository.
+Agents with delegated tools additionally need a Gemini Enterprise authorization, which triggers the user consent flow and forwards the resulting token to the agent. `register_agent.py` reuses `GEMINI_ENTERPRISE_AUTHORIZATION_ID` when it already exists, and creates it otherwise. Set `GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET_NAME` to a Secret Manager secret so the payload never reaches a workstation; `GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET` remains available for a sandbox with no managed secret yet.
 
 One authorization serves one agent. Registering a second agent against an authorization already bound elsewhere fails with `is used by another agent`; create a separate authorization id for each agent that needs delegated access.
 

@@ -210,12 +210,9 @@ def build_client(project_id: str, location: str, staging_bucket: str) -> vertexa
 def staged_extra_packages(spec: AgentSpec) -> Iterator[list[str]]:
     """Yield flattened extra_package paths for upload.
 
-    The SDK tars each extra_package with its repository-relative path intact and
-    the runtime extracts that tar at the container root. A src-layout package at
-    agents/<agent>/src/<pkg> would therefore land at the same nested path and not
-    be importable as <pkg>. Copying each package into a flat staging directory
-    makes the uploaded layout match what the runtime imports, and mirrors the
-    archive layout produced by package_agent.py.
+    The SDK preserves each path in the uploaded tar and the runtime extracts it
+    at the container root, so a src-layout package must be staged flat to be
+    importable by name.
     """
     with tempfile.TemporaryDirectory(prefix="agent-deploy-") as temp_dir:
         staged_root = Path(temp_dir)

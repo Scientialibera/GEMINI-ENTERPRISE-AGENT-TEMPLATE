@@ -1,13 +1,10 @@
 """Register a deployed Agent Engine as an agent in a Gemini Enterprise app.
 
-Deployment and registration are separate steps. `deploy_dev.py` creates the
-Agent Engine; this script publishes that runtime into a Gemini Enterprise app
-so users can discover and invoke it, and so Gemini Enterprise runs the OAuth
-consent flow that forwards a delegated user token to the agent's authenticated
-tools.
+Deployment and registration are separate. `deploy_dev.py` creates the Agent
+Engine; registration publishes it into an app and enables the OAuth consent
+flow that forwards a delegated user token to authenticated tools.
 
-Registration is idempotent: an existing agent with the same display name is
-patched to point at the current Reasoning Engine rather than duplicated.
+Idempotent: an agent with the same display name is patched, not duplicated.
 """
 
 from __future__ import annotations
@@ -148,10 +145,8 @@ def _build_agent(spec: AgentSpec, reasoning_engine: str, project_id: str) -> dic
 def _resolve_client_secret(project_id: str) -> str:
     """Return the OAuth client secret, preferring Secret Manager over the environment.
 
-    Reading from Secret Manager keeps the payload out of developer environment
-    files: Terraform stores it once and grants the release principal access, so
-    nobody copies the value between machines. The environment variable remains
-    supported for a one-off run in a sandbox that has no managed secret yet.
+    Secret Manager keeps the payload off developer workstations. The environment
+    variable remains supported for a sandbox with no managed secret yet.
     """
     secret_name = os.getenv(OAUTH_CLIENT_SECRET_NAME_ENV, "").strip()
     if secret_name:
@@ -186,11 +181,10 @@ def _authorization_exists(project_id: str, authorization_id: str) -> bool:
 
 
 def ensure_authorization(project_id: str, authorization_id: str) -> None:
-    """Create the Gemini Enterprise authorization when it does not already exist.
+    """Create the Gemini Enterprise authorization when it does not exist.
 
-    An authorization binds one OAuth client to one agent, so each agent needing
-    delegated user access requires its own. The client secret is read from the
-    environment at call time and is never written to the repository.
+    One authorization serves one agent, so each agent needing delegated access
+    requires its own.
     """
     if _authorization_exists(project_id, authorization_id):
         print(f"AUTHORIZATION_EXISTS={authorization_id}")
@@ -252,9 +246,7 @@ def register_agent(
 ) -> str:
     """Publish a deployed Reasoning Engine into a Gemini Enterprise app.
 
-    Creates the delegated-auth authorization first when the agent requires one
-    and it does not exist yet. Patches an existing agent with the same display
-    name rather than registering a duplicate.
+    Creates the delegated-auth authorization first when the agent needs one.
     """
     del agent_name  # spec carries everything the registration needs.
     authorization_id = os.getenv(AUTHORIZATION_ID_ENV, "").strip()

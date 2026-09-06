@@ -46,7 +46,6 @@ root_agent = Agent(
     tools=[runtime_config_tool],
 )
 
-# Agent Runtime binds the class methods declared on the deployment (create_session,
-# stream_query, ...). A bare Agent exposes none of them, so the served object must
-# be the AdkApp wrapper. root_agent stays exported for local `adk` execution.
+# Agent Runtime serves the AdkApp wrapper; a bare Agent exposes none of the
+# declared class methods. root_agent stays exported for local `adk` runs.
 app = AdkApp(agent=root_agent, enable_tracing=True)

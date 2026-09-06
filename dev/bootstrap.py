@@ -200,19 +200,16 @@ def ensure_staging_bucket(project_id: str, location: str, bucket_uri: str) -> No
 
 
 def ensure_runtime_parameter(project_id: str) -> None:
-    """Verify the runtime parameter is readable by the identity the agent will use.
+    """Verify the runtime parameter is readable by the identity the agent uses.
 
-    This must resolve through Application Default Credentials rather than the
-    gcloud CLI. `gcloud` authenticates with its own OAuth client, which can be
-    denied while ADC is authorized for the same user, so a CLI-based check
-    reports a perfectly valid parameter as missing and blocks deployment.
+    Must resolve through ADC, not the gcloud CLI: gcloud uses its own OAuth
+    client, which can be denied while ADC is authorized for the same user.
     """
     del project_id  # CONFIG_PARAMETER and ADC determine the project.
     parameter = _real_env_value(CONFIG_PARAMETER_ENV)
 
-    # Reuse the shared loader so the preflight validates exactly what the
-    # deployed agent resolves, including the versions/latest suffix and the
-    # runtime config schema.
+    # Validate through the shared loader so the preflight checks exactly what
+    # the deployed agent resolves.
     try:
         from gemini_shared import get_runtime_config
 
