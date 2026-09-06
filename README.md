@@ -271,15 +271,17 @@ Delegated BigQuery access is different: the BigQuery tool executes with the sign
 1. Agent Identity for backend access under the runtime's own identity.
 2. Gemini Enterprise delegated authentication using the OAuth token forwarded in session state.
 
-The custom delegated-auth provider class and `CredentialManager.register_auth_provider(...)` must remain directly in `auth_reference_agent/agent.py`.
+The delegated-auth scheme, provider and registration live in `gemini_shared.delegated_auth`, so every agent shares one implementation.
 
-A previous Agent Runtime deployment reproduced:
+A deployed scheme arrives as a base `CustomAuthScheme` and ADK rehydrates it by matching `type_` against `CustomAuthScheme.__subclasses__()`. The subclass therefore has to exist by the time a tool runs, which means the defining module must already be imported. Importing anything from `gemini_shared` satisfies that.
+
+The failure mode is an unimported module, not a shared one:
 
 ```text
 No auth provider registered for custom auth scheme
 ```
 
-when the custom provider class was moved into another module. Shared utility/runtime code may move to `gemini_shared`; the provider class and registration must not move until the deployed class-identity behavior is conclusively proven safe.
+A new scheme must set a `type_` default, since rehydration matches on that value.
 
 ## Adding an agent
 

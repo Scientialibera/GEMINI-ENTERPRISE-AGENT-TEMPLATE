@@ -2,10 +2,6 @@
 
 Agent Identity reads Cloud Storage with the runtime's own identity. Delegated
 auth queries BigQuery with the signed-in user's forwarded token.
-
-Keep the delegated-auth scheme, provider and registration in this module.
-Importing them from a shared module makes the deployed runtime fail with
-``No auth provider registered for custom auth scheme``.
 """
 
 from __future__ import annotations
@@ -13,23 +9,23 @@ from __future__ import annotations
 import datetime
 import decimal
 import os
-from typing import Literal, override
 
-from gemini_shared import get_bootstrap_settings, get_runtime_config, get_runtime_config_status
+from gemini_shared import (
+    delegated_auth_config,
+    get_bootstrap_settings,
+    get_runtime_config,
+    get_runtime_config_status,
+    read_delegated_token,
+)
 from google.adk.agents import Agent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.readonly_context import ReadonlyContext
-from google.adk.auth.auth_credential import AuthCredential, AuthCredentialTypes, OAuth2Auth
-from google.adk.auth.auth_schemes import CustomAuthScheme
-from google.adk.auth.auth_tool import AuthConfig
-from google.adk.auth.base_auth_provider import BaseAuthProvider
-from google.adk.auth.credential_manager import CredentialManager
+from google.adk.auth.auth_credential import AuthCredential
 from google.adk.models import Gemini
 from google.adk.models.llm_request import LlmRequest
 from google.adk.tools.authenticated_function_tool import AuthenticatedFunctionTool
 from google.cloud import bigquery, storage
 from google.oauth2.credentials import Credentials as OAuth2Credentials
-from pydantic import Field
 from vertexai.agent_engines import AdkApp
 
 RUNTIME_ENGINE_ID_ENV = "GOOGLE_CLOUD_AGENT_ENGINE_ID"
@@ -44,67 +40,6 @@ PROJECT_ID = BOOTSTRAP.project_id
 GEMINI_ENTERPRISE_AUTHORIZATION_ID = BOOTSTRAP.gemini_enterprise_authorization_id
 if GEMINI_ENTERPRISE_AUTHORIZATION_ID is None:
     raise RuntimeError("GEMINI_ENTERPRISE_AUTHORIZATION_ID is required for this agent.")
-
-
-class GeminiEnterpriseDelegatedAuthProviderScheme(CustomAuthScheme):
-    """Auth scheme for the token forwarded by Gemini Enterprise."""
-
-    type_: Literal["GeminiEnterpriseDelegatedAuthProviderScheme"] = Field(
-        default="GeminiEnterpriseDelegatedAuthProviderScheme",
-        alias="type",
-    )
-    name: str | None = None
-
-
-class GeminiEnterpriseDelegatedAuthProvider(BaseAuthProvider):
-    """Read a delegated OAuth token from the ADK session state."""
-
-    @property
-    @override
-    def supported_auth_schemes(
-        self,
-    ) -> tuple[type[GeminiEnterpriseDelegatedAuthProviderScheme], ...]:
-        return (GeminiEnterpriseDelegatedAuthProviderScheme,)
-
-    @override
-    async def get_auth_credential(
-        self,
-        auth_config: AuthConfig,
-        context: CallbackContext | None,
-    ) -> AuthCredential:
-        auth_scheme = auth_config.auth_scheme
-        if not isinstance(auth_scheme, GeminiEnterpriseDelegatedAuthProviderScheme):
-            raise ValueError(
-                f"Expected GeminiEnterpriseDelegatedAuthProviderScheme, got {type(auth_scheme)}"
-            )
-        if context is None or context.session is None:
-            raise ValueError(
-                "Gemini Enterprise delegated auth requires a context with a valid session."
-            )
-
-        state = context.session.state
-        if auth_scheme.name and auth_scheme.name in state:
-            token = state[auth_scheme.name]
-        elif len(state) == 1:
-            token = next(iter(state.values()))
-        else:
-            raise ValueError("No matching Gemini Enterprise authorization found in session state.")
-
-        return AuthCredential(
-            auth_type=AuthCredentialTypes.OAUTH2,
-            oauth2=OAuth2Auth(access_token=token),
-        )
-
-
-CredentialManager.register_auth_provider(GeminiEnterpriseDelegatedAuthProvider())
-
-
-def _read_delegated_token(credential: AuthCredential) -> str | None:
-    if credential.oauth2 and credential.oauth2.access_token:
-        return credential.oauth2.access_token
-    if credential.http and credential.http.credentials:
-        return credential.http.credentials.token
-    return None
 
 
 def template_agent_identity_tool() -> dict[str, object]:
@@ -143,7 +78,7 @@ def template_agent_identity_tool() -> dict[str, object]:
 
 
 def _delegated_bigquery_client(credential: AuthCredential) -> bigquery.Client:
-    token = _read_delegated_token(credential)
+    token = read_delegated_token(credential)
     if not token:
         raise ValueError("No delegated OAuth token was supplied to the tool.")
     return bigquery.Client(
@@ -212,11 +147,7 @@ async def _template_bigquery_query(
 
 template_bigquery_query_tool = AuthenticatedFunctionTool(
     func=_template_bigquery_query,
-    auth_config=AuthConfig(
-        auth_scheme=GeminiEnterpriseDelegatedAuthProviderScheme(
-            name=GEMINI_ENTERPRISE_AUTHORIZATION_ID,
-        )
-    ),
+    auth_config=delegated_auth_config(GEMINI_ENTERPRISE_AUTHORIZATION_ID),
 )
 
 

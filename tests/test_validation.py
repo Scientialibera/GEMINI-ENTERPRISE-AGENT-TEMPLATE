@@ -16,6 +16,11 @@ from unittest.mock import Mock
 import pytest
 from gemini_shared.bootstrap import get_bootstrap_settings
 from gemini_shared.runtime_config import RuntimeConfig, RuntimeConfigStore
+from google.adk.auth.auth_credential import (
+    AuthCredential,
+    AuthCredentialTypes,
+    OAuth2Auth,
+)
 from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 
@@ -196,9 +201,9 @@ def test_nested_bigquery_serialization_and_delegated_client(monkeypatch):
     assert json.loads(json.dumps(module._json_safe(value)))["nested"][0]["date"] == "2026-01-01"
     client = Mock()
     monkeypatch.setattr(module.bigquery, "Client", client)
-    credential = module.AuthCredential(
-        auth_type=module.AuthCredentialTypes.OAUTH2,
-        oauth2=module.OAuth2Auth(access_token=secrets.token_urlsafe(16)),
+    credential = AuthCredential(
+        auth_type=AuthCredentialTypes.OAUTH2,
+        oauth2=OAuth2Auth(access_token=secrets.token_urlsafe(16)),
     )
     module._delegated_bigquery_client(credential)
     assert isinstance(client.call_args.kwargs["credentials"], module.OAuth2Credentials)
@@ -244,3 +249,25 @@ def test_instruction_resolves_from_runtime_configuration(agent):
     assert callable(module.root_agent.instruction), (
         f"{agent} must resolve its instruction from runtime configuration"
     )
+
+
+def test_delegated_scheme_rehydrates_from_shared_module():
+    """A deployed scheme arrives as a base CustomAuthScheme and is rehydrated by
+    matching type_ against CustomAuthScheme.__subclasses__(), so the provider
+    resolves from gemini_shared without living beside the agent."""
+    from google.adk.auth.auth_schemes import CustomAuthScheme
+    from google.adk.auth.auth_tool import AuthConfig
+    from google.adk.auth.credential_manager import CredentialManager
+
+    importlib.import_module("gemini_shared.delegated_auth")
+
+    deserialized = CustomAuthScheme.model_validate(
+        {"type": "GeminiEnterpriseDelegatedAuthProviderScheme", "name": "unit-test-authorization"}
+    )
+    assert type(deserialized) is CustomAuthScheme
+
+    manager = CredentialManager(auth_config=AuthConfig(auth_scheme=deserialized))
+    token = secrets.token_urlsafe(16)
+    session = SimpleNamespace(state={"unit-test-authorization": token})
+    credential = asyncio.run(manager.get_auth_credential(SimpleNamespace(session=session)))
+    assert credential.oauth2.access_token == token
