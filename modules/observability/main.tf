@@ -16,7 +16,10 @@ resource "google_logging_project_sink" "agent_logs" {
     resource.type="aiplatform.googleapis.com/ReasoningEngine"
   EOT
 
-  unique_writer_identity = false
+  # Cloud Logging assigns a dedicated writer identity to a project sink and
+  # reports it back as true regardless of what is requested, so asking for
+  # false leaves every plan showing the same drift.
+  unique_writer_identity = true
 }
 
 resource "google_logging_metric" "agent_errors" {
