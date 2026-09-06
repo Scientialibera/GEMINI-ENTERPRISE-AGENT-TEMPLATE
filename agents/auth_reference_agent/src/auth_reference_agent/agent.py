@@ -8,32 +8,24 @@ from __future__ import annotations
 
 import datetime
 import decimal
-import os
 
 from gemini_shared import (
+    apply_runtime_model,
     delegated_auth_config,
     get_bootstrap_settings,
     get_runtime_config,
     get_runtime_config_status,
     read_delegated_token,
+    runtime_instruction,
 )
+from gemini_shared.agent_identity import list_bucket_objects
 from google.adk.agents import Agent
-from google.adk.agents.callback_context import CallbackContext
-from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.auth.auth_credential import AuthCredential
 from google.adk.models import Gemini
-from google.adk.models.llm_request import LlmRequest
 from google.adk.tools.authenticated_function_tool import AuthenticatedFunctionTool
-from google.cloud import bigquery, storage
+from google.cloud import bigquery
 from google.oauth2.credentials import Credentials as OAuth2Credentials
 from vertexai.agent_engines import AdkApp
-
-RUNTIME_ENGINE_ID_ENV = "GOOGLE_CLOUD_AGENT_ENGINE_ID"
-AUTHENTICATION_MODE_AGENT_IDENTITY = "Agent Identity"
-AUTHENTICATION_MODE_LOCAL_ADC = "local ADC"
-EXECUTION_ENVIRONMENT_RUNTIME = "Agent Runtime"
-EXECUTION_ENVIRONMENT_LOCAL = "local development"
-LOCAL_ENGINE_ID = "not available locally"
 
 BOOTSTRAP = get_bootstrap_settings(require_auth=True)
 PROJECT_ID = BOOTSTRAP.project_id
@@ -43,38 +35,8 @@ if GEMINI_ENTERPRISE_AUTHORIZATION_ID is None:
 
 
 def template_agent_identity_tool() -> dict[str, object]:
-    """List a bounded number of objects using Agent Identity or local ADC."""
-    runtime = get_runtime_config()
-    bucket_name = runtime.agent_identity_bucket_name
-    if not bucket_name:
-        raise RuntimeError(
-            "agent_identity_bucket_name is required to use the Agent Identity storage example."
-        )
-
-    client = storage.Client(project=PROJECT_ID)
-    object_names = [
-        blob.name
-        for blob in client.list_blobs(
-            bucket_name,
-            max_results=runtime.storage_object_limit,
-        )
-    ]
-    runtime_engine_id = os.getenv(RUNTIME_ENGINE_ID_ENV)
-    running_on_runtime = bool(runtime_engine_id)
-    return {
-        "authentication_mode": (
-            AUTHENTICATION_MODE_AGENT_IDENTITY
-            if running_on_runtime
-            else AUTHENTICATION_MODE_LOCAL_ADC
-        ),
-        "execution_environment": (
-            EXECUTION_ENVIRONMENT_RUNTIME if running_on_runtime else EXECUTION_ENVIRONMENT_LOCAL
-        ),
-        "reasoning_engine_id": runtime_engine_id or LOCAL_ENGINE_ID,
-        "bucket": bucket_name,
-        "object_count_returned": len(object_names),
-        "objects": object_names,
-    }
+    """List objects in the configured bucket using the agent's own identity."""
+    return list_bucket_objects(PROJECT_ID)
 
 
 def _delegated_bigquery_client(credential: AuthCredential) -> bigquery.Client:
@@ -109,9 +71,9 @@ def _discover_bigquery(client: bigquery.Client) -> dict[str, object]:
 def _json_safe(value: object) -> object:
     if isinstance(value, dict):
         return {key: _json_safe(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_json_safe(item) for item in value]
-    if isinstance(value, (datetime.date, datetime.datetime, datetime.time)):
+    if isinstance(value, datetime.date | datetime.datetime | datetime.time):
         return value.isoformat()
     if isinstance(value, decimal.Decimal):
         return float(value)
@@ -156,19 +118,6 @@ def template_runtime_config_tool() -> dict[str, object]:
     return get_runtime_config_status()
 
 
-def _runtime_instruction(readonly_context: ReadonlyContext) -> str:
-    del readonly_context
-    return get_runtime_config().instruction
-
-
-def _apply_runtime_model(
-    callback_context: CallbackContext,
-    llm_request: LlmRequest,
-) -> None:
-    del callback_context
-    llm_request.model = get_runtime_config().model
-
-
 root_agent = Agent(
     name="auth_reference_agent",
     model=Gemini(
@@ -178,8 +127,8 @@ root_agent = Agent(
     description=(
         "Reference agent demonstrating Agent Identity and Gemini Enterprise delegated auth."
     ),
-    instruction=_runtime_instruction,
-    before_model_callback=_apply_runtime_model,
+    instruction=runtime_instruction,
+    before_model_callback=apply_runtime_model,
     tools=[
         template_runtime_config_tool,
         template_agent_identity_tool,

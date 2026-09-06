@@ -216,10 +216,16 @@ def test_nested_bigquery_serialization_and_delegated_client(monkeypatch):
 
 
 def test_model_callback(monkeypatch):
-    module = importlib.import_module("basic_assistant.agent")
+    """Both agents share one implementation, so exercise it directly."""
+    from gemini_shared import apply_runtime_model
+
     request = SimpleNamespace(model="old")
-    module._apply_runtime_model(None, request)
+    apply_runtime_model(None, request)
     assert request.model == "test-model"
+
+    for agent in ("basic_assistant", "auth_reference_agent"):
+        module = importlib.import_module(f"{agent}.agent")
+        assert module.root_agent.before_model_callback is apply_runtime_model
 
 
 @pytest.mark.parametrize("agent", ["basic_assistant", "auth_reference_agent"])
@@ -271,3 +277,11 @@ def test_delegated_scheme_rehydrates_from_shared_module():
     session = SimpleNamespace(state={"unit-test-authorization": token})
     credential = asyncio.run(manager.get_auth_credential(SimpleNamespace(session=session)))
     assert credential.oauth2.access_token == token
+
+
+def test_agent_identity_tooling_has_no_delegated_auth_prerequisite(monkeypatch):
+    """Storage access uses the runtime's own identity, so importing it must not
+    require a Gemini Enterprise authorization the way delegated auth does."""
+    monkeypatch.delenv("GEMINI_ENTERPRISE_AUTHORIZATION_ID", raising=False)
+    module = importlib.reload(importlib.import_module("gemini_shared.agent_identity"))
+    assert callable(module.list_bucket_objects)
