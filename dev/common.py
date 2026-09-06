@@ -178,10 +178,14 @@ def require_dev_environment(
             f"'{DEV_ENVIRONMENT}'. Shared QA/prod deployment belongs to Terraform."
         )
 
+    # An agent defaults to its own parameter. Resolving it into the environment
+    # here keeps every later reader — the deployed env_vars, the prerequisite
+    # check and gemini_shared itself — on the same value.
+    if require_parameter and spec is not None and is_missing_or_placeholder(CONFIG_PARAMETER_ENV):
+        os.environ[CONFIG_PARAMETER_ENV] = spec.config_parameter_id
+
     required = list(COMMON_REQUIRED_REMOTE_ENV)
-    # An agent defaults to its own parameter, so CONFIG_PARAMETER is only
-    # required when no agent supplies one.
-    if require_parameter and spec is None:
+    if require_parameter:
         required.append(CONFIG_PARAMETER_ENV)
     missing = [name for name in required if is_missing_or_placeholder(name)]
     if missing:
@@ -207,11 +211,10 @@ def validate_agent_remote_environment(spec: AgentSpec) -> None:
         )
 
 
-def runtime_env(spec: AgentSpec | None = None) -> dict[str, str]:
-    env = {key: os.environ[key] for key in RUNTIME_ENV_KEYS if not is_missing_or_placeholder(key)}
-    if spec is not None and is_missing_or_placeholder(CONFIG_PARAMETER_ENV):
-        env[CONFIG_PARAMETER_ENV] = spec.config_parameter_id
-    return env
+def runtime_env() -> dict[str, str]:
+    # require_dev_environment resolves the agent's parameter into the
+    # environment before this runs.
+    return {key: os.environ[key] for key in RUNTIME_ENV_KEYS if not is_missing_or_placeholder(key)}
 
 
 def load_root_agent(spec: AgentSpec) -> Any:
@@ -268,7 +271,7 @@ def deployment_config(
         "requirements": list(spec.requirements),
         "extra_packages": list(extra_packages),
         "staging_bucket": staging_bucket,
-        "env_vars": runtime_env(spec),
+        "env_vars": runtime_env(),
     }
 
 
