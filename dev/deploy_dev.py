@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+import argparse
+import os
+
+from bootstrap import ensure_dev_prerequisites
+from common import (
+    ROOT,
+    AgentSpec,
+    build_app,
+    build_client,
+    deployment_config,
+    get_agent_spec,
+    load_environment,
+    require_dev_environment,
+    save_state,
+    staged_extra_packages,
+    validate_agent_remote_environment,
+)
+from vertexai import types
+
+
+def deploy_agent(
+    agent_name: str,
+    project_id: str,
+    location: str,
+    staging_bucket: str,
+    spec: AgentSpec,
+) -> str:
+    """Create a developer-owned Agent Engine and record its resource name."""
+    validate_agent_remote_environment(spec)
+
+    client = build_client(project_id, location, staging_bucket)
+    app = build_app(spec)
+    with staged_extra_packages(spec) as extra_packages:
+        remote = client.agent_engines.create(
+            agent=app,
+            config={
+                "display_name": f"{spec.display_name} [dev]",
+                **deployment_config(spec, staging_bucket, extra_packages),
+                "identity_type": types.IdentityType.AGENT_IDENTITY,
+            },
+        )
+    resource_name = remote.api_resource.name
+    save_state(agent_name, resource_name)
+    return resource_name
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Create a developer-owned Agent Engine instance in dev."
+    )
+    parser.add_argument("--agent", required=True)
+    args = parser.parse_args()
+
+    os.chdir(ROOT)
+    load_environment(".env.dev")
+    project_id, location, staging_bucket = require_dev_environment()
+    spec = get_agent_spec(args.agent)
+    ensure_dev_prerequisites(project_id, location, staging_bucket)
+
+    resource_name = deploy_agent(args.agent, project_id, location, staging_bucket, spec)
+    print(f"DEPLOYED_DEV_RESOURCE={resource_name}")
+
+
+if __name__ == "__main__":
+    main()
