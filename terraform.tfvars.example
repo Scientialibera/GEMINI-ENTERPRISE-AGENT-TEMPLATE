@@ -28,14 +28,16 @@ runtime_config = {
   agent_identity_bucket_name = "REPLACE_IF_USING_AGENT_IDENTITY_STORAGE_TOOL"
   storage_object_limit       = "10"
   bigquery_query_row_limit   = "100"
-  mcp_server_url             = ""
 }
 
 # BOOTSTRAP ONLY. Changing these values can create a new Agent Runtime revision.
+# MCP_SERVER_URL belongs here, not in runtime_config: the toolset is bound when
+# the agent is constructed, and RuntimeConfig rejects keys it does not define.
 bootstrap_env = {
   BOOTSTRAP_MODEL                    = "gemini-3.7-flash"
   GEMINI_MODEL_LOCATION              = "global"
   GEMINI_ENTERPRISE_AUTHORIZATION_ID = "REPLACE_IF_USING_AUTH_REFERENCE_AGENT"
+  MCP_SERVER_URL                     = "https://bigquery.googleapis.com/mcp"
 }
 
 # SECRETS
