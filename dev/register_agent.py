@@ -190,6 +190,42 @@ def _resolve_client_secret(project_id: str, spec: AgentSpec) -> str:
     return supplied
 
 
+def _verify_client_credentials(client_id: str, client_secret: str, spec: AgentSpec) -> None:
+    """Fail when the secret does not belong to the client id.
+
+    A mismatched pair is accepted when the authorization is created and only
+    surfaces later as an endless consent loop: Google authenticates the user,
+    the code-for-token exchange fails with invalid_client, and Gemini
+    Enterprise asks again. Exchanging a deliberately invalid code separates the
+    two cases, because Google reports a bad client before it reports a bad
+    code.
+    """
+    response = requests.post(
+        OAUTH_TOKEN_ENDPOINT,
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "authorization_code",
+            "code": "credential-pair-probe",
+            "redirect_uri": OAUTH_CONSENT_REDIRECT_URI,
+        },
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+    if response.json().get("error") != "invalid_client":
+        return
+
+    raise SystemExit(
+        f"The OAuth client secret configured for {spec.display_name} does not belong to its "
+        f"client id.\n\n"
+        f"  client id: {client_id}\n"
+        f"  secret   : Secret Manager '{spec.default_oauth_secret_name}'\n\n"
+        "Google would accept this when the authorization is created and then loop on the "
+        "consent screen forever, because the token exchange fails after the user approves.\n\n"
+        f"Store the secret belonging to that client, then run this again:\n"
+        f"  {spec.oauth_client_secret_env}=<the matching client secret>\n"
+    )
+
+
 def _store_client_secret(project_id: str, secret_id: str, value: str) -> None:
     """Create the Secret Manager secret holding an OAuth client secret."""
     import contextlib
@@ -270,6 +306,8 @@ def ensure_authorization(
             f"'{spec.default_oauth_secret_name}' on that run and read from there afterwards, so "
             "it can then be removed from dev/.env.dev.\n"
         )
+
+    _verify_client_credentials(client_id, client_secret, spec)
 
     scope_value = urllib.parse.quote(" ".join(spec.oauth_scopes))
     redirect_value = urllib.parse.quote(OAUTH_REDIRECT_URI, safe="")
