@@ -21,9 +21,8 @@ locals {
   agent_resource_key      = substr(sha1(join("/", [var.region, var.agent_display_name])), 0, 12)
   effective_log_bucket_id = coalesce(var.log_bucket_id, "agent-engine-${local.agent_resource_key}")
 
-  # Orgless trust domains use the "proj-" prefix. Public documentation shows
-  # "project-", but IAM rejects that form with "member is of an unknown type";
-  # the effectiveIdentity reported by a deployed Agent Engine confirms "proj-".
+  # Orgless trust domains use "proj-". Documentation shows "project-", which
+  # IAM rejects as an unknown member type.
   developer_agent_identity_principal_set = var.developer_agent_identity_organization_id != null ? (
     "principalSet://agents.global.org-${var.developer_agent_identity_organization_id}.system.id.goog/attribute.platformContainer/aiplatform/projects/${data.google_project.current.number}"
     ) : (
@@ -41,12 +40,8 @@ locals {
     ])
   )
 
-  # Secrets are stored, never injected into the Agent Runtime. Runtime secret
-  # injection is not supported for source-archive deployments: a Reasoning
-  # Engine that starts correctly is still reported as failed once secret_env is
-  # attached, with no application-level error. An agent that needs a secret
-  # reads it from Secret Manager at runtime using its own Agent Identity, which
-  # works on every deployment path and keeps the value out of the environment.
+  # Secrets are stored, never injected. An agent that needs a secret reads it
+  # from Secret Manager at runtime using its own Agent Identity.
   managed_secret_reader_bindings = merge([
     for env_name, config in var.managed_secrets : {
       for member in config.accessor_members :
@@ -170,10 +165,8 @@ resource "google_storage_bucket_iam_member" "developer_staging_bucket_writer" {
   member = each.value
 }
 
-# Principals that must read a managed secret directly, such as the release
-# process that creates a Gemini Enterprise authorization from the OAuth client
-# secret. Keeping the payload in Secret Manager means it is never copied into a
-# developer environment file.
+# Principals that read a managed secret themselves, such as the release process
+# that creates a Gemini Enterprise authorization from the OAuth client secret.
 resource "google_secret_manager_secret_iam_member" "managed_secret_readers" {
   for_each = local.managed_secret_reader_bindings
 
@@ -226,11 +219,8 @@ resource "google_project_iam_member" "developer_agent_identity_common" {
   role    = each.value
   member  = local.developer_agent_identity_principal_set
 
-  # Intentionally independent of module.agent_engine. This grant covers Agent
-  # Identities of developer-created Agent Engines, which are deployed from the
-  # agent repository and must be able to read runtime configuration even when
-  # no Terraform-managed Agent Engine exists yet. Ordering it after the module
-  # would make a first-time developer deployment unusable.
+  # Independent of module.agent_engine: developer-created Agent Engines need
+  # this grant even when no Terraform-managed engine exists yet.
   depends_on = [google_project_service.required]
 }
 
