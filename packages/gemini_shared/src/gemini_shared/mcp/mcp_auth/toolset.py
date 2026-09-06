@@ -1,9 +1,11 @@
 """Connect an agent to a remote MCP server over Streamable HTTP.
 
-The server URL is runtime configuration, so pointing an agent at a different
-MCP server is a Terraform apply rather than a redeploy. Nothing here assumes a
-self-hosted server: Google publishes managed endpoints such as
+The server supplies the tools, so none are defined here. Works against any
+Streamable HTTP endpoint, including Google's managed servers such as
 ``https://bigquery.googleapis.com/mcp``.
+
+The URL is bootstrap env: the toolset is built at construction, so changing it
+needs a redeploy.
 """
 
 from __future__ import annotations
@@ -32,9 +34,10 @@ def delegated_mcp_toolset(
     Args:
         server_url: Streamable HTTP endpoint of the MCP server.
         authorization_id: Gemini Enterprise authorization supplying the token.
-        tool_filter: Tool names to expose. Omit to expose everything the server
-            offers, which also means new server-side tools appear unannounced.
-        tool_name_prefix: Prefix distinguishing these tools from local ones.
+        tool_filter: Client-side allowlist of tool names. ADK discards the rest
+            before the model sees them. Omit and every server tool is exposed,
+            including ones the server adds later.
+        tool_name_prefix: Prefix keeping these names distinct from local tools.
         timeout_seconds: Per-request timeout.
         tool_list_cache_ttl_seconds: How long to reuse the server's tool list.
     """

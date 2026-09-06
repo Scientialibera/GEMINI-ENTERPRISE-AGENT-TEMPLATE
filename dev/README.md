@@ -128,9 +128,7 @@ The current identity must already have any project-creation, billing-association
 
 ## BigQuery end-to-end test fixture
 
-A fresh developer project often has no useful BigQuery data. That prevents a meaningful end-to-end test of the delegated BigQuery tool even when the agent and authorization wiring are correct.
-
-The template therefore enables a small fixture by default:
+A fresh project has no BigQuery data, so the delegated tool cannot be tested end to end even when the wiring is correct. A small fixture is enabled by default:
 
 ```text
 DEV_PREPARE_BIGQUERY_FIXTURE=true
@@ -157,11 +155,16 @@ If the development project already has BigQuery data that the Gemini Enterprise 
 DEV_PREPARE_BIGQUERY_FIXTURE=false
 ```
 
-No application configuration needs to point at the sample table. `auth_reference_agent` discovers the datasets/tables visible to the delegated user before querying, so existing real development data can be used directly.
+Nothing points at the sample table. `auth_reference_agent` lists the datasets visible to the delegated user before querying, so real data works too.
 
-The fixture helper never grants IAM. Creating the fixture requires the developer ADC identity to already have the appropriate BigQuery permissions. The final delegated test also requires the signed-in Gemini Enterprise user to have permission to create query jobs in the project and read the selected dataset/table. For example, organizations commonly provide job execution separately from dataset read access. Do not add IAM self-grant logic to the application helper.
+The helper grants no IAM. Two identities need permissions already:
 
-This dataset/table is developer test support only. The Terraform branch intentionally does not create or seed it.
+- developer ADC: BigQuery permissions to create the fixture
+- signed-in Gemini Enterprise user: create query jobs and read the dataset
+
+These are often granted separately. Fix gaps in IAM, never with self-grant logic in the helper.
+
+Developer test support only. Terraform does not create or seed it.
 
 ## Terraform handoff
 

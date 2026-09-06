@@ -62,11 +62,12 @@ tests/                      lint and behaviour checks for the above
 pyproject.toml              workspace, dependencies and lint configuration
 ```
 
-Each folder under `agents/` is an independently deployable ADK application. Within one, `agent.py` only constructs the agent, `config.py` resolves bootstrap values once, and each tool is its own module under `tools/`. Shared runtime behavior belongs in `packages/gemini_shared`. Agent-specific tools and orchestration stay inside the agent package.
+Each folder under `agents/` deploys on its own. Inside one: `agent.py` constructs, `config.py` resolves bootstrap values once, one module per tool under `tools/`. Shared behavior goes in `packages/gemini_shared`; domain logic stays in the agent.
 
-Tool schemas are code. ADK derives the function declaration sent to the model from each tool's signature, type hints and docstring, so a tool without a docstring is advertised to the model with no description.
+Two rules follow from how ADK works:
 
-Instruction text is not code. Both agents resolve `instruction` through a callable that reads the live runtime configuration per request, so the prompt is authored in the Terraform `runtime_config` desired state, delivered through Parameter Manager, and supplied locally by `AGENT_INSTRUCTION`. No agent package contains a prompt literal.
+- **Tool schemas are code.** ADK builds the declaration from the signature, type hints and docstring. No docstring, no description.
+- **Prompts are not code.** `instruction` is a callable reading live config per request. Authored in Terraform `runtime_config`, delivered by Parameter Manager, set locally by `AGENT_INSTRUCTION`. No agent package holds prompt text.
 
 ## Before first use
 
@@ -94,26 +95,26 @@ uv run --group dev ruff check .
 uv run --group dev pytest
 ```
 
-`ruff` enforces Python 3.12 syntax, PEP 8 conventions, import ordering, bug-prone constructs and security-oriented static checks. Tests use strict marker handling. These checks are part of the template contract; do not rely on README guidance alone.
+`ruff` enforces Python 3.12 syntax, PEP 8, import order, bug-prone constructs and security checks. These run in CI and are the contract; this README is not.
 
 ## Configuration model
 
-The template separates configuration by runtime behavior.
+Where a value lives decides what changing it costs.
 
-| Configuration | Runtime source | Change behavior |
+| Configuration | Source | Cost of a change |
 |---|---|---|
-| Live non-secret application config | Parameter Manager | Existing agent refreshes after TTL; no Agent Runtime revision |
-| Bootstrap/process-construction config | Agent Engine environment | Change can create a new Agent Runtime revision |
-| Secrets | Secret Manager | Secret-specific rotation/deployment behavior |
-| Local developer config | `dev/.env.local` / `dev/.env.dev` | Workstation/developer sandbox only |
+| Live app config | Parameter Manager | Picked up after the TTL. No redeploy |
+| Bootstrap config | Agent Engine env | Redeploy; can create a new revision |
+| Secrets | Secret Manager | Per-secret rotation |
+| Local dev config | `dev/.env.local`, `dev/.env.dev` | Workstation only |
 
-Live configuration includes values such as model name, instruction, log level, query/result limits and runtime resource identifiers. It is validated by `gemini_shared.RuntimeConfig`. The MCP server URL is not among them: a toolset is bound when the agent is constructed, so that URL is bootstrap env.
+Live config covers model, instruction, log level and query limits, validated by `gemini_shared.RuntimeConfig`. The MCP server URL is bootstrap, not live: the toolset is built at construction.
 
-The deployed agent reads the Parameter Manager resource identified by `CONFIG_PARAMETER` and resolves `versions/latest`. `CONFIG_REFRESH_SECONDS` controls the cache TTL. If a refresh fails after at least one successful load, the agent continues with the last-known-good configuration and retries later.
+The agent reads `CONFIG_PARAMETER` at `versions/latest`, cached for `CONFIG_REFRESH_SECONDS`. After one successful load, a failed refresh keeps the last-known-good config and retries.
 
-`before_model_callback` resolves the current model before each LLM request, subject to the configuration cache TTL. A model-name change therefore does not require a source deployment.
+`before_model_callback` re-reads the model each request, so a model change needs no deployment.
 
-Do not duplicate live settings in Agent Engine bootstrap environment variables.
+Never put a live setting in bootstrap env as well.
 
 ## Bootstrap environment
 
@@ -207,7 +208,7 @@ Project creation is disabled by default because it affects organization placemen
 
 ## Optional BigQuery developer fixture
 
-`auth_reference_agent` includes a delegated BigQuery tool. A clean project may not contain any queryable data, which makes it difficult to verify the complete delegated-auth flow. The developer bootstrap therefore includes a small optional BigQuery fixture.
+The delegated BigQuery tool needs queryable data, which a clean project lacks. The bootstrap can create a small dataset for it.
 
 Default behavior:
 
@@ -229,45 +230,37 @@ DEV_PREPARE_BIGQUERY_FIXTURE=false
 
 The agent does not hardcode the fixture dataset or table. Its BigQuery discovery flow lists the datasets/tables visible to the delegated user, so an existing real development dataset can be used instead.
 
-The fixture helper does not grant BigQuery IAM. The identity running `bootstrap_dev.py` must already be allowed to create/read the fixture resources when creation is enabled. To exercise the deployed delegated tool, the signed-in Gemini Enterprise user must independently have permission to create BigQuery query jobs and read the target dataset/table. If those permissions are missing, fix IAM outside the application helper rather than adding self-grant logic.
+The helper grants no IAM. Two identities need permissions already:
 
-Terraform intentionally does not create or seed this sample dataset. The fixture belongs to developer test support in this branch.
+- whoever runs `bootstrap_dev.py`: create and read the fixture resources
+- the signed-in Gemini Enterprise user: create query jobs and read the dataset
+
+Fix missing permissions through IAM, never by adding self-grant logic. Terraform does not create this dataset; it is developer test support.
 
 ## Deterministic application packaging
 
-Build the artifact consumed by Terraform with:
+Build the artifact Terraform consumes:
 
 ```bash
-uv run --group dev python dev/package_agent.py --agent basic_assistant
+uv run --group dev python dev/package_agent.py --agent <agent>
 ```
 
-or:
+Output is `artifacts/<agent>.tar.gz`, gitignored. Timestamps and ownership are normalized and `requirements.txt` is generated, so unchanged source rebuilds to identical bytes.
 
-```bash
-uv run --group dev python dev/package_agent.py --agent auth_reference_agent
-```
-
-The default output is `artifacts/<agent_name>.tar.gz`, which is gitignored. The packager normalizes archive timestamps and ownership metadata and writes a deterministic `requirements.txt`. Rebuilding unchanged source produces the same archive bytes.
-
-The archive contains only the selected agent package and `gemini_shared`; unrelated agents are not bundled into the deployment.
+The archive holds only the selected agent and `gemini_shared`. Other agents are not bundled.
 
 ## Developer-owned Agent Engine deployment
 
-After Terraform has created the runtime parameter and IAM, deploy:
+After Terraform has created the runtime parameter and IAM:
 
 ```bash
-uv run --group dev python dev/deploy_dev.py --agent basic_assistant
+uv run --group dev python dev/deploy_dev.py --agent <agent>   # create
+uv run --group dev python dev/update_dev.py --agent <agent>   # code or bootstrap changes
 ```
 
-The resulting Reasoning Engine resource is stored under ignored `dev/.state/`.
+The Reasoning Engine resource is recorded under ignored `dev/.state/`.
 
-Update the same developer-owned instance after code or bootstrap changes:
-
-```bash
-uv run --group dev python dev/update_dev.py --agent basic_assistant
-```
-
-Do not run `update_dev.py` for normal Parameter Manager changes. The already-running agent reads those changes automatically after the refresh TTL.
+Parameter Manager changes need no update. A running agent picks them up after the TTL.
 
 ## Gemini Enterprise registration
 
@@ -289,60 +282,84 @@ One authorization serves one agent. Registering a second agent against an author
 
 ## Identity model
 
-Developer helpers authenticate with the developer's ADC identity. They do not create or modify IAM.
+Three identities, never interchangeable:
 
-The companion Terraform stack should grant the developer/group the required Agent Engine deployment access, Parameter Manager read access when needed and object access to the developer staging bucket.
+| Identity | Used by | Granted by |
+|---|---|---|
+| Developer ADC | `dev/` helpers on the workstation | Terraform: Agent Engine deploy, staging bucket, Parameter Manager read |
+| Agent Identity | the deployed runtime | Terraform, on the project principal set |
+| Delegated user token | tools and MCP calls acting as the user | Gemini Enterprise OAuth consent |
 
-A developer-created Agent Engine receives a separate Agent Identity. The developer's permissions do not transfer to that runtime identity. The Terraform branch therefore supports pre-authorizing the project Agent Identity principal set for common non-sensitive runtime roles such as Parameter Manager access. Sensitive data access should remain specific to the individual agent.
+Developer permissions do not transfer to the Agent Identity. Terraform pre-authorizes the principal set for non-sensitive roles such as Parameter Manager read; keep sensitive data access scoped to the individual agent.
 
-Delegated BigQuery access is different: the BigQuery tool executes with the signed-in Gemini Enterprise user's forwarded OAuth token. BigQuery permissions for that user remain user-scoped and are not inherited from the Agent Identity.
+Delegated access stays user-scoped and inherits nothing from the Agent Identity.
+
+Developer helpers never create or modify IAM.
 
 ## Authentication reference agent
 
-`auth_reference_agent` preserves the two authentication patterns from the clean single-agent template:
+`auth_reference_agent` shows both patterns:
 
-1. Agent Identity for backend access under the runtime's own identity.
-2. Gemini Enterprise delegated authentication using the OAuth token forwarded in session state.
+| Tool | Identity | Reaches |
+|---|---|---|
+| `list_storage_objects` | Agent Identity | Cloud Storage |
+| `query_bigquery` | delegated user token | BigQuery |
+| `bigquery_mcp_toolset` | delegated user token | BigQuery, via MCP |
 
-The delegated-auth scheme, provider and registration live in `gemini_shared.auth.delegated`, so every agent shares one implementation.
+The scheme, provider and registration live in `gemini_shared.auth.delegated`, shared by every agent.
 
-A deployed scheme arrives as a base `CustomAuthScheme` and ADK rehydrates it by matching `type_` against `CustomAuthScheme.__subclasses__()`. The subclass therefore has to exist by the time a tool runs, which means the defining module must already be imported. Importing anything from `gemini_shared` satisfies that.
+A deployed scheme arrives as a base `CustomAuthScheme`. ADK rehydrates it by matching `type_` against `CustomAuthScheme.__subclasses__()`, so the defining module must already be imported when a tool runs. Importing anything from `gemini_shared` does that.
 
-The failure mode is an unimported module, not a shared one:
+Unimported module:
 
 ```text
 No auth provider registered for custom auth scheme
 ```
 
-A new scheme must set a `type_` default, since rehydration matches on that value.
+A new scheme must set a `type_` default; rehydration matches on that value.
 
 ## Remote MCP servers
 
-An MCP server supplies tools the agent did not define. `auth_reference_agent` connects to Google's managed BigQuery MCP server at `https://bigquery.googleapis.com/mcp`, so the pattern needs no MCP server of its own:
+An MCP server supplies tools the agent did not write. `auth_reference_agent` uses Google's managed BigQuery server, so nothing is deployed:
 
 ```python
 bigquery_mcp_toolset = bigquery_readonly_toolset(
     authorization_id=GEMINI_ENTERPRISE_AUTHORIZATION_ID,
-    server_url=MCP_SERVER_URL,
+    server_url=MCP_SERVER_URL,      # https://bigquery.googleapis.com/mcp
 )
 ```
 
-`gemini_shared.mcp` separates the two concerns so a server's details never leak into the plumbing:
+Two sub-packages:
 
-- `mcp_auth/` knows how to authenticate to any MCP server and names none of them.
-- `mcp_google_cloud/` is a shared asset holding Google's endpoints, required scopes and read-only tool lists, so no agent hardcodes a URL. Add a server by adding an `mcp_<name>` folder beside it.
+- `mcp_auth/` authenticates to any MCP server. Names no server.
+- `mcp_google_cloud/` holds Google's URLs, scopes and tool lists. Add a server as `mcp_<name>/`.
 
-`mcp_auth/headers.py` supplies the `Authorization` header on every call from the signed-in user's delegated token, the same token the BigQuery tool uses. The MCP server therefore applies that user's own permissions, and two users calling the same tool see only the data each is entitled to. Nothing runs under the Agent Identity on this path.
+`mcp_auth/headers.py` sends `Authorization: Bearer <user token>` on every call, using the same delegated token as the BigQuery tool. The server enforces that user's IAM, so each user sees only their own data. The Agent Identity is not used here.
 
-The agent holds both a hand-written BigQuery tool and the MCP toolset on purpose: the same user, the same service, reached both ways. Write a tool when the logic is yours; add an MCP server when the tools already exist.
+The agent reaches BigQuery both ways on purpose. Write a tool when the logic is yours; use an MCP server when the tools already exist.
 
-Google's managed endpoints are listed under [Google Cloud MCP servers](https://docs.cloud.google.com/mcp/supported-products). Point `MCP_SERVER_URL` at any Streamable HTTP server. The URL is bootstrap rather than live configuration, because the toolset is bound when the agent is constructed.
+[Google's managed endpoints](https://docs.cloud.google.com/mcp/supported-products) cover BigQuery, Cloud Run, Logging, Monitoring, Storage and Compute. `MCP_SERVER_URL` accepts any Streamable HTTP server. It is bootstrap env, not live config, because the toolset is built at construction.
 
-Three things to know before relying on it:
+### tool_filter
 
-- **Scopes.** The delegated token must carry the scope the server requires; for BigQuery that is `https://www.googleapis.com/auth/bigquery` or `https://www.googleapis.com/auth/cloud-platform`. A token without it fails at the tool call, not at startup, because the server authenticates per call rather than at listing.
-- **`tool_filter` is the safety boundary.** Without it the agent exposes whatever the server offers, including tools added later. `execute_sql` is deliberately withheld so the MCP path stays read-only.
-- **Tool names are prefixed** with `tool_name_prefix`, so MCP tools stay distinguishable from local ones in traces and in the model's tool list.
+A client-side allowlist. ADK fetches the server's full tool list, keeps the names you list and discards the rest, so the model never sees the others:
+
+```python
+tool_filter=["list_dataset_ids"]    # 1 tool reaches the model
+tool_filter=None                    # all 6 do, including execute_sql
+```
+
+It stops the model from calling a tool. It does not revoke anything at the server: the user's IAM and the token's scopes still decide what a call may do.
+
+`bigquery_readonly_toolset` omits `execute_sql`, leaving the five read-only tools.
+
+### Scopes
+
+The delegated token needs the server's scope: `https://www.googleapis.com/auth/bigquery` or `.../auth/cloud-platform` for BigQuery. A missing scope fails at the tool call, not at startup, because `tools/list` is unauthenticated and `tools/call` is not.
+
+### Names
+
+`tool_name_prefix="bq_mcp"` yields `bq_mcp_list_dataset_ids`, keeping MCP tools distinct from local ones in the model's tool list and in traces.
 
 ## Adding an agent
 
@@ -407,7 +424,7 @@ app = AdkApp(agent=root_agent, enable_tracing=True)   # Agent Runtime serves thi
 
 ### 2. Add a tool
 
-One module per tool under `src/<agent>/tools/`, re-exported from `tools/__init__.py`. The docstring and type hints become the model-facing schema, so a tool without a docstring reaches the model with no description.
+One module per tool under `src/<agent>/tools/`, re-exported from `tools/__init__.py`. ADK builds the model-facing schema from the docstring and type hints. No docstring means no description.
 
 ```python
 def report_order_status(order_id: str) -> dict[str, object]:
@@ -420,7 +437,7 @@ def report_order_status(order_id: str) -> dict[str, object]:
 
 Return JSON-serializable values. `date`, `Decimal` and `bytes` break the run; convert them first.
 
-For a tool that must act as the signed-in user, wrap it and let ADK inject the credential:
+To act as the signed-in user, wrap the function so ADK injects the credential:
 
 ```python
 tool = AuthenticatedFunctionTool(
@@ -431,7 +448,7 @@ tool = AuthenticatedFunctionTool(
 
 ### 3. Add an MCP server
 
-Google's managed servers need nothing deployed. Reuse the shared asset:
+Google's managed servers need nothing deployed:
 
 ```python
 from gemini_shared.mcp.mcp_google_cloud import bigquery_readonly_toolset
@@ -447,12 +464,14 @@ from gemini_shared.mcp.mcp_auth import delegated_mcp_toolset
 toolset = delegated_mcp_toolset(
     server_url=MCP_SERVER_URL,
     authorization_id=GEMINI_ENTERPRISE_AUTHORIZATION_ID,
-    tool_filter=["read_only_tool"],   # always set: without it the agent inherits new server tools
+    tool_filter=["read_only_tool"],   # allowlist; omit and the model sees every server tool
     tool_name_prefix="ext",
 )
 ```
 
-Add `mcp` to the agent's ADK extras and to its `requirements` in `dev/common.py`. For a server used by more than one agent, add a `packages/gemini_shared/src/gemini_shared/mcp/mcp_<name>/` folder holding its URL, scopes and tool list rather than hardcoding them in the agent.
+Add the `mcp` extra to the agent's `pyproject.toml` and to its `requirements` in `dev/common.py`.
+
+Used by more than one agent? Put the URL, scopes and tool list in `packages/gemini_shared/src/gemini_shared/mcp/mcp_<name>/`.
 
 ### 4. Choose the identity
 
@@ -502,24 +521,24 @@ uv run --group dev python dev/release_dev.py --agent <agent>
 
 ## Code standards
 
-- Python 3.12 and PEP 8 conventions.
-- Constants and repeated configuration keys are declared at module scope rather than embedded throughout logic.
-- Public/shared functions use type hints; dataclasses use immutable/slotted forms where appropriate.
-- Subprocesses use argument arrays, no shell execution and a resolved executable path.
-- Filesystem writes are limited to explicit ignored state/artifact locations or secure temporary directories.
-- External inputs and environment values fail fast with actionable errors.
-- Shared logic belongs in `gemini_shared` or `dev/common.py`; agent domain logic remains local to the agent.
-- No production control flow depends on `assert` statements.
-- No credentials, secrets or raw delegated tokens are logged.
+- Python 3.12, PEP 8, `ruff` clean.
+- Constants and repeated config keys at module scope.
+- Type hints on shared functions; frozen slotted dataclasses.
+- Subprocesses: argument arrays, no shell, resolved executable path.
+- Writes only to ignored state/artifact paths or secure temp dirs.
+- External input and env values fail fast with actionable errors.
+- Shared logic in `gemini_shared` or `dev/common.py`; domain logic in the agent.
+- No `assert` in production control flow.
+- Never log credentials, secrets or delegated tokens.
 
 ## Repository rules
 
-- No production/shared IAM mutation from application code.
-- No Terraform state or shared infrastructure definitions in this branch.
-- No committed `.env` files, credentials or secret payloads.
+- No IAM mutation from application code.
+- No Terraform or shared infrastructure in this branch.
+- No committed `.env`, credentials or secrets.
 - No long-lived service-account keys.
-- No duplicated shared configuration between `.env`, Parameter Manager and Terraform.
-- No QA/prod deployment through developer helper scripts.
-- No hardcoded MCP server URL in an agent; put it in `mcp/mcp_<name>/` or bootstrap env.
-- No MCP toolset without `tool_filter`; an unfiltered toolset inherits whatever the server adds.
-- Developer test fixtures must remain optional, bounded and separate from production/shared infrastructure.
+- No setting duplicated across `.env`, Parameter Manager and Terraform.
+- No QA or prod deployment from `dev/` helpers.
+- No hardcoded MCP URL in an agent. Use `mcp/mcp_<name>/` or bootstrap env.
+- No MCP toolset without `tool_filter`.
+- Test fixtures stay optional, bounded and out of shared infrastructure.
