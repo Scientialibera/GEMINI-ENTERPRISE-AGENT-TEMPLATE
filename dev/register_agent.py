@@ -38,6 +38,7 @@ DEFAULT_ASSISTANT = "default_assistant"
 APP_ENGINE_ID_ENV = "GEMINI_ENTERPRISE_APP_ID"
 OAUTH_CLIENT_ID_ENV = "GEMINI_ENTERPRISE_OAUTH_CLIENT_ID"
 OAUTH_CLIENT_SECRET_ENV = "GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET"
+OAUTH_CLIENT_SECRET_NAME_ENV = "GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET_NAME"
 AGENT_STATE_ENABLED = "ENABLED"
 CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 REQUEST_TIMEOUT_SECONDS = 60
@@ -144,6 +145,31 @@ def _build_agent(spec: AgentSpec, reasoning_engine: str, project_id: str) -> dic
     return agent
 
 
+def _resolve_client_secret(project_id: str) -> str:
+    """Return the OAuth client secret, preferring Secret Manager over the environment.
+
+    Reading from Secret Manager keeps the payload out of developer environment
+    files: Terraform stores it once and grants the release principal access, so
+    nobody copies the value between machines. The environment variable remains
+    supported for a one-off run in a sandbox that has no managed secret yet.
+    """
+    secret_name = os.getenv(OAUTH_CLIENT_SECRET_NAME_ENV, "").strip()
+    if secret_name:
+        resource = (
+            secret_name
+            if secret_name.startswith("projects/")
+            else f"projects/{project_id}/secrets/{secret_name}/versions/latest"
+        )
+        if "/versions/" not in resource:
+            resource = f"{resource}/versions/latest"
+        from google.cloud import secretmanager
+
+        client = secretmanager.SecretManagerServiceClient()
+        return client.access_secret_version(name=resource).payload.data.decode("utf-8").strip()
+
+    return os.getenv(OAUTH_CLIENT_SECRET_ENV, "").strip()
+
+
 def _authorizations_url(project_id: str) -> str:
     return (
         f"{DISCOVERY_ENGINE_HOST}/{DISCOVERY_ENGINE_VERSION}/projects/{project_id}"
@@ -171,12 +197,13 @@ def ensure_authorization(project_id: str, authorization_id: str) -> None:
         return
 
     client_id = os.getenv(OAUTH_CLIENT_ID_ENV, "").strip()
-    client_secret = os.getenv(OAUTH_CLIENT_SECRET_ENV, "").strip()
+    client_secret = _resolve_client_secret(project_id)
     if not client_id or not client_secret:
         raise SystemExit(
             f"Authorization '{authorization_id}' does not exist and cannot be created without "
-            f"{OAUTH_CLIENT_ID_ENV} and {OAUTH_CLIENT_SECRET_ENV}. Supply them from an approved "
-            "secret source for this run, or create the authorization out of band."
+            f"{OAUTH_CLIENT_ID_ENV} and an OAuth client secret. Set "
+            f"{OAUTH_CLIENT_SECRET_NAME_ENV} to a Secret Manager secret holding the value "
+            f"(preferred), or {OAUTH_CLIENT_SECRET_ENV} for a one-off run."
         )
 
     scope_value = urllib.parse.quote(" ".join(DELEGATED_OAUTH_SCOPES))
@@ -216,6 +243,37 @@ def _find_existing(project_id: str, app_id: str, display_name: str) -> str | Non
     return None
 
 
+def register_agent(
+    agent_name: str,
+    app_id: str,
+    project_id: str,
+    spec: AgentSpec,
+    reasoning_engine: str,
+) -> str:
+    """Publish a deployed Reasoning Engine into a Gemini Enterprise app.
+
+    Creates the delegated-auth authorization first when the agent requires one
+    and it does not exist yet. Patches an existing agent with the same display
+    name rather than registering a duplicate.
+    """
+    del agent_name  # spec carries everything the registration needs.
+    authorization_id = os.getenv(AUTHORIZATION_ID_ENV, "").strip()
+    if AUTHORIZATION_ID_ENV in spec.required_remote_bootstrap_env and authorization_id:
+        ensure_authorization(project_id, authorization_id)
+
+    agent = _build_agent(spec, reasoning_engine, project_id)
+
+    existing = _find_existing(project_id, app_id, spec.display_name)
+    if existing:
+        url = f"{DISCOVERY_ENGINE_HOST}/{DISCOVERY_ENGINE_VERSION}/{existing}"
+        result = _request("PATCH", url, project_id, agent)
+        print(f"UPDATED_AGENT={result.get('name')}")
+    else:
+        result = _request("POST", _agents_url(project_id, app_id), project_id, agent)
+        print(f"REGISTERED_AGENT={result.get('name')}")
+    return str(result.get("name"))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Register a deployed Agent Engine in a Gemini Enterprise app."
@@ -240,22 +298,8 @@ def main() -> None:
             "Enterprise app id, not the web app client id in the console URL."
         )
 
-    authorization_id = os.getenv(AUTHORIZATION_ID_ENV, "").strip()
-    if AUTHORIZATION_ID_ENV in spec.required_remote_bootstrap_env and authorization_id:
-        ensure_authorization(project_id, authorization_id)
-
     reasoning_engine = load_resource_name(args.agent)
-    agent = _build_agent(spec, reasoning_engine, project_id)
-
-    existing = _find_existing(project_id, app_id, spec.display_name)
-    if existing:
-        url = f"{DISCOVERY_ENGINE_HOST}/{DISCOVERY_ENGINE_VERSION}/{existing}"
-        result = _request("PATCH", url, project_id, agent)
-        print(f"UPDATED_AGENT={result.get('name')}")
-    else:
-        result = _request("POST", _agents_url(project_id, app_id), project_id, agent)
-        print(f"REGISTERED_AGENT={result.get('name')}")
-
+    register_agent(args.agent, app_id, project_id, spec, reasoning_engine)
     print(f"REASONING_ENGINE={reasoning_engine}")
 
 
