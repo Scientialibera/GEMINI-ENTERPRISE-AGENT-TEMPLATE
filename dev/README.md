@@ -77,15 +77,16 @@ DEV_STAGING_BUCKET
 ENVIRONMENT=dev
 ```
 
-After the Terraform dev stack exists, also set:
+Runtime configuration settings:
 
 ```text
-CONFIG_PARAMETER
 CONFIG_PARAMETER_LOCATION
 CONFIG_REFRESH_SECONDS
 ```
 
-Use the exact Terraform output `runtime_config_parameter` for `CONFIG_PARAMETER`.
+Each agent reads its own Parameter Manager parameter, named after its package: `basic_assistant` reads `basic-assistant-config`, `auth_reference_agent` reads `auth-reference-agent-config`. Adding an agent to `AGENTS` therefore needs no configuration change here.
+
+`CONFIG_PARAMETER` overrides that default for a single run, which is useful for pointing one agent at another's configuration while testing. Leave it empty otherwise.
 
 `auth_reference_agent` additionally requires `GEMINI_ENTERPRISE_AUTHORIZATION_ID` as bootstrap configuration because ADK constructs its authenticated tool during process startup.
 
@@ -108,7 +109,7 @@ This command can run before the Terraform workload stack. It prepares only the d
 - optionally creates/reuses a small BigQuery test dataset and table
 - seeds deterministic BigQuery sample rows only when the fixture table is empty
 
-If `CONFIG_PARAMETER` is already configured, the command also verifies that the parameter exists and is readable. If it is not configured yet, the command finishes platform/test preparation and tells the developer to apply Terraform next.
+If `CONFIG_PARAMETER` is set, the command also verifies that the parameter exists and is readable. Otherwise it finishes platform/test preparation, and each agent's own parameter is checked when that agent deploys.
 
 ### Optional creation controls
 
@@ -177,7 +178,7 @@ After developer platform preparation, apply the Terraform dev stack. Terraform c
 - Secret Manager references
 - observability
 
-Then set `CONFIG_PARAMETER` in `dev/.env.dev` from Terraform output.
+Terraform's `runtime_config_parameter` output names the parameter it manages. An agent whose default parameter name matches that output picks it up with no further configuration; set `CONFIG_PARAMETER` only to override the default for a run.
 
 ## Deploy and update
 
