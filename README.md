@@ -2,9 +2,47 @@
 
 Application template for independently deployable Google ADK agents that share a common Python runtime package.
 
-This branch contains agent code, shared application libraries, tests, deterministic packaging and developer-only local/dev deployment helpers. Shared Google Cloud infrastructure, IAM, Parameter Manager, Secret Manager, observability and production deployment belong to the `template/terraform-iac-only` branch, which must be applied before any agent is deployed.
+This branch contains agent code, shared application libraries, tests, deterministic packaging and the developer helpers that deploy and register agents. Shared Google Cloud infrastructure — APIs, IAM, Secret Manager and observability — belongs to the `template/terraform-iac-only` branch, which is applied once per project before any agent is deployed. See [What Terraform owns](#what-terraform-owns).
 
-Start with [Before first use](#before-first-use), then [Adding an agent](#adding-an-agent) for the full recipe: files, tools, MCP servers, identity, deployment.
+Start with [Which script to run](#which-script-to-run), then [Adding an agent](#adding-an-agent) for the full recipe: files, tools, MCP servers, identity, deployment.
+
+## Which script to run
+
+Three workflows. Only the second needs Terraform, and only the third touches Gemini Enterprise.
+
+**Working on an agent locally** — no cloud deployment, no Terraform:
+
+```bash
+uv run --group dev python dev/run_local.py --agent <agent>
+```
+
+Reads `dev/.env.local`, runs the agent in-process against real Google Cloud APIs using your own credentials. Delegated tools cannot be fully exercised this way, because there is no Gemini Enterprise session to forward a user token.
+
+**Preparing a project** — once, before the first deployment:
+
+```bash
+terraform apply                                        # the other branch: APIs, IAM, observability
+uv run --group dev python dev/bootstrap_dev.py         # project, staging bucket, optional fixture
+```
+
+**Deploying an agent** — whenever its code or configuration changes:
+
+```bash
+uv run --group dev python dev/release_dev.py --agent <agent>
+```
+
+That runs preflight → package → deploy → register, and updates the existing Agent Engine rather than creating a second one when the agent has been deployed before. `--skip-register` stops after deployment.
+
+Run the steps separately when you want just one:
+
+| Step | Script | Creates |
+|---|---|---|
+| package | `package_agent.py` | the deterministic `.tar.gz` |
+| deploy | `deploy_dev.py` | a new Agent Engine, and the agent's runtime parameter |
+| update | `update_dev.py` | replaces the code in an Agent Engine that already exists |
+| register | `register_agent.py` | the authorization and the Gemini Enterprise agent |
+
+`deploy_dev.py` creates a new Agent Engine every time it runs, so use `update_dev.py` to change one that already exists. Deploying alone does not make an agent visible in Gemini Enterprise — registration does.
 
 ## Repository layout
 
@@ -53,16 +91,20 @@ packages/
 dev/                        developer tooling; never deployed with an agent
 ├── .env.local.example      local execution settings
 ├── .env.dev.example        developer sandbox deployment settings
+│
+│   run these:
+├── run_local.py            run an agent on this workstation
+├── bootstrap_dev.py        prepare the project once: APIs, bucket, fixture
+├── package_agent.py        build the deterministic archive
+├── deploy_dev.py           create the Agent Engine and its runtime parameter
+├── update_dev.py           update that same Agent Engine in place
+├── register_agent.py       publish it into a Gemini Enterprise app
+├── release_dev.py          package, deploy and register in one command
+│
+│   imported by the above, never run directly:
 ├── common.py               agent registry and shared helpers
 ├── bootstrap.py            project, API, bucket and parameter preflight
-├── bootstrap_dev.py        runs the preflight
-├── bigquery_fixture.py     optional sample data for the delegated tool
-├── run_local.py            run an agent locally
-├── package_agent.py        deterministic archive for Terraform
-├── deploy_dev.py           create a developer-owned Agent Engine
-├── update_dev.py           update that same Agent Engine
-├── register_agent.py       publish it into a Gemini Enterprise app
-└── release_dev.py          package, deploy and register in one command
+└── bigquery_fixture.py     optional sample data for the delegated tool
 
 tests/                      lint and behaviour checks for the above
 pyproject.toml              workspace, dependencies and lint configuration

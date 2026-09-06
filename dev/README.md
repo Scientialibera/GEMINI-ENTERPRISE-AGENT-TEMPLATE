@@ -2,18 +2,27 @@
 
 This directory supports workstation execution and developer-owned Agent Engine instances in a development Google Cloud environment. It is not a QA or production deployment path.
 
-Shared desired state, IAM, Parameter Manager, Secret Manager, observability and production deployment are owned by the `template/terraform-iac-only` branch. Optional developer test fixtures, including the BigQuery sample dataset, remain local to this branch.
+Shared APIs, IAM, Secret Manager and observability are owned by the `template/terraform-iac-only` branch, applied once per project. Everything per-agent — the Agent Engine, its Parameter Manager configuration, its Gemini Enterprise authorization and registration — is created by the scripts here. Optional developer test fixtures, including the BigQuery sample dataset, are also local to this branch.
 
-| Script | Purpose |
+Run these:
+
+| Script | When | Purpose |
+|---|---|---|
+| `run_local.py` | any time | Run one agent on the workstation, no deployment |
+| `bootstrap_dev.py` | once per project | Idempotent project, API and bucket preflight |
+| `package_agent.py` | per release | Deterministic archive: one agent plus `gemini_shared` |
+| `deploy_dev.py` | first deployment | Create an Agent Engine and the agent's runtime parameter |
+| `update_dev.py` | later deployments | Replace the code in an existing Agent Engine |
+| `register_agent.py` | after deploying | Publish that runtime into a Gemini Enterprise app |
+| `release_dev.py` | usual path | Package, deploy or update, and register in one command |
+
+Imported by those, never run directly:
+
+| Module | Purpose |
 |---|---|
 | `common.py` | Agent registry (`AGENTS`), requirements, bootstrap env contract |
-| `bootstrap.py` / `bootstrap_dev.py` | Idempotent project, API, bucket and parameter preflight |
+| `bootstrap.py` | Project, API, bucket and parameter preflight helpers |
 | `bigquery_fixture.py` | Optional sample dataset for the delegated BigQuery tool |
-| `run_local.py` | Run one agent on the workstation |
-| `package_agent.py` | Deterministic archive: one agent plus `gemini_shared` |
-| `deploy_dev.py` / `update_dev.py` | Create or update a developer-owned Agent Engine |
-| `register_agent.py` | Publish that runtime into a Gemini Enterprise app |
-| `release_dev.py` | Package, deploy and register in one command |
 
 Adding an agent to `AGENTS` in `common.py` is what makes it visible to every script above.
 
