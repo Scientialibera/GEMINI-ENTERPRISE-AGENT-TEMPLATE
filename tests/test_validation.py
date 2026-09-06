@@ -196,7 +196,7 @@ def test_runtime_ttl_reload_and_last_good(monkeypatch, caplog):
 
 
 def test_nested_bigquery_serialization_and_delegated_client(monkeypatch):
-    module = importlib.import_module("auth_reference_agent.agent")
+    module = importlib.import_module("auth_reference_agent.tools.bigquery_query")
     value = {"nested": [{"date": datetime.date(2026, 1, 1), "amount": decimal.Decimal("2.5")}]}
     assert json.loads(json.dumps(module._json_safe(value)))["nested"][0]["date"] == "2026-01-01"
     client = Mock()
@@ -205,12 +205,12 @@ def test_nested_bigquery_serialization_and_delegated_client(monkeypatch):
         auth_type=AuthCredentialTypes.OAUTH2,
         oauth2=OAuth2Auth(access_token=secrets.token_urlsafe(16)),
     )
-    module._delegated_bigquery_client(credential)
+    module._delegated_client(credential)
     assert isinstance(client.call_args.kwargs["credentials"], module.OAuth2Credentials)
     client.return_value.query.return_value.result.return_value = [
         {"amount": decimal.Decimal("2.5")}
     ]
-    result = asyncio.run(module._template_bigquery_query(credential, "SELECT 2.5 AS amount"))
+    result = asyncio.run(module.query_bigquery(credential, "SELECT 2.5 AS amount"))
     assert result["rows"] == [{"amount": 2.5}]
     client.return_value.query.return_value.result.assert_called_once_with(max_results=100)
 

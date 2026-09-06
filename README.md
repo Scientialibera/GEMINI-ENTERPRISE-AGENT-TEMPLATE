@@ -9,7 +9,15 @@ This branch contains agent code, shared application libraries, tests, determinis
 ```text
 agents/
 ├── auth_reference_agent/
+│   └── src/auth_reference_agent/
+│       ├── agent.py      # agent construction only
+│       ├── config.py     # bootstrap values resolved once
+│       └── tools/        # one module per tool
 └── basic_assistant/
+    └── src/basic_assistant/
+        ├── agent.py
+        ├── config.py
+        └── tools/
 
 packages/
 └── gemini_shared/
@@ -32,7 +40,7 @@ tests/
 pyproject.toml
 ```
 
-Each folder under `agents/` is an independently deployable ADK application. Shared runtime behavior belongs in `packages/gemini_shared`. Agent-specific tools and orchestration stay inside the agent package.
+Each folder under `agents/` is an independently deployable ADK application. Within one, `agent.py` only constructs the agent, `config.py` resolves bootstrap values once, and each tool is its own module under `tools/`. Shared runtime behavior belongs in `packages/gemini_shared`. Agent-specific tools and orchestration stay inside the agent package.
 
 Tool schemas are code. ADK derives the function declaration sent to the model from each tool's signature, type hints and docstring, so a tool without a docstring is advertised to the model with no description.
 
