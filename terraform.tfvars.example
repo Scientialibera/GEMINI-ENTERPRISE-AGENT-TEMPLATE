@@ -41,8 +41,7 @@ bootstrap_env = {
 # SECRETS
 # Keep payloads out of terraform.tfvars. Populate managed_secrets only when this
 # stack owns the Secret Manager object. Supply matching TF_VAR_secret_values at apply.
-managed_secrets     = {}
-external_secret_env = {}
+managed_secrets = {}
 
 # DEVELOPER DEPLOYMENT ACCESS
 # Prefer a Google Group. Leave empty when developer deployment helpers are not used.

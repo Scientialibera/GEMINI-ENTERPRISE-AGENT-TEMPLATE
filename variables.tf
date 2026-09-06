@@ -111,18 +111,19 @@ variable "bootstrap_env" {
 
 variable "managed_secrets" {
   description = <<-EOT
-    Secret Manager secrets owned by this stack, keyed by runtime environment
-    variable name. `accessor_members` grants additional principals read access,
-    for secrets a human or release process must read rather than the agent
-    runtime. Use it for values such as the Gemini Enterprise OAuth client
-    secret, so the payload is stored once and never copied to a workstation.
+    Secret Manager secrets owned by this stack. Secrets are stored, not injected
+    into the Agent Runtime: runtime secret_env is unsupported for source-archive
+    deployments, and an agent that needs a secret reads it from Secret Manager
+    using its own Agent Identity. `accessor_members` grants read access to the
+    principals that must read the payload themselves, such as the release
+    process that creates a Gemini Enterprise authorization from an OAuth client
+    secret, so the value is stored once and never copied to a workstation.
   EOT
   type = map(object({
-    secret_id           = string
-    value_version       = optional(number, 1)
-    labels              = optional(map(string), {})
-    accessor_members    = optional(set(string), [])
-    inject_into_runtime = optional(bool, true)
+    secret_id        = string
+    value_version    = optional(number, 1)
+    labels           = optional(map(string), {})
+    accessor_members = optional(set(string), [])
   }))
   default = {}
 }
@@ -133,15 +134,6 @@ variable "secret_values" {
   sensitive   = true
   ephemeral   = true
   default     = {}
-}
-
-variable "external_secret_env" {
-  description = "References to pre-existing Secret Manager secrets not created by this stack."
-  type = map(object({
-    secret  = string
-    version = optional(string, "latest")
-  }))
-  default = {}
 }
 
 variable "developer_deployer_members" {

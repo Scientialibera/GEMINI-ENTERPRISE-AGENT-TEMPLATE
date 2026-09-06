@@ -8,12 +8,6 @@ variable "entrypoint_object" { type = string }
 variable "python_version" { type = string }
 variable "requirements_file" { type = string }
 variable "runtime_env" { type = map(string) }
-variable "secret_env" {
-  type = map(object({
-    secret  = string
-    version = string
-  }))
-}
 variable "invoker_members" { type = set(string) }
 variable "invoker_role" {
   type     = string

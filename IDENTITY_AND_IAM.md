@@ -13,7 +13,7 @@ No application helper grants IAM to itself.
 | Developer-created runtime | Agent Identity | Common project principal-set roles plus specific grants | Developer Agent Engine runtime access |
 | Caller | User/group/workload identity | This stack | Reasoning Engine invocation |
 | Delegated user | Forwarded OAuth credential | Gemini Enterprise/auth flow | User-scoped downstream calls |
-| Agent Platform service agent | Google-managed | This stack grants secret access | Platform operations and `secret_env` reads |
+| Agent Platform service agent | Google-managed | This stack grants secret access | Platform operations |
 
 ## Developer identity
 
@@ -53,4 +53,4 @@ Do not grant Terraform administration permissions to the Agent Identity and do n
 
 ## Secrets
 
-Agent Runtime application calls use Agent Identity. Agent Engine deployment-time `secret_env` handling is different: the Google-managed Agent Platform service agent needs `roles/secretmanager.secretAccessor` on referenced secrets. This stack grants that role only for configured secret references.
+Agent Runtime application calls use Agent Identity, including reads from Secret Manager. This stack does not inject secrets into the runtime environment, so no deployment-time secret access is granted to the Agent Platform service agent.

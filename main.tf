@@ -41,39 +41,12 @@ locals {
     ])
   )
 
-  # Only secrets the agent itself reads are injected as runtime secret_env.
-  # A secret consumed by the release process instead, such as the Gemini
-  # Enterprise OAuth client secret, sets inject_into_runtime = false so it is
-  # never mounted into the Agent Runtime that has no use for it.
-  managed_secret_env = {
-    for env_name, config in var.managed_secrets : env_name => {
-      secret  = config.secret_id
-      version = "latest"
-    }
-    if config.inject_into_runtime
-  }
-
-  runtime_secret_env = merge(local.managed_secret_env, var.external_secret_env)
-
-  # Reasoning Engine secret_env injection is performed by Google-managed service
-  # agents at deployment time, not by the runtime Agent Identity principal.
-  # Two distinct service agents are involved and both require secretAccessor:
-  #   *@gcp-sa-aiplatform    -> roles/aiplatform.serviceAgent
-  #   *@gcp-sa-aiplatform-re -> roles/aiplatform.reasoningEngineServiceAgent
-  secret_accessor_service_agents = {
-    aiplatform       = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-aiplatform.iam.gserviceaccount.com"
-    reasoning_engine = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
-  }
-
-  # Cartesian product of secret env entries x service agents requiring access.
-  secret_accessor_bindings = {
-    for pair in setproduct(keys(local.runtime_secret_env), keys(local.secret_accessor_service_agents)) :
-    "${pair[0]}/${pair[1]}" => {
-      secret = local.runtime_secret_env[pair[0]].secret
-      member = local.secret_accessor_service_agents[pair[1]]
-    }
-  }
-
+  # Secrets are stored, never injected into the Agent Runtime. Runtime secret
+  # injection is not supported for source-archive deployments: a Reasoning
+  # Engine that starts correctly is still reported as failed once secret_env is
+  # attached, with no application-level error. An agent that needs a secret
+  # reads it from Secret Manager at runtime using its own Agent Identity, which
+  # works on every deployment path and keeps the value out of the environment.
   managed_secret_reader_bindings = merge([
     for env_name, config in var.managed_secrets : {
       for member in config.accessor_members :
@@ -101,13 +74,6 @@ resource "terraform_data" "configuration_validation" {
       error_message = "min_instances cannot exceed max_instances."
     }
 
-    precondition {
-      condition = length(setintersection(
-        local.bootstrap_env_names,
-        toset(keys(local.runtime_secret_env))
-      )) == 0
-      error_message = "An environment variable name cannot be defined in both bootstrap_env/platform bootstrap variables and secret configuration."
-    }
   }
 }
 
@@ -204,17 +170,6 @@ resource "google_storage_bucket_iam_member" "developer_staging_bucket_writer" {
   member = each.value
 }
 
-resource "google_secret_manager_secret_iam_member" "agent_platform_accessor" {
-  for_each = local.secret_accessor_bindings
-
-  project   = var.project_id
-  secret_id = each.value.secret
-  role      = "roles/secretmanager.secretAccessor"
-  member    = each.value.member
-
-  depends_on = [google_secret_manager_secret.managed]
-}
-
 # Principals that must read a managed secret directly, such as the release
 # process that creates a Gemini Enterprise authorization from the OAuth client
 # secret. Keeping the payload in Secret Manager means it is never copied into a
@@ -248,7 +203,6 @@ module "agent_engine" {
   python_version        = var.python_version
   requirements_file     = var.requirements_file
   runtime_env           = local.agent_bootstrap_env
-  secret_env            = local.runtime_secret_env
   invoker_members       = var.invoker_members
   invoker_role          = var.invoker_role
   agent_project_roles   = var.agent_project_roles
@@ -262,7 +216,6 @@ module "agent_engine" {
     google_project_service.required,
     google_parameter_manager_parameter_version.runtime_config,
     google_secret_manager_secret_version.managed,
-    google_secret_manager_secret_iam_member.agent_platform_accessor,
   ]
 }
 

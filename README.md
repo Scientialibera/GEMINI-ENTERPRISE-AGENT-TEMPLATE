@@ -12,7 +12,7 @@ Terraform manages:
 - Agent Engine / Reasoning Engine
 - Agent Identity
 - Parameter Manager live configuration
-- Secret Manager resources and runtime secret references
+- Secret Manager resources
 - developer deployment IAM
 - common IAM for developer-created Agent Identities
 - caller access
@@ -138,9 +138,9 @@ Use an organization ID for organization projects, or `developer_agent_identity_o
 
 Terraform restricts ephemeral values to ephemeral/write-only contexts. Do not reuse `secret_values` in outputs, ordinary locals, validation/check expressions or non-write-only resource arguments.
 
-Use `external_secret_env` for secrets owned elsewhere.
+Secrets are stored, never injected into the Agent Runtime. Runtime `secret_env` injection is unsupported for source-archive deployments: a Reasoning Engine that starts correctly is still reported as failed once `secret_env` is attached, with no application-level error. An agent that needs a secret reads it from Secret Manager at runtime using its own Agent Identity, which works on every deployment path and lets the value rotate without a new Agent Runtime revision.
 
-Agent Engine `secret_env` is deployment-level configuration. If a secret must rotate without a new Agent Runtime revision, the application should read it directly from Secret Manager at runtime rather than receiving it through deployment-time secret injection.
+Use `accessor_members` to grant read access to a principal that must read a payload itself, such as the release process that creates a Gemini Enterprise authorization from an OAuth client secret.
 
 ## Identities
 
@@ -152,7 +152,7 @@ Keep these principals separate:
 4. Developer-created Agent Identity: runtime identity for each developer Agent Engine copy.
 5. Agent caller: user/group/workload allowed to query the Reasoning Engine.
 6. Delegated end user: user-scoped OAuth token used by delegated tools.
-7. Agent Platform service agent: Google-managed identity used for platform operations such as reading `secret_env` secrets.
+7. Agent Platform service agent: Google-managed identity used for platform operations.
 
 Do not reuse the Terraform execution service account as an Agent Identity.
 
