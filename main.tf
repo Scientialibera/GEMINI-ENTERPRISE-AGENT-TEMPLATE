@@ -41,11 +41,16 @@ locals {
     ])
   )
 
+  # Only secrets the agent itself reads are injected as runtime secret_env.
+  # A secret consumed by the release process instead, such as the Gemini
+  # Enterprise OAuth client secret, sets inject_into_runtime = false so it is
+  # never mounted into the Agent Runtime that has no use for it.
   managed_secret_env = {
     for env_name, config in var.managed_secrets : env_name => {
       secret  = config.secret_id
       version = "latest"
     }
+    if config.inject_into_runtime
   }
 
   runtime_secret_env = merge(local.managed_secret_env, var.external_secret_env)
@@ -68,6 +73,16 @@ locals {
       member = local.secret_accessor_service_agents[pair[1]]
     }
   }
+
+  managed_secret_reader_bindings = merge([
+    for env_name, config in var.managed_secrets : {
+      for member in config.accessor_members :
+      "${env_name}/${member}" => {
+        secret = config.secret_id
+        member = member
+      }
+    }
+  ]...)
 }
 
 resource "terraform_data" "configuration_validation" {
@@ -191,6 +206,21 @@ resource "google_storage_bucket_iam_member" "developer_staging_bucket_writer" {
 
 resource "google_secret_manager_secret_iam_member" "agent_platform_accessor" {
   for_each = local.secret_accessor_bindings
+
+  project   = var.project_id
+  secret_id = each.value.secret
+  role      = "roles/secretmanager.secretAccessor"
+  member    = each.value.member
+
+  depends_on = [google_secret_manager_secret.managed]
+}
+
+# Principals that must read a managed secret directly, such as the release
+# process that creates a Gemini Enterprise authorization from the OAuth client
+# secret. Keeping the payload in Secret Manager means it is never copied into a
+# developer environment file.
+resource "google_secret_manager_secret_iam_member" "managed_secret_readers" {
+  for_each = local.managed_secret_reader_bindings
 
   project   = var.project_id
   secret_id = each.value.secret

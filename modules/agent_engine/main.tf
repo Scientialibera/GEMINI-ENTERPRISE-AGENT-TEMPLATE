@@ -36,6 +36,23 @@ resource "google_vertex_ai_reasoning_engine" "this" {
   display_name = var.display_name
   description  = var.description
 
+  lifecycle {
+    precondition {
+      # Verified against the live API: a source-deployed Reasoning Engine that
+      # starts correctly (uvicorn serving, all workers up) is still reported as
+      # failed once secret_env is attached, with no application-level error.
+      # Secret injection is only supported for the packaged/pickled deployment
+      # path, so fail during plan instead of after a ten minute rollout.
+      condition     = length(var.secret_env) == 0
+      error_message = <<-EOT
+        secret_env is not supported for source-archive Agent Engine deployments.
+        The runtime fails to start with no application error. Either remove the
+        managed/external secret configuration, or have the agent read the secret
+        from Secret Manager at runtime using its Agent Identity.
+      EOT
+    }
+  }
+
   spec {
     class_methods   = file("${path.module}/adk_class_methods.json")
     agent_framework = "google-adk"

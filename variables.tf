@@ -110,11 +110,19 @@ variable "bootstrap_env" {
 }
 
 variable "managed_secrets" {
-  description = "Secret Manager secrets owned by this stack, keyed by runtime environment variable name."
+  description = <<-EOT
+    Secret Manager secrets owned by this stack, keyed by runtime environment
+    variable name. `accessor_members` grants additional principals read access,
+    for secrets a human or release process must read rather than the agent
+    runtime. Use it for values such as the Gemini Enterprise OAuth client
+    secret, so the payload is stored once and never copied to a workstation.
+  EOT
   type = map(object({
-    secret_id     = string
-    value_version = optional(number, 1)
-    labels        = optional(map(string), {})
+    secret_id           = string
+    value_version       = optional(number, 1)
+    labels              = optional(map(string), {})
+    accessor_members    = optional(set(string), [])
+    inject_into_runtime = optional(bool, true)
   }))
   default = {}
 }

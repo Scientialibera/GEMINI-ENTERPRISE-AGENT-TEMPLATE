@@ -25,3 +25,8 @@ output "runtime_config_hash" {
 output "log_bucket" {
   value = module.observability.log_bucket
 }
+
+output "managed_secret_ids" {
+  description = "Secret Manager secret ids created by this stack, keyed by runtime environment variable name. Consumers read the payload from Secret Manager rather than receiving it directly."
+  value       = { for env_name, config in var.managed_secrets : env_name => config.secret_id }
+}
