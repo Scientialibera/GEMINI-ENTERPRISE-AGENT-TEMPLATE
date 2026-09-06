@@ -45,9 +45,15 @@ REQUEST_TIMEOUT_SECONDS = 60
 
 OAUTH_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 OAUTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
-# Where Google returns the user after consent. This is Gemini Enterprise's own
-# callback, so it is the same for every agent and every scope.
+# Where Google returns the user after consent. Gemini Enterprise's own
+# callbacks, so they are the same for every agent and every scope.
+#
+# The client must register BOTH. The authorization resource stores the first,
+# but the live consent flow redirects to the second, and a client missing it
+# fails with redirect_uri_mismatch once the user clicks Authorize.
 OAUTH_REDIRECT_URI = "https://vertexaisearch.cloud.google.com/static/oauth/oauth.html"
+OAUTH_CONSENT_REDIRECT_URI = "https://vertexaisearch.cloud.google.com/oauth-redirect"
+OAUTH_REDIRECT_URIS = (OAUTH_REDIRECT_URI, OAUTH_CONSENT_REDIRECT_URI)
 
 
 def _access_token() -> str:
@@ -250,7 +256,9 @@ def ensure_authorization(
             "APIs & Services > Credentials, create an OAuth client with:\n"
             "  Application type: Web application\n"
             f"  Name: {spec.oauth_client_name}\n"
-            f"  Authorized redirect URI: {OAUTH_REDIRECT_URI}\n\n"
+            "  Authorized redirect URIs (add both; the consent flow uses the second):\n"
+            + "".join(f"    {uri}\n" for uri in OAUTH_REDIRECT_URIS)
+            + "\n"
             "The consent screen must allow the scopes this agent requests:\n"
             + "".join(f"  {scope}\n" for scope in spec.oauth_scopes)
             + "\n"
