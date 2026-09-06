@@ -18,12 +18,14 @@ import google.auth.transport.requests
 import requests
 from common import (
     AUTHORIZATION_ID_ENV,
+    OAUTH_CLIENTS_ENV,
     ROOT,
     AgentSpec,
     detect_delegated_auth,
     get_agent_spec,
     load_environment,
     load_resource_name,
+    oauth_client_id_for,
     require_dev_environment,
 )
 
@@ -147,27 +149,62 @@ def _resolve_client_secret(project_id: str, spec: AgentSpec) -> str:
         os.getenv(spec.oauth_client_secret_name_env, "").strip()
         or os.getenv(OAUTH_CLIENT_SECRET_NAME_ENV, "").strip()
     )
-    if secret_name:
-        resource = (
-            secret_name
-            if secret_name.startswith("projects/")
-            else f"projects/{project_id}/secrets/{secret_name}/versions/latest"
+    if not secret_name:
+        secret_name = spec.default_oauth_secret_name
+
+    resource = (
+        secret_name
+        if secret_name.startswith("projects/")
+        else f"projects/{project_id}/secrets/{secret_name}/versions/latest"
+    )
+    if "/versions/" not in resource:
+        resource = f"{resource}/versions/latest"
+
+    from google.api_core.exceptions import NotFound
+    from google.cloud import secretmanager
+
+    client = secretmanager.SecretManagerServiceClient()
+    try:
+        return client.access_secret_version(name=resource).payload.data.decode("utf-8").strip()
+    except NotFound:
+        pass
+
+    # Not stored yet. A value supplied for this run is copied into Secret
+    # Manager, so the workstation holds it only until the first registration.
+    supplied = (
+        os.getenv(spec.oauth_client_secret_env, "").strip()
+        or os.getenv(OAUTH_CLIENT_SECRET_ENV, "").strip()
+    )
+    if not supplied:
+        # The caller reports what to create, naming the client and this secret,
+        # rather than surfacing a bare 404.
+        return ""
+
+    _store_client_secret(project_id, secret_name.rsplit("/", 1)[-1], supplied)
+    return supplied
+
+
+def _store_client_secret(project_id: str, secret_id: str, value: str) -> None:
+    """Create the Secret Manager secret holding an OAuth client secret."""
+    import contextlib
+
+    from google.api_core.exceptions import AlreadyExists
+    from google.cloud import secretmanager
+
+    client = secretmanager.SecretManagerServiceClient()
+    parent = f"projects/{project_id}"
+    # A rotated secret reuses the existing container and adds a version.
+    with contextlib.suppress(AlreadyExists):
+        client.create_secret(
+            parent=parent,
+            secret_id=secret_id,
+            secret={"replication": {"automatic": {}}},
         )
-        if "/versions/" not in resource:
-            resource = f"{resource}/versions/latest"
-        from google.api_core.exceptions import NotFound
-        from google.cloud import secretmanager
-
-        client = secretmanager.SecretManagerServiceClient()
-        try:
-            payload = client.access_secret_version(name=resource).payload.data
-        except NotFound:
-            # Not fatal here: the caller reports what to create, naming both the
-            # OAuth client and this secret, rather than surfacing a bare 404.
-            return ""
-        return payload.decode("utf-8").strip()
-
-    return os.getenv(OAUTH_CLIENT_SECRET_ENV, "").strip()
+    client.add_secret_version(
+        parent=f"{parent}/secrets/{secret_id}",
+        payload={"data": value.encode("utf-8")},
+    )
+    print(f"OAUTH_CLIENT_SECRET_STORED={secret_id}")
 
 
 def _authorizations_url(project_id: str) -> str:
@@ -185,7 +222,9 @@ def _authorization_exists(project_id: str, authorization_id: str) -> bool:
     return False
 
 
-def ensure_authorization(project_id: str, authorization_id: str, spec: AgentSpec) -> None:
+def ensure_authorization(
+    project_id: str, authorization_id: str, agent_name: str, spec: AgentSpec
+) -> None:
     """Create the Gemini Enterprise authorization when it does not exist.
 
     One authorization serves one agent, and one OAuth client backs one
@@ -197,10 +236,9 @@ def ensure_authorization(project_id: str, authorization_id: str, spec: AgentSpec
         print(f"AUTHORIZATION_EXISTS={authorization_id}")
         return
 
-    client_id = (
-        os.getenv(spec.oauth_client_id_env, "").strip()
-        or os.getenv(OAUTH_CLIENT_ID_ENV, "").strip()
-    )
+    client_id = oauth_client_id_for(agent_name, spec) or os.getenv(
+        OAUTH_CLIENT_ID_ENV, ""
+    ).strip()
     client_secret = _resolve_client_secret(project_id, spec)
     if not client_id or not client_secret:
         raise SystemExit(
@@ -216,12 +254,13 @@ def ensure_authorization(project_id: str, authorization_id: str, spec: AgentSpec
             "The consent screen must allow the scopes this agent requests:\n"
             + "".join(f"  {scope}\n" for scope in spec.oauth_scopes)
             + "\n"
-            "Store its secret in Secret Manager:\n"
-            f"  gcloud secrets create {spec.default_oauth_secret_name} "
-            f"--project={project_id} --data-file=-\n\n"
-            "Then put these in dev/.env.dev:\n"
-            f"  {spec.oauth_client_id_env}=<the new client id>\n"
-            f"  {spec.oauth_client_secret_name_env}={spec.default_oauth_secret_name}\n"
+            "Then put its id and secret in dev/.env.dev and run this again:\n"
+            f"  {OAUTH_CLIENTS_ENV}={agent_name}=<the new client id>"
+            "   (comma-separated; keep any existing entries)\n"
+            f"  {spec.oauth_client_secret_env}=<the new client secret>\n\n"
+            f"The secret is copied into Secret Manager as "
+            f"'{spec.default_oauth_secret_name}' on that run and read from there afterwards, so "
+            "it can then be removed from dev/.env.dev.\n"
         )
 
     scope_value = urllib.parse.quote(" ".join(spec.oauth_scopes))
@@ -272,7 +311,6 @@ def register_agent(
 
     Creates the delegated-auth authorization first when the agent needs one.
     """
-    del agent_name  # spec carries everything the registration needs.
 
     # The agent's source is the authority on whether it needs a delegated
     # token, so a tool added without updating the spec is caught here rather
@@ -287,7 +325,7 @@ def register_agent(
 
     authorization_id = os.getenv(AUTHORIZATION_ID_ENV, "").strip()
     if spec.uses_delegated_auth and authorization_id:
-        ensure_authorization(project_id, authorization_id, spec)
+        ensure_authorization(project_id, authorization_id, agent_name, spec)
 
     agent = _build_agent(spec, reasoning_engine, project_id)
 

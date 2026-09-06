@@ -33,6 +33,9 @@ ENVIRONMENT_ENV = "ENVIRONMENT"
 CONFIG_PARAMETER_ENV = "CONFIG_PARAMETER"
 DEV_REASONING_ENGINE_ENV = "DEV_REASONING_ENGINE"
 AUTHORIZATION_ID_ENV = "GEMINI_ENTERPRISE_AUTHORIZATION_ID"
+# Keyed rather than positional: every entry names its agent, so adding or
+# removing one cannot shift another agent onto the wrong OAuth client.
+OAUTH_CLIENTS_ENV = "OAUTH_CLIENTS"
 
 # An agent that reads the authorization id is, by definition, one whose tools
 # are handed a delegated user token: both the authenticated-tool path and the
@@ -153,13 +156,13 @@ class AgentSpec:
 
     @property
     def oauth_client_id_env(self) -> str:
-        """Environment variable naming this agent's own OAuth client.
+        """Per-agent override naming this agent's own OAuth client.
 
         Gemini Enterprise caches the user's consent per OAuth client, so two
         agents sharing a client share one grant and the second never receives a
         token of its own. Each delegated-auth agent therefore needs its own
-        client. The id identifies a real project resource, so it lives in the
-        gitignored dev/.env.dev rather than in this registry.
+        client. Prefer the keyed OAUTH_CLIENTS map; this remains for a one-off
+        override.
         """
         return f"{self.env_prefix}_OAUTH_CLIENT_ID"
 
@@ -167,6 +170,17 @@ class AgentSpec:
     def oauth_client_secret_name_env(self) -> str:
         """Environment variable naming the Secret Manager secret for that client."""
         return f"{self.env_prefix}_OAUTH_CLIENT_SECRET_NAME"
+
+    @property
+    def oauth_client_secret_env(self) -> str:
+        """Environment variable holding the raw client secret for a first run.
+
+        Set once in the gitignored dev/.env.dev after creating the console
+        client. Registration copies it into Secret Manager and reads it from
+        there afterwards, so the value does not have to stay on the
+        workstation.
+        """
+        return f"{self.env_prefix}_OAUTH_CLIENT_SECRET"
 
     @property
     def default_oauth_secret_name(self) -> str:
@@ -275,6 +289,49 @@ def load_environment(filename: str) -> None:
     path = DEV_DIR / filename
     if path.exists():
         load_dotenv(path, override=False)
+
+
+def oauth_client_id_for(agent_name: str, spec: AgentSpec) -> str:
+    """Return the OAuth client id configured for one agent.
+
+    Reads the keyed OAUTH_CLIENTS map, which names its agent in every entry so
+    that adding or removing an agent cannot shift another onto the wrong
+    client. The per-agent variable overrides it for a single run.
+    """
+    override = os.getenv(spec.oauth_client_id_env, "").strip()
+    if override:
+        return override
+    return _parse_oauth_clients().get(agent_name, "")
+
+
+def _parse_oauth_clients() -> dict[str, str]:
+    """Parse OAUTH_CLIENTS, a comma-separated list of agent=client_id pairs."""
+    raw = os.getenv(OAUTH_CLIENTS_ENV, "").strip()
+    if not raw:
+        return {}
+
+    clients: dict[str, str] = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if "=" not in entry:
+            raise SystemExit(
+                f"{OAUTH_CLIENTS_ENV} entry '{entry}' is not agent=client_id. Every entry names "
+                "its agent, so that adding or removing an agent cannot shift another onto the "
+                "wrong client."
+            )
+        agent, _, client_id = entry.partition("=")
+        agent, client_id = agent.strip(), client_id.strip()
+        if agent in clients:
+            raise SystemExit(f"{OAUTH_CLIENTS_ENV} lists '{agent}' more than once.")
+        if agent not in AGENTS:
+            raise SystemExit(
+                f"{OAUTH_CLIENTS_ENV} names unknown agent '{agent}'. "
+                f"Choose one of: {', '.join(sorted(AGENTS))}."
+            )
+        clients[agent] = client_id
+    return clients
 
 
 def detect_delegated_auth(spec: AgentSpec) -> bool:
