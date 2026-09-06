@@ -7,37 +7,45 @@ This branch contains agent code, shared application libraries, tests, determinis
 ## Repository layout
 
 ```text
-agents/
-├── auth_reference_agent/
+agents/                     one independently deployable ADK application each
+├── auth_reference_agent/   reference for both authentication patterns
 │   └── src/auth_reference_agent/
-│       ├── agent.py      # agent construction only
-│       ├── config.py     # bootstrap values resolved once
-│       └── tools/        # one module per tool
-└── basic_assistant/
+│       ├── agent.py        agent construction only
+│       ├── config.py       bootstrap values resolved once at import
+│       └── tools/          one module per tool
+│           ├── bigquery_query.py        BigQuery as the signed-in user
+│           ├── storage_objects.py       Cloud Storage as the agent
+│           └── runtime_config_status.py active runtime configuration
+└── basic_assistant/        minimal agent; the shape to copy for a new one
     └── src/basic_assistant/
         ├── agent.py
         ├── config.py
         └── tools/
 
 packages/
-└── gemini_shared/
+└── gemini_shared/          runtime behaviour every agent shares
+    ├── bootstrap.py        the small env contract read at process start
+    ├── runtime_config.py   live config from Parameter Manager, local fallback
+    ├── runtime_agent.py    per-request instruction and model resolution
+    ├── delegated_auth.py   Gemini Enterprise delegated user token
+    └── agent_identity.py   Cloud Storage under the runtime's own identity
 
-dev/
-├── .env.local.example
-├── .env.dev.example
-├── bigquery_fixture.py
-├── bootstrap.py
-├── bootstrap_dev.py
-├── common.py
-├── package_agent.py
-├── run_local.py
-├── deploy_dev.py
-├── update_dev.py
-├── register_agent.py
-└── release_dev.py
+dev/                        developer tooling; never deployed with an agent
+├── .env.local.example      local execution settings
+├── .env.dev.example        developer sandbox deployment settings
+├── common.py               agent registry and shared helpers
+├── bootstrap.py            project, API, bucket and parameter preflight
+├── bootstrap_dev.py        runs the preflight
+├── bigquery_fixture.py     optional sample data for the delegated tool
+├── run_local.py            run an agent locally
+├── package_agent.py        deterministic archive for Terraform
+├── deploy_dev.py           create a developer-owned Agent Engine
+├── update_dev.py           update that same Agent Engine
+├── register_agent.py       publish it into a Gemini Enterprise app
+└── release_dev.py          package, deploy and register in one command
 
-tests/
-pyproject.toml
+tests/                      lint and behaviour checks for the above
+pyproject.toml              workspace, dependencies and lint configuration
 ```
 
 Each folder under `agents/` is an independently deployable ADK application. Within one, `agent.py` only constructs the agent, `config.py` resolves bootstrap values once, and each tool is its own module under `tools/`. Shared runtime behavior belongs in `packages/gemini_shared`. Agent-specific tools and orchestration stay inside the agent package.
