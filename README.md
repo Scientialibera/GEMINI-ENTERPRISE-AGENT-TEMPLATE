@@ -2,7 +2,9 @@
 
 Application template for independently deployable Google ADK agents that share a common Python runtime package.
 
-This branch contains agent code, shared application libraries, tests, deterministic packaging and developer-only local/dev deployment helpers. Shared Google Cloud infrastructure, IAM, Parameter Manager, Secret Manager, observability and production deployment belong to the companion Terraform branch.
+This branch contains agent code, shared application libraries, tests, deterministic packaging and developer-only local/dev deployment helpers. Shared Google Cloud infrastructure, IAM, Parameter Manager, Secret Manager, observability and production deployment belong to the `template/terraform-iac-only` branch, which must be applied before any agent is deployed.
+
+Start with [Before first use](#before-first-use), then [Adding an agent](#adding-an-agent) for the full recipe: files, tools, MCP servers, identity, deployment.
 
 ## Repository layout
 
@@ -123,8 +125,11 @@ CONFIG_PARAMETER_LOCATION
 CONFIG_REFRESH_SECONDS
 BOOTSTRAP_MODEL
 GEMINI_MODEL_LOCATION
-GEMINI_ENTERPRISE_AUTHORIZATION_ID   # auth_reference_agent only
+GEMINI_ENTERPRISE_AUTHORIZATION_ID   # agents using the delegated token
+MCP_SERVER_URL                       # agents using an MCP toolset
 ```
+
+`dev/common.py` sends these through `RUNTIME_ENV_KEYS`. A new bootstrap variable must be added there or it never reaches the deployed agent.
 
 `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` are used locally and are supplied by Agent Runtime when deployed. Do not add reserved Agent Runtime variables to the deployed env map.
 
@@ -341,15 +346,159 @@ Three things to know before relying on it:
 
 ## Adding an agent
 
-1. Create `agents/<agent_name>/` with its own Python package.
-2. Give the ADK root agent a unique name.
-3. Keep domain tools and orchestration in that agent package, and give every tool a docstring. Resolve the instruction from runtime configuration rather than hardcoding prompt text.
-4. Move only genuinely shared runtime behavior into `gemini_shared`.
-5. Add an `AgentSpec` entry in `dev/common.py` if the local/dev helpers should support the new agent.
-6. Add live settings to the Terraform-managed Parameter Manager payload.
-7. Add only process-construction values to bootstrap env.
-8. Add required runtime IAM and secrets in Terraform.
-9. Extend tests for agent-specific validation and packaging behavior.
+Copy `agents/basic_assistant/` and change the names. Every file below is required; the recipe is complete as written.
+
+### 1. Package files
+
+`agents/<agent>/pyproject.toml` — add a dependency only if a tool imports it. `[mcp]` is required for MCP toolsets, `[agent-identity]` for Agent Identity.
+
+```toml
+[project]
+name = "<agent-name>"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "gemini-shared",
+  "google-adk[extensions]==2.7.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/<agent>"]
+```
+
+`src/<agent>/__init__.py`:
+
+```python
+from .agent import app, root_agent
+
+__all__ = ["app", "root_agent"]
+```
+
+`src/<agent>/config.py` — bootstrap values only, resolved once. Use `require_auth=True` when any tool uses the delegated token.
+
+```python
+from gemini_shared import get_bootstrap_settings
+
+BOOTSTRAP = get_bootstrap_settings()
+PROJECT_ID = BOOTSTRAP.project_id
+```
+
+`src/<agent>/agent.py` — construction only. No tool logic, no prompt text.
+
+```python
+root_agent = Agent(
+    name="<agent>",                        # unique; keep stable after registration
+    model=Gemini(
+        model=BOOTSTRAP.bootstrap_model,
+        client_kwargs={"location": BOOTSTRAP.model_location},
+    ),
+    description="<one line, shown in Gemini Enterprise>",
+    instruction=runtime_instruction,       # from Parameter Manager, per request
+    before_model_callback=apply_runtime_model,
+    tools=[...],
+)
+
+app = AdkApp(agent=root_agent, enable_tracing=True)   # Agent Runtime serves this
+```
+
+### 2. Add a tool
+
+One module per tool under `src/<agent>/tools/`, re-exported from `tools/__init__.py`. The docstring and type hints become the model-facing schema, so a tool without a docstring reaches the model with no description.
+
+```python
+def report_order_status(order_id: str) -> dict[str, object]:
+    """Return the current status of one order.
+
+    Args:
+        order_id: The order identifier to look up.
+    """
+```
+
+Return JSON-serializable values. `date`, `Decimal` and `bytes` break the run; convert them first.
+
+For a tool that must act as the signed-in user, wrap it and let ADK inject the credential:
+
+```python
+tool = AuthenticatedFunctionTool(
+    func=query_bigquery,                                  # takes credential: AuthCredential
+    auth_config=delegated_auth_config(GEMINI_ENTERPRISE_AUTHORIZATION_ID),
+)
+```
+
+### 3. Add an MCP server
+
+Google's managed servers need nothing deployed. Reuse the shared asset:
+
+```python
+from gemini_shared.mcp.mcp_google_cloud import bigquery_readonly_toolset
+
+toolset = bigquery_readonly_toolset(authorization_id=GEMINI_ENTERPRISE_AUTHORIZATION_ID)
+```
+
+Any other Streamable HTTP server:
+
+```python
+from gemini_shared.mcp.mcp_auth import delegated_mcp_toolset
+
+toolset = delegated_mcp_toolset(
+    server_url=MCP_SERVER_URL,
+    authorization_id=GEMINI_ENTERPRISE_AUTHORIZATION_ID,
+    tool_filter=["read_only_tool"],   # always set: without it the agent inherits new server tools
+    tool_name_prefix="ext",
+)
+```
+
+Add `mcp` to the agent's ADK extras and to its `requirements` in `dev/common.py`. For a server used by more than one agent, add a `packages/gemini_shared/src/gemini_shared/mcp/mcp_<name>/` folder holding its URL, scopes and tool list rather than hardcoding them in the agent.
+
+### 4. Choose the identity
+
+| Downstream access | Use | Needs |
+|---|---|---|
+| Same for all users | Agent Identity | Terraform IAM grant on the runtime |
+| Varies by user | Delegated token | Authorization id + OAuth scopes covering every call |
+
+Delegated tools and MCP servers share one token, so the authorization's scopes must cover both.
+
+### 5. Register with the dev tooling
+
+Add an `AgentSpec` to `AGENTS` in `dev/common.py`. Without it the dev scripts cannot see the agent.
+
+```python
+"<agent>": AgentSpec(
+    package_name="<agent-name>",              # matches pyproject [project].name
+    module="<agent>.agent",
+    display_name="<Shown in Gemini Enterprise>",
+    extra_packages=(
+        "agents/<agent>/src/<agent>",
+        "packages/gemini_shared/src/gemini_shared",
+    ),
+    requirements=COMMON_REQUIREMENTS,          # + extras this agent imports
+    required_remote_bootstrap_env=(),           # (AUTHORIZATION_ID_ENV,) if delegated
+    registration_description="...",             # what it does
+    invocation_description="...",               # when to call it
+    starter_prompts=("...",),
+),
+```
+
+### 6. Configure and deploy
+
+Live settings (model, instruction, limits) go in the Terraform `runtime_config`; bootstrap values go in the deployed env map. Never both.
+
+```bash
+uv run --group dev ruff format . && uv run --group dev ruff check . && uv run --group dev pytest
+uv run --group dev python dev/run_local.py --agent <agent>
+uv run --group dev python dev/release_dev.py --agent <agent>
+```
+
+`release_dev.py` packages, deploys and registers. Deploying alone does not make the agent visible in Gemini Enterprise; registration does.
+
+### 7. Extend the tests
+
+`tests/test_validation.py` parametrizes over agent names. Add the new agent so it inherits the checks that every tool has a description and the instruction resolves from runtime configuration.
 
 ## Code standards
 
@@ -371,5 +520,6 @@ Three things to know before relying on it:
 - No long-lived service-account keys.
 - No duplicated shared configuration between `.env`, Parameter Manager and Terraform.
 - No QA/prod deployment through developer helper scripts.
-- No accidental extraction of the custom delegated-auth provider into shared code.
+- No hardcoded MCP server URL in an agent; put it in `mcp/mcp_<name>/` or bootstrap env.
+- No MCP toolset without `tool_filter`; an unfiltered toolset inherits whatever the server adds.
 - Developer test fixtures must remain optional, bounded and separate from production/shared infrastructure.
