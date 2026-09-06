@@ -103,6 +103,22 @@ uv run --group dev pytest
 
 `ruff` enforces Python 3.12 syntax, PEP 8, import order, bug-prone constructs and security checks. These run in CI and are the contract; this README is not.
 
+## What Terraform owns
+
+Two repositories, and the split is what keeps agents independent of infrastructure.
+
+| | Terraform (`template/terraform-iac-only`) | Agent repository (`dev/`) |
+|---|---|---|
+| Runs | once per project, then rarely | once per agent, whenever it changes |
+| Creates | APIs, IAM, Secret Manager, observability | Agent Engines, runtime parameters, authorizations, registrations |
+| Knows about agents | nothing | everything |
+
+**Terraform runs first**, because it grants the IAM everything else depends on: the developer's permission to deploy, and the project-wide roles every Agent Identity inherits. That grant targets a trust-domain principal set rather than named identities, so an agent deployed later picks it up with no apply.
+
+**Terraform creates no Agent Engines.** It has no agent names, no source archives, no per-agent configuration. Adding an agent to this repository therefore never touches Terraform, and observability is project-wide and grouped by runtime id, so a new agent appears in the existing dashboard and alerts on its own.
+
+Everything an agent needs beyond that is created by the dev scripts at deploy time, including its Parameter Manager configuration and its Gemini Enterprise authorization. The only exception is its OAuth client, which no API can create.
+
 ## Configuration model
 
 Where a value lives decides what changing it costs.
@@ -176,21 +192,26 @@ cp dev/.env.dev.example dev/.env.dev
 The initial sequence is:
 
 ```text
-1. configure gcloud + ADC
-2. fill dev/.env.dev deployment coordinates
-3. run bootstrap_dev.py
-4. bootstrap reuses or prepares the developer project/APIs/staging bucket
-5. bootstrap optionally creates/reuses the BigQuery test fixture
-6. package the selected agent
-7. apply the companion Terraform platform stack once per project, for APIs, IAM and observability
-8. run tests/lint
-9. run deploy_dev.py for a developer-owned Agent Engine copy
-10. run register_agent.py to publish that runtime into a Gemini Enterprise app
+Once per project:
+  1. configure gcloud + ADC
+  2. apply the companion Terraform platform stack (APIs, IAM, observability)
+  3. fill dev/.env.dev deployment coordinates
+  4. run bootstrap_dev.py: project, APIs, staging bucket, optional BigQuery fixture
+
+Once per agent:
+  5. run tests/lint
+  6. package the agent
+  7. run deploy_dev.py: creates the Agent Engine and the agent's runtime parameter
+  8. run register_agent.py: publishes it into a Gemini Enterprise app
 ```
 
-`release_dev.py --agent <name>` runs steps 6, 9 and 10 in one command.
+Terraform comes first because it grants the IAM the dev scripts and the deployed agents rely on. It is applied once and then rarely changes; adding an agent never requires an apply. See [What Terraform owns](#what-terraform-owns).
 
-Deploying an Agent Engine does not make it visible in Gemini Enterprise. Step 10 is what puts it on the Agents page and enables the delegated consent flow.
+`release_dev.py --agent <name>` runs steps 6, 7 and 8 in one command.
+
+Deploying an Agent Engine does not make it visible in Gemini Enterprise. Step 8 is what puts it on the Agents page and enables the delegated consent flow.
+
+A delegated-auth agent additionally needs its own OAuth client, which is the one step that cannot be automated. Registration stops and prints exactly what to create; see [OAuth clients for delegated auth](#oauth-clients-for-delegated-auth).
 
 Run the developer platform preflight:
 
@@ -282,11 +303,46 @@ Registration is idempotent. An agent with the same display name is patched to po
 
 Each agent's registration metadata — description, invocation description and starter prompts — lives in its `AgentSpec` in `dev/common.py`, so the registered listing stays in the repository rather than being maintained by hand in the console.
 
-Agents with delegated tools additionally need a Gemini Enterprise authorization, which triggers the user consent flow and forwards the resulting token to the agent. `register_agent.py` reuses the authorization when it already exists, and creates it otherwise. Set `GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET_NAME` to a Secret Manager secret so the payload never reaches a workstation; `GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET` remains available for a sandbox with no managed secret yet.
+Agents with delegated tools additionally need a Gemini Enterprise authorization, which triggers the user consent flow and forwards the resulting token to the agent. `register_agent.py` reuses the authorization when it already exists, and creates it otherwise.
 
 One authorization serves one agent: registering a second agent against an authorization already bound elsewhere fails with `is used by another agent`. Each agent therefore defaults to its own, named `<package-name>-authz`, so adding a delegated-auth agent needs no shared configuration change. `GEMINI_ENTERPRISE_AUTHORIZATION_ID` overrides that default for a single run.
 
 The authorization's OAuth scopes must cover everything that agent's delegated tools call.
+
+## OAuth clients for delegated auth
+
+Every delegated-auth agent needs **its own OAuth client**. Gemini Enterprise caches the user's consent per client, so two agents sharing one share a single grant: the second is handed a token it never consented to, every call fails with `401`, and no amount of re-consenting fixes it.
+
+OAuth clients cannot be created from the CLI or any API. This is the one manual step in the whole flow. Registration stops and prints the exact client name, redirect URIs, scopes and environment variables to use, all derived from the agent, so nothing has to be worked out by hand.
+
+In the console, under **APIs & Services > Credentials**, create a **Web application** client and add **both** redirect URIs:
+
+```text
+https://vertexaisearch.cloud.google.com/static/oauth/oauth.html
+https://vertexaisearch.cloud.google.com/oauth-redirect
+```
+
+Both are required. The authorization resource stores the first, but the live consent flow redirects to the second. A client with only the first is accepted when the authorization is created and then fails with `redirect_uri_mismatch` the moment a user clicks **Authorize**.
+
+Then put the id and secret in `dev/.env.dev` and run registration again:
+
+```text
+OAUTH_CLIENTS=<agent>=<client id>,<other agent>=<its client id>
+<AGENT>_OAUTH_CLIENT_SECRET=<client secret>
+```
+
+`OAUTH_CLIENTS` is keyed by agent name rather than positional, so adding or removing an agent cannot shift another onto the wrong client. The secret is copied into Secret Manager as `<package-name>-oauth-client-secret` on that run and read from there afterwards, so remove it from the file once it has run.
+
+Registration verifies that the secret actually belongs to the client id before writing the authorization. A mismatched pair is otherwise accepted at creation and only surfaces later as an endless consent loop, because the token exchange fails after the user has already approved.
+
+### Two names, only one of which users see
+
+| Name | Scope | Where it appears |
+|---|---|---|
+| OAuth client **Name** | one per client | the console credentials list |
+| OAuth consent screen **App name** | one per **project** | the "Sign in with Google" screen |
+
+Naming a client after its agent keeps the credentials list readable, but users always see the project's single consent screen App name. Google offers no way to vary it per client, so set it to something that makes sense for every agent in the project.
 
 ## Identity model
 
@@ -523,6 +579,8 @@ uv run --group dev python dev/release_dev.py --agent <agent>
 ```
 
 `release_dev.py` packages, deploys and registers. Deploying alone does not make the agent visible in Gemini Enterprise; registration does.
+
+The runtime parameter is created on the first deployment, so nothing has to exist beforehand. A delegated-auth agent stops at registration until it has its own OAuth client, which is the only manual step; the message names everything to create. See [OAuth clients for delegated auth](#oauth-clients-for-delegated-auth).
 
 ### 7. Extend the tests
 

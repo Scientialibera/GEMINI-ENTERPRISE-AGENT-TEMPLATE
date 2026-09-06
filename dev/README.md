@@ -169,16 +169,15 @@ Developer test support only. Terraform does not create or seed it.
 
 ## Terraform handoff
 
-After developer platform preparation, apply the Terraform dev stack. Terraform creates or manages:
+Apply the Terraform platform stack once per project, before deploying any agent. Terraform creates or manages:
 
-- Parameter Manager runtime config
+- required APIs
 - developer IAM
-- common runtime IAM for developer-created Agent Identities
-- shared Agent Engine resources where applicable
+- project-wide runtime IAM for every Agent Identity
 - Secret Manager references
-- observability
+- observability across all agent runtimes
 
-Terraform's `runtime_config_parameter` output names the parameter it manages. An agent whose default parameter name matches that output picks it up with no further configuration; set `CONFIG_PARAMETER` only to override the default for a run.
+Terraform creates no Agent Engines and no per-agent configuration, so adding an agent never requires an apply. Each agent's runtime parameter is created by `deploy_dev.py` on first deployment, and its Gemini Enterprise authorization by `register_agent.py`.
 
 ## Deploy and update
 
@@ -214,7 +213,11 @@ uv run --group dev python dev/register_agent.py --agent basic_assistant
 
 Requires `GEMINI_ENTERPRISE_APP_ID`, the app/engine id rather than the web app client id shown in the console URL. Re-running patches the existing agent instead of creating a duplicate.
 
-Agents with delegated tools also need a Gemini Enterprise authorization. The helper reuses `GEMINI_ENTERPRISE_AUTHORIZATION_ID` when it already exists, and creates it when `GEMINI_ENTERPRISE_OAUTH_CLIENT_ID` and `GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET` are supplied for that run. One authorization serves one agent.
+Agents with delegated tools also need a Gemini Enterprise authorization, and each needs **its own OAuth client**: Gemini Enterprise caches the user's consent per client, so two agents sharing one share a grant and the second never receives a token of its own.
+
+OAuth clients cannot be created from the CLI. Registration stops and prints the client name, both redirect URIs, the scopes and the environment variables to set, all derived from the agent. Create the client in the console, put its id in `OAUTH_CLIENTS` and its secret in `<AGENT>_OAUTH_CLIENT_SECRET`, then run registration again: the secret is copied into Secret Manager and read from there afterwards.
+
+Both redirect URIs are required. The authorization stores `/static/oauth/oauth.html`, but the consent flow redirects to `/oauth-redirect`, and a client missing the second fails with `redirect_uri_mismatch` only once a user clicks Authorize. See the root README for the full walkthrough.
 
 ## Guardrails
 

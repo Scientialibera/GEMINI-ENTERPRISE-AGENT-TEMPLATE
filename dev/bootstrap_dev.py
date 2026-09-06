@@ -39,15 +39,12 @@ def main() -> None:
         print(f"BIGQUERY_FIXTURE_TABLE_CREATED={str(fixture.created_table).lower()}")
         print(f"BIGQUERY_FIXTURE_ROWS_SEEDED={fixture.seeded_rows}")
 
+    # Only a pinned override is checked here. Each agent otherwise reads its own
+    # parameter, which deploy_dev.py creates on first deployment.
     if _configured_value("CONFIG_PARAMETER"):
         ensure_runtime_parameter(project_id)
-        print("DEV_PREREQUISITES=ready")
-    else:
-        print("DEV_PLATFORM_PREREQUISITES=ready")
-        print(
-            "NEXT_STEP=Apply the Terraform dev stack, then set CONFIG_PARAMETER "
-            "to its runtime_config_parameter output."
-        )
+    print("DEV_PREREQUISITES=ready")
+    print("NEXT_STEP=Run deploy_dev.py --agent <name>; it creates that agent's parameter.")
 
 
 if __name__ == "__main__":
