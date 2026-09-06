@@ -22,8 +22,10 @@ Reads `dev/.env.local`, runs the agent in-process against real Google Cloud APIs
 
 ```bash
 terraform apply                                        # the other branch: APIs, IAM, observability
-uv run --group dev python dev/bootstrap_dev.py         # project, staging bucket, optional fixture
+uv run --group dev python dev/bootstrap_dev.py         # optional: BigQuery sample fixture
 ```
+
+Only `terraform apply` is required. `release_dev.py` runs the project preflight itself, so `bootstrap_dev.py` is worth running for the BigQuery fixture or to check the project before deploying anything.
 
 **Deploying an agent** — whenever its code or configuration changes:
 
@@ -240,7 +242,7 @@ Once per project:
   3. console: configure the OAuth consent screen
   4. apply the companion Terraform platform stack (APIs, IAM, observability)
   5. fill dev/.env.dev deployment coordinates
-  6. run bootstrap_dev.py: project, APIs, staging bucket, optional BigQuery fixture
+  6. optional: run bootstrap_dev.py for the BigQuery sample fixture
 
 Once per agent:
   7. run tests/lint
@@ -252,7 +254,7 @@ Once per agent:
 
 Steps 2, 3 and 10 are console-only; nothing else in the flow is manual. Terraform comes at 4 because it grants the IAM the dev scripts and the deployed agents rely on; it is applied once and then rarely changes, and adding an agent never requires an apply. See [What Terraform owns](#what-terraform-owns).
 
-`release_dev.py --agent <name>` runs steps 8, 9 and 11 in one command.
+`release_dev.py --agent <name>` runs steps 8, 9 and 11 in one command, and performs the project preflight — auth, project, APIs, staging bucket — on the way. Step 6 is therefore optional: `bootstrap_dev.py` repeats that same preflight, and exists for the BigQuery fixture.
 
 Deploying an Agent Engine does not make it visible in Gemini Enterprise. Step 11 is what puts it on the Agents page and enables the delegated consent flow.
 
@@ -281,10 +283,15 @@ Starting from an empty project, in order.
 gcloud auth login && gcloud auth application-default login
 cd ../<terraform-branch> && terraform init && terraform apply
 cp dev/.env.dev.example dev/.env.dev      # fill project, region, bucket, app id
+```
+
+`release_dev.py` runs the project preflight itself — auth, project, APIs, staging bucket — so `bootstrap_dev.py` is optional. Run it only for the BigQuery sample fixture, which is the one thing it does that nothing else does:
+
+```bash
 uv run --group dev python dev/bootstrap_dev.py
 ```
 
-**3. The agent with no delegated auth.** Nothing manual:
+**3. The agent with no delegated auth.** One command, nothing manual:
 
 ```bash
 uv run --group dev python dev/release_dev.py --agent basic_assistant
@@ -294,15 +301,21 @@ uv run --group dev python dev/release_dev.py --agent basic_assistant
 
 ```bash
 uv run --group dev python dev/release_dev.py --agent auth_reference_agent
-# stops: create the client it names, then put its id and secret in dev/.env.dev
+# stops, naming the client to create; add its id and secret to dev/.env.dev
 uv run --group dev python dev/release_dev.py --agent auth_reference_agent
+
+uv run --group dev python dev/release_dev.py --agent bigquery_mcp_agent
+# stops the same way, for a second client of its own
+uv run --group dev python dev/release_dev.py --agent bigquery_mcp_agent
 ```
 
-Then the same twice for `bigquery_mcp_agent`. Both clients go in one `OAUTH_CLIENTS` map:
+Both client ids go in one keyed map:
 
 ```text
 OAUTH_CLIENTS=auth_reference_agent=<id>,bigquery_mcp_agent=<other id>
 ```
+
+So from empty to three agents: **five console actions** — the app, the consent screen, and one OAuth client per delegated agent — and **five commands**, four of which are the same `release_dev.py` invocation. Everything else, including each agent's Parameter Manager configuration and Gemini Enterprise authorization, is created for you.
 
 **5. Verify.** Open each agent in Gemini Enterprise and send a prompt. A delegated agent shows **Authorize** on first use; the token it receives is what its tools run as.
 
