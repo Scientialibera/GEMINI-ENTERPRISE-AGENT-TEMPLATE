@@ -236,24 +236,75 @@ The initial sequence is:
 ```text
 Once per project:
   1. configure gcloud + ADC
-  2. apply the companion Terraform platform stack (APIs, IAM, observability)
-  3. fill dev/.env.dev deployment coordinates
-  4. run bootstrap_dev.py: project, APIs, staging bucket, optional BigQuery fixture
+  2. console: create the Gemini Enterprise app
+  3. console: configure the OAuth consent screen
+  4. apply the companion Terraform platform stack (APIs, IAM, observability)
+  5. fill dev/.env.dev deployment coordinates
+  6. run bootstrap_dev.py: project, APIs, staging bucket, optional BigQuery fixture
 
 Once per agent:
-  5. run tests/lint
-  6. package the agent
-  7. run deploy_dev.py: creates the Agent Engine and the agent's runtime parameter
-  8. run register_agent.py: publishes it into a Gemini Enterprise app
+  7. run tests/lint
+  8. package the agent
+  9. run deploy_dev.py: creates the Agent Engine and the agent's runtime parameter
+ 10. console: create the agent's OAuth client, if it uses delegated auth
+ 11. run register_agent.py: publishes it into a Gemini Enterprise app
 ```
 
-Terraform comes first because it grants the IAM the dev scripts and the deployed agents rely on. It is applied once and then rarely changes; adding an agent never requires an apply. See [What Terraform owns](#what-terraform-owns).
+Steps 2, 3 and 10 are console-only; nothing else in the flow is manual. Terraform comes at 4 because it grants the IAM the dev scripts and the deployed agents rely on; it is applied once and then rarely changes, and adding an agent never requires an apply. See [What Terraform owns](#what-terraform-owns).
 
-`release_dev.py --agent <name>` runs steps 6, 7 and 8 in one command.
+`release_dev.py --agent <name>` runs steps 8, 9 and 11 in one command.
 
-Deploying an Agent Engine does not make it visible in Gemini Enterprise. Step 8 is what puts it on the Agents page and enables the delegated consent flow.
+Deploying an Agent Engine does not make it visible in Gemini Enterprise. Step 11 is what puts it on the Agents page and enables the delegated consent flow.
 
-A delegated-auth agent additionally needs its own OAuth client, which is the one step that cannot be automated. Registration stops and prints exactly what to create; see [OAuth clients for delegated auth](#oauth-clients-for-delegated-auth).
+Registration stops at step 10 with the exact client name, redirect URIs, scopes and variables to set; see [OAuth clients for delegated auth](#oauth-clients-for-delegated-auth). An agent with no delegated tools skips it entirely.
+
+### Greenfield: zero to three agents
+
+Starting from an empty project, in order.
+
+**1. Console, once.** Neither can be created from an API.
+
+- **Gemini Enterprise app.** Create one in the Gemini Enterprise console. Its **id** is what `GEMINI_ENTERPRISE_APP_ID` needs, and it is not the display name shown in the console header. List ids with:
+
+  ```bash
+  curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+       -H "X-Goog-User-Project: $PROJECT" \
+    "https://discoveryengine.googleapis.com/v1alpha/projects/$PROJECT/locations/global/collections/default_collection/engines" \
+    | python -c "import sys,json;[print(e['name'].split('/')[-1]) for e in json.load(sys.stdin).get('engines',[])]"
+  ```
+
+- **OAuth consent screen.** Under **APIs & Services > OAuth consent screen**. Required before any OAuth client can be created, and its App name is what every user sees on every consent prompt. See [Two names](#two-names-only-one-of-which-users-see).
+
+**2. Platform, once.**
+
+```bash
+gcloud auth login && gcloud auth application-default login
+cd ../<terraform-branch> && terraform init && terraform apply
+cp dev/.env.dev.example dev/.env.dev      # fill project, region, bucket, app id
+uv run --group dev python dev/bootstrap_dev.py
+```
+
+**3. The agent with no delegated auth.** Nothing manual:
+
+```bash
+uv run --group dev python dev/release_dev.py --agent basic_assistant
+```
+
+**4. The two delegated agents.** Each stops once, for its own OAuth client:
+
+```bash
+uv run --group dev python dev/release_dev.py --agent auth_reference_agent
+# stops: create the client it names, then put its id and secret in dev/.env.dev
+uv run --group dev python dev/release_dev.py --agent auth_reference_agent
+```
+
+Then the same twice for `bigquery_mcp_agent`. Both clients go in one `OAUTH_CLIENTS` map:
+
+```text
+OAUTH_CLIENTS=auth_reference_agent=<id>,bigquery_mcp_agent=<other id>
+```
+
+**5. Verify.** Open each agent in Gemini Enterprise and send a prompt. A delegated agent shows **Authorize** on first use; the token it receives is what its tools run as.
 
 Run the developer platform preflight:
 
