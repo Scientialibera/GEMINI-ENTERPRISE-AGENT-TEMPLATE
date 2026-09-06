@@ -4,6 +4,24 @@ Infrastructure template for the Google Cloud runtime used by the companion ADK a
 
 This branch owns shared infrastructure, IAM, configuration delivery, secrets, observability and Terraform-managed Agent Engine deployment. It contains no agent prompts, tools or business logic.
 
+## Repository layout
+
+```text
+main.tf                     APIs, Parameter Manager, Secret Manager, IAM
+variables.tf                input contract with blocking validation
+outputs.tf                  values the agent repository consumes
+versions.tf                 Terraform and provider version constraints
+terraform.tfvars.example    copy per environment; replace every placeholder
+
+modules/
+├── agent_engine/           Reasoning Engine, Agent Identity, invoker IAM
+│   └── adk_class_methods.json   serving methods declared on the deployment
+└── observability/          log bucket, retention, metrics, dashboard
+
+CONFIGURATION.md            which setting lives where and how it changes
+IDENTITY_AND_IAM.md         the principals involved and what each may do
+```
+
 ## Scope
 
 Terraform manages:
