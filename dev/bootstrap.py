@@ -232,9 +232,7 @@ def _create_runtime_parameter(project_id: str, parameter: str, location: str) ->
     client.create_parameter(
         parent=parent,
         parameter_id=parameter,
-        parameter=parametermanager_v1.Parameter(
-            format_=parametermanager_v1.ParameterFormat.JSON
-        ),
+        parameter=parametermanager_v1.Parameter(format_=parametermanager_v1.ParameterFormat.JSON),
     )
     client.create_parameter_version(
         parent=f"{parent}/parameters/{parameter}",
@@ -281,9 +279,7 @@ def ensure_runtime_parameter(project_id: str) -> None:
     try:
         get_runtime_config(force_refresh=True)
     except Exception as exc:
-        raise SystemExit(
-            f"Created '{parameter}' but it is still not readable: {exc}."
-        ) from exc
+        raise SystemExit(f"Created '{parameter}' but it is still not readable: {exc}.") from exc
 
 
 def prepare_dev_platform(

@@ -278,9 +278,7 @@ def ensure_authorization(
         print(f"AUTHORIZATION_EXISTS={authorization_id}")
         return
 
-    client_id = oauth_client_id_for(agent_name, spec) or os.getenv(
-        OAUTH_CLIENT_ID_ENV, ""
-    ).strip()
+    client_id = oauth_client_id_for(agent_name, spec) or os.getenv(OAUTH_CLIENT_ID_ENV, "").strip()
     client_secret = _resolve_client_secret(project_id, spec)
     if not client_id or not client_secret:
         raise SystemExit(
