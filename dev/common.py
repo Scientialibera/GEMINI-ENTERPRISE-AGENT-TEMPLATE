@@ -20,8 +20,10 @@ DEV_DIR = ROOT / "dev"
 STATE_DIR = DEV_DIR / ".state"
 
 DEV_ENVIRONMENT = "dev"
+ENVIRONMENT_LABEL = "dev"
 GCS_URI_PREFIX = "gs://"
 PLACEHOLDER_TOKENS = ("REPLACE", "<")
+
 VERTEX_API_VERSION = "v1beta1"
 
 PROJECT_ENV = "GOOGLE_CLOUD_PROJECT"
@@ -31,6 +33,12 @@ ENVIRONMENT_ENV = "ENVIRONMENT"
 CONFIG_PARAMETER_ENV = "CONFIG_PARAMETER"
 DEV_REASONING_ENGINE_ENV = "DEV_REASONING_ENGINE"
 AUTHORIZATION_ID_ENV = "GEMINI_ENTERPRISE_AUTHORIZATION_ID"
+
+# An agent that reads the authorization id is, by definition, one whose tools
+# are handed a delegated user token: both the authenticated-tool path and the
+# MCP header provider take it as their argument. Referencing it is therefore
+# what marks an agent as needing its own OAuth client.
+DELEGATED_AUTH_MARKER = AUTHORIZATION_ID_ENV
 
 COMMON_REQUIRED_REMOTE_ENV = (
     PROJECT_ENV,
@@ -110,8 +118,23 @@ class AgentSpec:
 
     @property
     def uses_delegated_auth(self) -> bool:
-        """Whether this agent receives a delegated user token."""
+        """Whether this agent receives a delegated user token.
+
+        Declared in the spec, and independently detected from what the agent
+        imports by ``detect_delegated_auth``. The scripts check both, so an
+        agent that grows a delegated tool without updating its spec still gets
+        the client it needs rather than failing at the first user prompt.
+        """
         return AUTHORIZATION_ID_ENV in self.required_remote_bootstrap_env
+
+    @property
+    def oauth_client_name(self) -> str:
+        """Display name for this agent's OAuth client, shown in the console.
+
+        The scripts report this exact name when the client is missing, so the
+        one created by hand matches the one they expect.
+        """
+        return f"{self.display_name} ({ENVIRONMENT_LABEL})"
 
     @property
     def oauth_client_id_env(self) -> str:
@@ -129,6 +152,11 @@ class AgentSpec:
     def oauth_client_secret_name_env(self) -> str:
         """Environment variable naming the Secret Manager secret for that client."""
         return f"{self.env_prefix}_OAUTH_CLIENT_SECRET_NAME"
+
+    @property
+    def default_oauth_secret_name(self) -> str:
+        """Secret Manager secret this agent's OAuth client secret belongs in."""
+        return f"{self.package_name}-oauth-client-secret"
 
     @property
     def env_prefix(self) -> str:
@@ -222,6 +250,23 @@ def load_environment(filename: str) -> None:
     path = DEV_DIR / filename
     if path.exists():
         load_dotenv(path, override=False)
+
+
+def detect_delegated_auth(spec: AgentSpec) -> bool:
+    """Report whether the agent's own modules reach the delegated-token reader.
+
+    Reads the agent's source rather than importing it, so this stays usable
+    before the bootstrap environment is complete.
+    """
+    return any(
+        DELEGATED_AUTH_MARKER in path.read_text(encoding="utf-8")
+        for path in ROOT.glob(f"agents/{_package_dir(spec)}/**/*.py")
+    )
+
+
+def _package_dir(spec: AgentSpec) -> str:
+    """Directory under agents/ holding this agent, derived from its module."""
+    return spec.module.split(".")[0]
 
 
 def get_agent_spec(agent_name: str) -> AgentSpec:

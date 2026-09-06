@@ -20,6 +20,7 @@ from common import (
     AUTHORIZATION_ID_ENV,
     ROOT,
     AgentSpec,
+    detect_delegated_auth,
     get_agent_spec,
     load_environment,
     load_resource_name,
@@ -215,11 +216,16 @@ def ensure_authorization(project_id: str, authorization_id: str, spec: AgentSpec
             "client, so an agent sharing another agent's client never receives a token of its "
             "own.\n\n"
             "OAuth clients cannot be created from the CLI. In the Google Cloud console, under "
-            "APIs & Services > Credentials, create a Web application OAuth client and add this "
-            f"authorized redirect URI:\n  {OAUTH_REDIRECT_URI}\n\n"
+            "APIs & Services > Credentials, create an OAuth client with:\n"
+            "  Application type: Web application\n"
+            f"  Name: {spec.oauth_client_name}\n"
+            f"  Authorized redirect URI: {OAUTH_REDIRECT_URI}\n\n"
+            "Store its secret in Secret Manager:\n"
+            f"  gcloud secrets create {spec.default_oauth_secret_name} "
+            f"--project={project_id} --data-file=-\n\n"
             "Then put these in dev/.env.dev:\n"
             f"  {spec.oauth_client_id_env}=<the new client id>\n"
-            f"  {spec.oauth_client_secret_name_env}=<Secret Manager secret holding its secret>\n"
+            f"  {spec.oauth_client_secret_name_env}={spec.default_oauth_secret_name}\n"
         )
 
     scope_value = urllib.parse.quote(" ".join(DELEGATED_OAUTH_SCOPES))
@@ -271,6 +277,18 @@ def register_agent(
     Creates the delegated-auth authorization first when the agent needs one.
     """
     del agent_name  # spec carries everything the registration needs.
+
+    # The agent's source is the authority on whether it needs a delegated
+    # token, so a tool added without updating the spec is caught here rather
+    # than at the first user prompt.
+    if detect_delegated_auth(spec) and not spec.uses_delegated_auth:
+        raise SystemExit(
+            f"{spec.display_name} uses delegated auth in its source but its AgentSpec does not "
+            f"declare it. Add {AUTHORIZATION_ID_ENV} to required_remote_bootstrap_env in "
+            "dev/common.py, so the agent is deployed with an authorization and its own OAuth "
+            "client."
+        )
+
     authorization_id = os.getenv(AUTHORIZATION_ID_ENV, "").strip()
     if spec.uses_delegated_auth and authorization_id:
         ensure_authorization(project_id, authorization_id, spec)

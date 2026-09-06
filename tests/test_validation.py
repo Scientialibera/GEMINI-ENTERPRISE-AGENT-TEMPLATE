@@ -330,3 +330,27 @@ def test_mcp_toolset_is_wired_to_a_remote_server():
     assert params.url.startswith("https://")
     # execute_sql would let the MCP path mutate data.
     assert "execute_sql" not in BIGQUERY_READONLY_TOOLS
+
+
+@pytest.mark.parametrize("agent", ALL_AGENTS)
+def test_delegated_auth_detection_matches_the_spec(agent):
+    """An agent's source is the authority on whether it needs a delegated token.
+
+    A tool added without updating the spec would otherwise deploy without an
+    authorization and fail at the first user prompt.
+    """
+    spec = common.get_agent_spec(agent)
+    assert common.detect_delegated_auth(spec) == spec.uses_delegated_auth
+
+
+@pytest.mark.parametrize("agent", ALL_AGENTS)
+def test_delegated_agents_name_their_own_oauth_client(agent):
+    """Gemini Enterprise caches consent per OAuth client, so agents cannot share one."""
+    spec = common.get_agent_spec(agent)
+    if not spec.uses_delegated_auth:
+        return
+    others = [s for name, s in common.AGENTS.items() if name != agent and s.uses_delegated_auth]
+    for other in others:
+        assert spec.oauth_client_id_env != other.oauth_client_id_env
+        assert spec.default_oauth_secret_name != other.default_oauth_secret_name
+        assert spec.authorization_id != other.authorization_id
