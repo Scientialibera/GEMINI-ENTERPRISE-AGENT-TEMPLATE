@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -199,24 +200,89 @@ def ensure_staging_bucket(project_id: str, location: str, bucket_uri: str) -> No
     )
 
 
-def ensure_runtime_parameter(project_id: str) -> None:
-    """Verify the runtime parameter is readable by the identity the agent uses.
+def _create_runtime_parameter(project_id: str, parameter: str, location: str) -> None:
+    """Create the agent's runtime parameter with a starter payload.
 
-    Must resolve through ADC, not the gcloud CLI: gcloud uses its own OAuth
-    client, which can be denied while ADC is authorized for the same user.
+    Runtime configuration is per-agent developer state, not shared
+    infrastructure, so deploying a new agent should not require a manual step.
+    The payload is deliberately minimal: publishing real configuration later
+    replaces it with a new version.
     """
-    del project_id  # CONFIG_PARAMETER and ADC determine the project.
+    payload = json.dumps(
+        {
+            "config_revision": "bootstrap-v1",
+            "model": os.getenv("BOOTSTRAP_MODEL", "").strip() or "gemini-3.7-flash",
+            "instruction": (
+                os.getenv("AGENT_INSTRUCTION", "").strip()
+                or "You are a helpful enterprise assistant. Answer concisely."
+            ),
+            "environment": os.getenv("ENVIRONMENT", "dev").strip() or "dev",
+            "log_level": "INFO",
+        }
+    )
+
+    # Must go through ADC, not the gcloud CLI: gcloud uses its own OAuth client,
+    # which is denied write access while ADC is authorized for the same user.
+    from google.cloud import parametermanager_v1
+
+    client = parametermanager_v1.ParameterManagerClient(
+        client_options={"api_endpoint": _parameter_endpoint(location)}
+    )
+    parent = f"projects/{project_id}/locations/{location}"
+    client.create_parameter(
+        parent=parent,
+        parameter_id=parameter,
+        parameter=parametermanager_v1.Parameter(
+            format_=parametermanager_v1.ParameterFormat.JSON
+        ),
+    )
+    client.create_parameter_version(
+        parent=f"{parent}/parameters/{parameter}",
+        parameter_version_id="bootstrap-v1",
+        parameter_version=parametermanager_v1.ParameterVersion(
+            payload=parametermanager_v1.ParameterVersionPayload(data=payload.encode("utf-8"))
+        ),
+    )
+    print(f"RUNTIME_PARAMETER_CREATED={parameter}")
+
+
+def _parameter_endpoint(location: str) -> str:
+    """Regional Parameter Manager endpoint; global uses the default host."""
+    if location == DEFAULT_PARAMETER_LOCATION:
+        return "parametermanager.googleapis.com"
+    return f"parametermanager.{location}.rep.googleapis.com"
+
+
+def ensure_runtime_parameter(project_id: str) -> None:
+    """Ensure the agent's runtime parameter exists and is readable.
+
+    The readability check must resolve through ADC, not the gcloud CLI: gcloud
+    uses its own OAuth client, which can be denied while ADC is authorized for
+    the same user.
+    """
     parameter = _real_env_value(CONFIG_PARAMETER_ENV)
+    location = os.getenv(CONFIG_PARAMETER_LOCATION_ENV, "").strip() or DEFAULT_PARAMETER_LOCATION
+
+    from gemini_shared import get_runtime_config
 
     try:
-        from gemini_shared import get_runtime_config
+        get_runtime_config(force_refresh=True)
+        return
+    except Exception as exc:
+        if "RESOURCE_NOT_FOUND" not in str(exc) and "does not exist" not in str(exc):
+            raise SystemExit(
+                f"Parameter Manager resource '{parameter}' was not readable with Application "
+                f"Default Credentials: {exc}. Correct {CONFIG_PARAMETER_ENV}, or re-run "
+                "`gcloud auth application-default login`."
+            ) from exc
 
+    _create_runtime_parameter(project_id, parameter, location)
+
+    try:
         get_runtime_config(force_refresh=True)
     except Exception as exc:
         raise SystemExit(
-            f"Parameter Manager resource '{parameter}' was not readable with Application "
-            f"Default Credentials: {exc}. Apply the companion Terraform stack, correct "
-            "CONFIG_PARAMETER, or re-run `gcloud auth application-default login`."
+            f"Created '{parameter}' but it is still not readable: {exc}."
         ) from exc
 
 

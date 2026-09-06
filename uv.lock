@@ -895,6 +895,7 @@ source = { virtual = "." }
 dev = [
     { name = "google-cloud-aiplatform", extra = ["adk", "agent-engines"] },
     { name = "google-cloud-bigquery" },
+    { name = "google-cloud-parametermanager" },
     { name = "google-cloud-secret-manager" },
     { name = "pytest" },
     { name = "python-dotenv" },
@@ -908,6 +909,7 @@ dev = [
 dev = [
     { name = "google-cloud-aiplatform", extras = ["agent-engines", "adk"], specifier = "==1.164.0" },
     { name = "google-cloud-bigquery", specifier = "==3.43.0" },
+    { name = "google-cloud-parametermanager", specifier = "==0.4.1" },
     { name = "google-cloud-secret-manager", specifier = ">=2.20.0,<3.0.0" },
     { name = "pytest", specifier = ">=8.3.0,<9.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2.0.0" },
