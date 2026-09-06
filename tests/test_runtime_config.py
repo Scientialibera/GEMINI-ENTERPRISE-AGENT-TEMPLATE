@@ -1,4 +1,4 @@
-from gemini_shared.runtime_config import get_runtime_config, reset_runtime_config_for_tests
+from gemini_shared.config.runtime_config import get_runtime_config, reset_runtime_config_for_tests
 
 
 def test_local_runtime_config(monkeypatch):

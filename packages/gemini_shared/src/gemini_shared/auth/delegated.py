@@ -11,7 +11,8 @@ against ``CustomAuthScheme.__subclasses__()``.
 
 from __future__ import annotations
 
-from typing import Literal, override
+from collections.abc import Mapping
+from typing import Any, Literal, override
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.auth.auth_credential import AuthCredential, AuthCredentialTypes, OAuth2Auth
@@ -60,12 +61,8 @@ class GeminiEnterpriseDelegatedAuthProvider(BaseAuthProvider):
                 "Gemini Enterprise delegated auth requires a context with a valid session."
             )
 
-        state = context.session.state
-        if auth_scheme.name and auth_scheme.name in state:
-            token = state[auth_scheme.name]
-        elif len(state) == 1:
-            token = next(iter(state.values()))
-        else:
+        token = read_session_token(context.session.state, auth_scheme.name)
+        if token is None:
             raise ValueError("No matching Gemini Enterprise authorization found in session state.")
 
         return AuthCredential(
@@ -74,12 +71,16 @@ class GeminiEnterpriseDelegatedAuthProvider(BaseAuthProvider):
         )
 
 
-def read_delegated_token(credential: AuthCredential) -> str | None:
-    """Return the access token carried by a delegated credential."""
-    if credential.oauth2 and credential.oauth2.access_token:
-        return credential.oauth2.access_token
-    if credential.http and credential.http.credentials:
-        return credential.http.credentials.token
+def read_session_token(state: Mapping[str, Any], authorization_id: str | None) -> str | None:
+    """Return the delegated token Gemini Enterprise placed in session state.
+
+    For callers holding a context rather than a credential, such as the MCP
+    header provider.
+    """
+    if authorization_id and authorization_id in state:
+        return state[authorization_id]
+    if len(state) == 1:
+        return next(iter(state.values()))
     return None
 
 

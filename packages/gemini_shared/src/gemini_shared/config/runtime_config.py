@@ -25,7 +25,6 @@ LOG_LEVEL_ENV = "LOG_LEVEL"
 AGENT_IDENTITY_BUCKET_ENV = "AGENT_IDENTITY_BUCKET_NAME"
 STORAGE_OBJECT_LIMIT_ENV = "STORAGE_OBJECT_LIMIT"
 BIGQUERY_QUERY_ROW_LIMIT_ENV = "BIGQUERY_QUERY_ROW_LIMIT"
-MCP_SERVER_URL_ENV = "MCP_SERVER_URL"
 
 LOCAL_REVISION = "local"
 LOCAL_ENVIRONMENT = "local"
@@ -50,7 +49,6 @@ class RuntimeConfig(BaseModel):
     agent_identity_bucket_name: str | None = None
     storage_object_limit: int = Field(default=10, ge=1, le=100)
     bigquery_query_row_limit: int = Field(default=100, ge=1, le=10_000)
-    mcp_server_url: str | None = None
 
     @field_validator("model", "instruction", "config_revision", "environment")
     @classmethod
@@ -91,7 +89,6 @@ def _local_payload() -> dict[str, object]:
             BIGQUERY_QUERY_ROW_LIMIT_ENV,
             str(DEFAULT_BIGQUERY_QUERY_ROW_LIMIT),
         ),
-        "mcp_server_url": os.getenv(MCP_SERVER_URL_ENV, "").strip() or None,
     }
 
 

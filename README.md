@@ -14,6 +14,7 @@ agents/                     one independently deployable ADK application each
 │       ├── config.py       bootstrap values resolved once at import
 │       └── tools/          one module per tool
 │           ├── bigquery_query.py        BigQuery as the signed-in user
+│           ├── bigquery_mcp.py          the same, via a remote MCP server
 │           ├── storage_objects.py       Cloud Storage as the agent
 │           └── runtime_config_status.py active runtime configuration
 └── basic_assistant/        minimal agent; the shape to copy for a new one
@@ -23,12 +24,23 @@ agents/                     one independently deployable ADK application each
         └── tools/
 
 packages/
-└── gemini_shared/          runtime behaviour every agent shares
-    ├── bootstrap.py        the small env contract read at process start
-    ├── runtime_config.py   live config from Parameter Manager, local fallback
-    ├── runtime_agent.py    per-request instruction and model resolution
-    ├── delegated_auth.py   Gemini Enterprise delegated user token
-    └── agent_identity.py   Cloud Storage under the runtime's own identity
+└── gemini_shared/          runtime behaviour every agent shares, by concern
+    ├── auth/               which identity a call is made with
+    │   ├── delegated.py    Gemini Enterprise delegated user token
+    │   └── tokens.py       read an access token out of a credential
+    ├── config/             what the agent is configured to do
+    │   ├── bootstrap.py    the small env contract read at process start
+    │   ├── runtime_config.py  live config from Parameter Manager, local fallback
+    │   └── runtime_agent.py   per-request instruction and model resolution
+    ├── connectors/         clients for Google Cloud services
+    │   └── cloud_storage.py   Cloud Storage under the runtime's own identity
+    └── mcp/                remote MCP servers over Streamable HTTP
+        ├── mcp_auth/       how to authenticate to any MCP server
+        │   ├── toolset.py  build a toolset from a server URL
+        │   └── headers.py  send the signed-in user's token to that server
+        └── mcp_google_cloud/  one folder per server; add mcp_<name> beside it
+            ├── servers.py     Google's endpoints, scopes and tool lists
+            └── toolsets.py    ready-made toolsets for those servers
 
 dev/                        developer tooling; never deployed with an agent
 ├── .env.local.example      local execution settings
@@ -93,7 +105,7 @@ The template separates configuration by runtime behavior.
 | Secrets | Secret Manager | Secret-specific rotation/deployment behavior |
 | Local developer config | `dev/.env.local` / `dev/.env.dev` | Workstation/developer sandbox only |
 
-Live configuration includes values such as model name, instruction, log level, query/result limits, MCP endpoint and runtime resource identifiers. It is validated by `gemini_shared.RuntimeConfig`.
+Live configuration includes values such as model name, instruction, log level, query/result limits and runtime resource identifiers. It is validated by `gemini_shared.RuntimeConfig`. The MCP server URL is not among them: a toolset is bound when the agent is constructed, so that URL is bootstrap env.
 
 The deployed agent reads the Parameter Manager resource identified by `CONFIG_PARAMETER` and resolves `versions/latest`. `CONFIG_REFRESH_SECONDS` controls the cache TTL. If a refresh fails after at least one successful load, the agent continues with the last-known-good configuration and retries later.
 
@@ -287,7 +299,7 @@ Delegated BigQuery access is different: the BigQuery tool executes with the sign
 1. Agent Identity for backend access under the runtime's own identity.
 2. Gemini Enterprise delegated authentication using the OAuth token forwarded in session state.
 
-The delegated-auth scheme, provider and registration live in `gemini_shared.delegated_auth`, so every agent shares one implementation.
+The delegated-auth scheme, provider and registration live in `gemini_shared.auth.delegated`, so every agent shares one implementation.
 
 A deployed scheme arrives as a base `CustomAuthScheme` and ADK rehydrates it by matching `type_` against `CustomAuthScheme.__subclasses__()`. The subclass therefore has to exist by the time a tool runs, which means the defining module must already be imported. Importing anything from `gemini_shared` satisfies that.
 
@@ -298,6 +310,34 @@ No auth provider registered for custom auth scheme
 ```
 
 A new scheme must set a `type_` default, since rehydration matches on that value.
+
+## Remote MCP servers
+
+An MCP server supplies tools the agent did not define. `auth_reference_agent` connects to Google's managed BigQuery MCP server at `https://bigquery.googleapis.com/mcp`, so the pattern needs no MCP server of its own:
+
+```python
+bigquery_mcp_toolset = bigquery_readonly_toolset(
+    authorization_id=GEMINI_ENTERPRISE_AUTHORIZATION_ID,
+    server_url=MCP_SERVER_URL,
+)
+```
+
+`gemini_shared.mcp` separates the two concerns so a server's details never leak into the plumbing:
+
+- `mcp_auth/` knows how to authenticate to any MCP server and names none of them.
+- `mcp_google_cloud/` is a shared asset holding Google's endpoints, required scopes and read-only tool lists, so no agent hardcodes a URL. Add a server by adding an `mcp_<name>` folder beside it.
+
+`mcp_auth/headers.py` supplies the `Authorization` header on every call from the signed-in user's delegated token, the same token the BigQuery tool uses. The MCP server therefore applies that user's own permissions, and two users calling the same tool see only the data each is entitled to. Nothing runs under the Agent Identity on this path.
+
+The agent holds both a hand-written BigQuery tool and the MCP toolset on purpose: the same user, the same service, reached both ways. Write a tool when the logic is yours; add an MCP server when the tools already exist.
+
+Google's managed endpoints are listed under [Google Cloud MCP servers](https://docs.cloud.google.com/mcp/supported-products). Point `MCP_SERVER_URL` at any Streamable HTTP server. The URL is bootstrap rather than live configuration, because the toolset is bound when the agent is constructed.
+
+Three things to know before relying on it:
+
+- **Scopes.** The delegated token must carry the scope the server requires; for BigQuery that is `https://www.googleapis.com/auth/bigquery` or `https://www.googleapis.com/auth/cloud-platform`. A token without it fails at the tool call, not at startup, because the server authenticates per call rather than at listing.
+- **`tool_filter` is the safety boundary.** Without it the agent exposes whatever the server offers, including tools added later. `execute_sql` is deliberately withheld so the MCP path stays read-only.
+- **Tool names are prefixed** with `tool_name_prefix`, so MCP tools stay distinguishable from local ones in traces and in the model's tool list.
 
 ## Adding an agent
 

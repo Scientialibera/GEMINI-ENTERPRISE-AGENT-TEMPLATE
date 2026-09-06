@@ -8,6 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEV_DIR = ROOT / "dev"
 PACKAGE_MODULE_PATH = DEV_DIR / "package_agent.py"
+# The shared sub-packages are listed so a nested module cannot silently be
+# dropped from the archive.
 EXPECTED_ARCHIVE_MEMBERS = {
     "requirements.txt",
     "basic_assistant",
@@ -15,8 +17,16 @@ EXPECTED_ARCHIVE_MEMBERS = {
     "basic_assistant/agent.py",
     "gemini_shared",
     "gemini_shared/__init__.py",
-    "gemini_shared/bootstrap.py",
-    "gemini_shared/runtime_config.py",
+    "gemini_shared/auth/__init__.py",
+    "gemini_shared/auth/delegated.py",
+    "gemini_shared/config/__init__.py",
+    "gemini_shared/config/bootstrap.py",
+    "gemini_shared/config/runtime_config.py",
+    "gemini_shared/mcp/__init__.py",
+    "gemini_shared/mcp/mcp_auth/__init__.py",
+    "gemini_shared/mcp/mcp_auth/toolset.py",
+    "gemini_shared/mcp/mcp_google_cloud/__init__.py",
+    "gemini_shared/mcp/mcp_google_cloud/servers.py",
 }
 
 

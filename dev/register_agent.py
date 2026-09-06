@@ -43,7 +43,9 @@ REQUEST_TIMEOUT_SECONDS = 60
 OAUTH_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 OAUTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 OAUTH_REDIRECT_URI = "https://vertexaisearch.cloud.google.com/static/oauth/oauth.html"
-# Scopes the signed-in user consents to.
+# Scopes the signed-in user consents to. The bigquery scope covers both the
+# delegated BigQuery tool and the BigQuery MCP server, which authenticates the
+# same token per tool call.
 DELEGATED_OAUTH_SCOPES = (
     "openid",
     "email",

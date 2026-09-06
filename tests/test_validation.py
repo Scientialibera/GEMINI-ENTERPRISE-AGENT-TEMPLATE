@@ -14,8 +14,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from gemini_shared.bootstrap import get_bootstrap_settings
-from gemini_shared.runtime_config import RuntimeConfig, RuntimeConfigStore
+from gemini_shared.config.bootstrap import get_bootstrap_settings
+from gemini_shared.config.runtime_config import RuntimeConfig, RuntimeConfigStore
 from google.adk.auth.auth_credential import (
     AuthCredential,
     AuthCredentialTypes,
@@ -177,7 +177,7 @@ def test_runtime_ttl_reload_and_last_good(monkeypatch, caplog):
     monkeypatch.setenv("CONFIG_PARAMETER", "test-parameter")
     monkeypatch.setenv("CONFIG_REFRESH_SECONDS", "5")
     clock = [0.0]
-    monkeypatch.setattr("gemini_shared.runtime_config.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("gemini_shared.config.runtime_config.time.monotonic", lambda: clock[0])
     store = RuntimeConfigStore()
     one = RuntimeConfig(config_revision="one", model="model-one", instruction="test")
     two = one.model_copy(update={"config_revision": "two", "log_level": "ERROR"})
@@ -232,11 +232,16 @@ def test_model_callback(monkeypatch):
 def test_every_tool_is_described_to_the_model(agent):
     """ADK builds the tool declaration from the function itself, so a tool
     without a docstring reaches the model with no description."""
+    from google.adk.tools.base_toolset import BaseToolset
     from google.adk.tools.function_tool import FunctionTool
 
     module = importlib.import_module(f"{agent}.agent")
     undescribed = []
     for tool in module.root_agent.tools:
+        # A toolset's descriptions come from the remote server at request time,
+        # so there is nothing to assert offline.
+        if isinstance(tool, BaseToolset):
+            continue
         declaration = (
             tool._get_declaration()
             if hasattr(tool, "_get_declaration")
@@ -265,7 +270,7 @@ def test_delegated_scheme_rehydrates_from_shared_module():
     from google.adk.auth.auth_tool import AuthConfig
     from google.adk.auth.credential_manager import CredentialManager
 
-    importlib.import_module("gemini_shared.delegated_auth")
+    importlib.import_module("gemini_shared.auth.delegated")
 
     deserialized = CustomAuthScheme.model_validate(
         {"type": "GeminiEnterpriseDelegatedAuthProviderScheme", "name": "unit-test-authorization"}
@@ -283,5 +288,41 @@ def test_agent_identity_tooling_has_no_delegated_auth_prerequisite(monkeypatch):
     """Storage access uses the runtime's own identity, so importing it must not
     require a Gemini Enterprise authorization the way delegated auth does."""
     monkeypatch.delenv("GEMINI_ENTERPRISE_AUTHORIZATION_ID", raising=False)
-    module = importlib.reload(importlib.import_module("gemini_shared.agent_identity"))
+    module = importlib.reload(importlib.import_module("gemini_shared.connectors.cloud_storage"))
     assert callable(module.list_bucket_objects)
+
+
+def test_mcp_headers_carry_the_signed_in_users_token():
+    """The MCP server applies the caller's own permissions, so the header must
+    carry the delegated user token rather than the runtime's identity."""
+    from gemini_shared.mcp.mcp_auth import delegated_bearer_headers
+
+    token = secrets.token_urlsafe(16)
+    provider = delegated_bearer_headers("unit-test-authorization")
+    context = SimpleNamespace(state={"unit-test-authorization": token})
+    assert provider(context) == {"Authorization": f"Bearer {token}"}
+
+
+def test_mcp_headers_fail_loudly_without_a_token():
+    """Sending no Authorization header would reach the server as an anonymous
+    call, so an unresolved token must raise instead."""
+    from gemini_shared.mcp.mcp_auth import delegated_bearer_headers
+
+    provider = delegated_bearer_headers("unit-test-authorization")
+    context = SimpleNamespace(state={"other-a": "1", "other-b": "2"})
+    with pytest.raises(ValueError, match="No delegated token"):
+        provider(context)
+
+
+def test_mcp_toolset_is_wired_to_a_remote_server():
+    """The MCP tools must come from a remote endpoint over Streamable HTTP, so
+    the template needs no MCP server of its own."""
+    from gemini_shared.mcp.mcp_google_cloud import BIGQUERY_READONLY_TOOLS
+    from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
+
+    module = importlib.import_module("auth_reference_agent.tools.bigquery_mcp")
+    params = module.bigquery_mcp_toolset._connection_params
+    assert isinstance(params, StreamableHTTPConnectionParams)
+    assert params.url.startswith("https://")
+    # execute_sql would let the MCP path mutate data.
+    assert "execute_sql" not in BIGQUERY_READONLY_TOOLS

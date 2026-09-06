@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
+
 from gemini_shared import get_bootstrap_settings
+from gemini_shared.mcp import mcp_google_cloud
 
 BOOTSTRAP = get_bootstrap_settings(require_auth=True)
 PROJECT_ID = BOOTSTRAP.project_id
@@ -10,3 +13,8 @@ GEMINI_ENTERPRISE_AUTHORIZATION_ID = BOOTSTRAP.gemini_enterprise_authorization_i
 
 if GEMINI_ENTERPRISE_AUTHORIZATION_ID is None:
     raise RuntimeError("GEMINI_ENTERPRISE_AUTHORIZATION_ID is required for this agent.")
+
+# An MCP server is bound at construction, before runtime config is reachable, so
+# this URL is bootstrap rather than a live setting. Google's managed BigQuery
+# endpoint is the default because it needs nothing deployed.
+MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "").strip() or mcp_google_cloud.BIGQUERY

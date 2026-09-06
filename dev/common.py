@@ -45,6 +45,8 @@ RUNTIME_ENV_KEYS = (
     "BOOTSTRAP_MODEL",
     "GEMINI_MODEL_LOCATION",
     AUTHORIZATION_ID_ENV,
+    # Bound at construction, so it is bootstrap rather than live configuration.
+    "MCP_SERVER_URL",
 )
 
 COMMON_REQUIREMENTS = (
@@ -56,7 +58,8 @@ COMMON_REQUIREMENTS = (
 )
 
 AUTH_REFERENCE_REQUIREMENTS = (
-    "google-adk[agent-identity,extensions]==2.7.1",
+    # The mcp extra pulls the MCP client used to reach remote MCP servers.
+    "google-adk[agent-identity,extensions,mcp]==2.7.1",
     "google-cloud-storage==3.13.1",
     "google-cloud-bigquery==3.43.0",
     "google-auth>=2.35.0,<3.0.0",
@@ -115,16 +118,19 @@ AGENTS: dict[str, AgentSpec] = {
             "Reference pro-code ADK agent for the two supported authentication patterns. "
             "Agent Identity is used for agent-scoped access to Cloud Storage, while a "
             "Gemini Enterprise delegated user token is used to query BigQuery under the "
-            "signed-in user's own permissions."
+            "signed-in user's own permissions, both from a tool in this repository and "
+            "from Google's managed BigQuery MCP server."
         ),
         invocation_description=(
             "Use this agent to demonstrate agent authentication: report which identity the "
-            "runtime is using, or query BigQuery as the signed-in user."
+            "runtime is using, or query BigQuery as the signed-in user through either a "
+            "local tool or a remote MCP server."
         ),
         starter_prompts=(
             "Which identity is this agent running as?",
             "List the BigQuery datasets and tables I can access.",
             "Show total revenue by region from the sample orders table.",
+            "Use the MCP tools to list my BigQuery datasets.",
         ),
     ),
 }

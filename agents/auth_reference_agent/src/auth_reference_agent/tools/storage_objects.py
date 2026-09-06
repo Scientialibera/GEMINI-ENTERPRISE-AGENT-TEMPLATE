@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gemini_shared.agent_identity import list_bucket_objects
+from gemini_shared.connectors.cloud_storage import list_bucket_objects
 
 from ..config import PROJECT_ID
 

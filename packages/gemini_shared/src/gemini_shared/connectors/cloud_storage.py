@@ -10,7 +10,7 @@ import os
 
 from google.cloud import storage
 
-from .runtime_config import get_runtime_config
+from ..config.runtime_config import get_runtime_config
 
 RUNTIME_ENGINE_ID_ENV = "GOOGLE_CLOUD_AGENT_ENGINE_ID"
 AUTHENTICATION_MODE_AGENT_IDENTITY = "Agent Identity"
