@@ -50,8 +50,8 @@ def main() -> None:
 
     os.chdir(ROOT)
     load_environment(".env.dev")
-    project_id, location, staging_bucket = require_dev_environment()
     spec = get_agent_spec(args.agent)
+    project_id, location, staging_bucket = require_dev_environment(spec=spec)
     ensure_dev_prerequisites(project_id, location, staging_bucket)
 
     resource_name = update_agent(args.agent, project_id, location, staging_bucket, spec)

@@ -79,6 +79,17 @@ class AgentSpec:
     invocation_description: str = ""
     starter_prompts: tuple[str, ...] = ()
 
+    @property
+    def config_parameter_id(self) -> str:
+        """Parameter Manager parameter holding this agent's live configuration.
+
+        Each agent reads its own parameter, so adding an agent to AGENTS does
+        not require editing shared configuration. CONFIG_PARAMETER in the
+        environment still wins when set, which keeps a one-off override
+        available without changing code.
+        """
+        return f"{self.package_name}-config"
+
 
 AGENTS: dict[str, AgentSpec] = {
     "basic_assistant": AgentSpec(
@@ -155,7 +166,11 @@ def is_missing_or_placeholder(name: str) -> bool:
     return not value or any(token in value for token in PLACEHOLDER_TOKENS)
 
 
-def require_dev_environment(*, require_parameter: bool = True) -> tuple[str, str, str]:
+def require_dev_environment(
+    *,
+    require_parameter: bool = True,
+    spec: AgentSpec | None = None,
+) -> tuple[str, str, str]:
     environment = os.getenv(ENVIRONMENT_ENV, "").strip().lower()
     if environment != DEV_ENVIRONMENT:
         raise SystemExit(
@@ -164,7 +179,9 @@ def require_dev_environment(*, require_parameter: bool = True) -> tuple[str, str
         )
 
     required = list(COMMON_REQUIRED_REMOTE_ENV)
-    if require_parameter:
+    # An agent defaults to its own parameter, so CONFIG_PARAMETER is only
+    # required when no agent supplies one.
+    if require_parameter and spec is None:
         required.append(CONFIG_PARAMETER_ENV)
     missing = [name for name in required if is_missing_or_placeholder(name)]
     if missing:
@@ -190,8 +207,11 @@ def validate_agent_remote_environment(spec: AgentSpec) -> None:
         )
 
 
-def runtime_env() -> dict[str, str]:
-    return {key: os.environ[key] for key in RUNTIME_ENV_KEYS if not is_missing_or_placeholder(key)}
+def runtime_env(spec: AgentSpec | None = None) -> dict[str, str]:
+    env = {key: os.environ[key] for key in RUNTIME_ENV_KEYS if not is_missing_or_placeholder(key)}
+    if spec is not None and is_missing_or_placeholder(CONFIG_PARAMETER_ENV):
+        env[CONFIG_PARAMETER_ENV] = spec.config_parameter_id
+    return env
 
 
 def load_root_agent(spec: AgentSpec) -> Any:
@@ -248,7 +268,7 @@ def deployment_config(
         "requirements": list(spec.requirements),
         "extra_packages": list(extra_packages),
         "staging_bucket": staging_bucket,
-        "env_vars": runtime_env(),
+        "env_vars": runtime_env(spec),
     }
 
 

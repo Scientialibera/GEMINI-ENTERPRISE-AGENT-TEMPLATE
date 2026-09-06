@@ -280,7 +280,9 @@ def main() -> None:
 
     os.chdir(ROOT)
     load_environment(".env.dev")
-    project_id, _, _ = require_dev_environment()
+    # Registration points Gemini Enterprise at an existing runtime and never
+    # reads live configuration, so no config parameter is required here.
+    project_id, _, _ = require_dev_environment(require_parameter=False)
     spec = get_agent_spec(args.agent)
 
     app_id = (args.app_id or os.getenv(APP_ENGINE_ID_ENV, "")).strip()
