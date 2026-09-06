@@ -208,8 +208,6 @@ def ensure_runtime_parameter(project_id: str) -> None:
     del project_id  # CONFIG_PARAMETER and ADC determine the project.
     parameter = _real_env_value(CONFIG_PARAMETER_ENV)
 
-    # Validate through the shared loader so the preflight checks exactly what
-    # the deployed agent resolves.
     try:
         from gemini_shared import get_runtime_config
 

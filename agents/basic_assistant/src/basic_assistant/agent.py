@@ -22,6 +22,5 @@ root_agent = Agent(
     tools=[report_runtime_config],
 )
 
-# Agent Runtime serves the AdkApp wrapper; a bare Agent exposes none of the
-# declared class methods. root_agent stays exported for local `adk` runs.
+# Agent Runtime serves the AdkApp wrapper, not a bare Agent.
 app = AdkApp(agent=root_agent, enable_tracing=True)

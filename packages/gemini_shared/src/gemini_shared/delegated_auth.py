@@ -4,10 +4,9 @@ Gemini Enterprise runs the OAuth consent flow and forwards the resulting user
 token in ADK session state. This scheme and provider read that token so a tool
 can call a downstream service with the signed-in user's own permissions.
 
-Importing this module registers the provider. ADK rehydrates a deployed scheme
-by matching ``type_`` against ``CustomAuthScheme.__subclasses__()``, so the
-module must be imported before a tool using the scheme runs. Agents get that by
-importing ``delegated_auth_config`` from ``gemini_shared``.
+Importing this module registers the provider, which ADK requires before a tool
+using the scheme runs: it rehydrates a deployed scheme by matching ``type_``
+against ``CustomAuthScheme.__subclasses__()``.
 """
 
 from __future__ import annotations

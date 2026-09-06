@@ -8,9 +8,8 @@ from .delegated_auth import (
 from .runtime_agent import apply_runtime_model, runtime_instruction
 from .runtime_config import RuntimeConfig, get_runtime_config, get_runtime_config_status
 
-# gemini_shared.agent_identity is intentionally not re-exported here: it needs
-# google-cloud-storage, which agents that do not use it should not have to ship.
-# Import it directly as `from gemini_shared.agent_identity import ...`.
+# agent_identity is not re-exported: it needs google-cloud-storage, which not
+# every agent ships. Import it directly.
 
 __all__ = [
     "BootstrapSettings",

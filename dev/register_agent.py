@@ -43,8 +43,7 @@ REQUEST_TIMEOUT_SECONDS = 60
 OAUTH_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 OAUTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 OAUTH_REDIRECT_URI = "https://vertexaisearch.cloud.google.com/static/oauth/oauth.html"
-# Scopes the signed-in user consents to. The delegated BigQuery tool needs
-# bigquery; openid/email/profile identify the consenting user.
+# Scopes the signed-in user consents to.
 DELEGATED_OAUTH_SCOPES = (
     "openid",
     "email",
@@ -145,8 +144,7 @@ def _build_agent(spec: AgentSpec, reasoning_engine: str, project_id: str) -> dic
 def _resolve_client_secret(project_id: str) -> str:
     """Return the OAuth client secret, preferring Secret Manager over the environment.
 
-    Secret Manager keeps the payload off developer workstations. The environment
-    variable remains supported for a sandbox with no managed secret yet.
+    Secret Manager keeps the payload off developer workstations.
     """
     secret_name = os.getenv(OAUTH_CLIENT_SECRET_NAME_ENV, "").strip()
     if secret_name:

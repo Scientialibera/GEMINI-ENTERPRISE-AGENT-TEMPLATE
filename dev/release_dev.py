@@ -50,8 +50,6 @@ def main() -> None:
     archive = package_agent(args.agent, ARTIFACTS_DIR / f"{spec.package_name}.tar.gz")
     print(f"AGENT_ARCHIVE={archive}")
 
-    # deploy_dev.py creates a new Agent Engine; update_dev.py revises the one
-    # this developer already owns. Choosing here keeps re-runs non-duplicating.
     already_deployed = state_path(args.agent).exists()
     print("STEP=update" if already_deployed else "STEP=deploy")
     if already_deployed:

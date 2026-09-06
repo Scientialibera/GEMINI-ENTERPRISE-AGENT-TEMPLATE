@@ -1,11 +1,7 @@
 """Cloud Storage access under the runtime's own Agent Identity.
 
-Deployed, Application Default Credentials resolve to the Agent Engine's Agent
-Identity; locally they resolve to the developer. The same code therefore runs in
-both places, and the returned payload reports which identity was used.
-
-This module has no delegated-auth dependency, so an agent can use it without a
-Gemini Enterprise authorization.
+ADC resolves to the Agent Identity when deployed and to the developer locally,
+so the same code runs in both. Needs no Gemini Enterprise authorization.
 """
 
 from __future__ import annotations
@@ -25,11 +21,7 @@ LOCAL_ENGINE_ID = "not available locally"
 
 
 def list_bucket_objects(project_id: str) -> dict[str, object]:
-    """List a bounded number of objects using Agent Identity or local ADC.
-
-    Returns the object names plus the identity and environment that served the
-    request, so a caller can confirm which credentials were used.
-    """
+    """List a bounded number of objects, reporting which identity served it."""
     runtime = get_runtime_config()
     bucket_name = runtime.agent_identity_bucket_name
     if not bucket_name:

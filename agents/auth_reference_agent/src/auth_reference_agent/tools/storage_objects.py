@@ -8,9 +8,5 @@ from ..config import PROJECT_ID
 
 
 def list_storage_objects() -> dict[str, object]:
-    """List objects in the configured bucket using the agent's own identity.
-
-    Reports the identity and environment that served the request, so a caller
-    can confirm whether Agent Identity or local developer credentials were used.
-    """
+    """List bucket objects using the agent's own identity, reporting which was used."""
     return list_bucket_objects(PROJECT_ID)

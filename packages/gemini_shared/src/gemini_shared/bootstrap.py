@@ -67,14 +67,10 @@ class BootstrapSettings:
 def _resolve_project_id() -> str:
     """Resolve the project id from the environment, else from ADC.
 
-    Agent Runtime injects GOOGLE_CLOUD_PROJECT and refuses it as a caller-set
-    deployment variable, so it cannot be supplied by Terraform. Falling back to
-    Application Default Credentials keeps import from failing when the platform
-    has not populated the variable, which otherwise crashes the process before
-    logging is initialised and yields no diagnosable runtime output.
+    GOOGLE_CLOUD_PROJECT is reserved by Agent Runtime, so it cannot be set by
+    Terraform and is not always present.
     """
-    # A placeholder must fail loudly rather than fall through to ADC, so it is
-    # validated with required=True. Only a genuinely absent value falls back.
+    # A placeholder must fail rather than fall through to ADC.
     if os.getenv(PROJECT_ENV):
         return _required_value(PROJECT_ENV)
 
