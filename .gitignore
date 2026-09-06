@@ -21,3 +21,8 @@ application_default_credentials.json
 tfplan
 provider-schema.json
 validation/
+
+# Python bytecode. Compiled modules embed source paths and literals,
+# which is how project identifiers reached this repository.
+__pycache__/
+*.py[cod]
