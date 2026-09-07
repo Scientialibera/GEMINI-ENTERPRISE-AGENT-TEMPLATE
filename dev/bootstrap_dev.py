@@ -9,13 +9,7 @@ from bigquery_fixture import (
 )
 from bootstrap import ensure_runtime_parameter, prepare_dev_platform
 from common import ROOT, load_environment, require_dev_environment
-
-PLACEHOLDER_MARKER = "REPLACE"
-
-
-def _configured_value(name: str) -> bool:
-    value = os.getenv(name, "").strip()
-    return bool(value and PLACEHOLDER_MARKER not in value and not value.startswith("<"))
+from environment import configured_value
 
 
 def main() -> None:
@@ -39,9 +33,8 @@ def main() -> None:
         print(f"BIGQUERY_FIXTURE_TABLE_CREATED={str(fixture.created_table).lower()}")
         print(f"BIGQUERY_FIXTURE_ROWS_SEEDED={fixture.seeded_rows}")
 
-    # Only a pinned override is checked here. Each agent otherwise reads its own
-    # parameter, which deploy_dev.py creates on first deployment.
-    if _configured_value("CONFIG_PARAMETER"):
+    # Per-agent parameters are resolved during deployment.
+    if configured_value("CONFIG_PARAMETER"):
         ensure_runtime_parameter(project_id)
     print("DEV_PREREQUISITES=ready")
     print("NEXT_STEP=Run deploy_dev.py --agent <name>; it creates that agent's parameter.")

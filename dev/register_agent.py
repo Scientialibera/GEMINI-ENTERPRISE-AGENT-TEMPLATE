@@ -1,11 +1,4 @@
-"""Register a deployed Agent Engine as an agent in a Gemini Enterprise app.
-
-Deployment and registration are separate. `deploy_dev.py` creates the Agent
-Engine; registration publishes it into an app and enables the OAuth consent
-flow that forwards a delegated user token to authenticated tools.
-
-Idempotent: an agent with the same display name is patched, not duplicated.
-"""
+"""Register a deployed runtime in Gemini Enterprise and configure delegated authorization."""
 
 from __future__ import annotations
 
@@ -45,12 +38,7 @@ REQUEST_TIMEOUT_SECONDS = 60
 
 OAUTH_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 OAUTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
-# Where Google returns the user after consent. Gemini Enterprise's own
-# callbacks, so they are the same for every agent and every scope.
-#
-# The client must register BOTH. The authorization resource stores the first,
-# but the live consent flow redirects to the second, and a client missing it
-# fails with redirect_uri_mismatch once the user clicks Authorize.
+# Register both callbacks: the authorization and consent flow use different URIs.
 OAUTH_REDIRECT_URI = "https://vertexaisearch.cloud.google.com/static/oauth/oauth.html"
 OAUTH_CONSENT_REDIRECT_URI = "https://vertexaisearch.cloud.google.com/oauth-redirect"
 OAUTH_REDIRECT_URIS = (OAUTH_REDIRECT_URI, OAUTH_CONSENT_REDIRECT_URI)
@@ -146,11 +134,7 @@ def _build_agent(spec: AgentSpec, reasoning_engine: str, project_id: str) -> dic
 
 
 def _resolve_client_secret(project_id: str, spec: AgentSpec) -> str:
-    """Return the OAuth client secret, preferring Secret Manager over the environment.
-
-    Secret Manager keeps the payload off developer workstations. The agent's own
-    secret name is used unless the environment overrides it for a single run.
-    """
+    """Read Secret Manager first; import an environment secret if missing."""
     secret_name = (
         os.getenv(spec.oauth_client_secret_name_env, "").strip()
         or os.getenv(OAUTH_CLIENT_SECRET_NAME_ENV, "").strip()
@@ -175,15 +159,13 @@ def _resolve_client_secret(project_id: str, spec: AgentSpec) -> str:
     except NotFound:
         pass
 
-    # Not stored yet. A value supplied for this run is copied into Secret
-    # Manager, so the workstation holds it only until the first registration.
+    # Import the initial secret from the environment.
     supplied = (
         os.getenv(spec.oauth_client_secret_env, "").strip()
         or os.getenv(OAUTH_CLIENT_SECRET_ENV, "").strip()
     )
     if not supplied:
-        # The caller reports what to create, naming the client and this secret,
-        # rather than surfacing a bare 404.
+        # Let the caller print the setup instructions.
         return ""
 
     _store_client_secret(project_id, secret_name.rsplit("/", 1)[-1], supplied)
@@ -191,15 +173,7 @@ def _resolve_client_secret(project_id: str, spec: AgentSpec) -> str:
 
 
 def _verify_client_credentials(client_id: str, client_secret: str, spec: AgentSpec) -> None:
-    """Fail when the secret does not belong to the client id.
-
-    A mismatched pair is accepted when the authorization is created and only
-    surfaces later as an endless consent loop: Google authenticates the user,
-    the code-for-token exchange fails with invalid_client, and Gemini
-    Enterprise asks again. Exchanging a deliberately invalid code separates the
-    two cases, because Google reports a bad client before it reports a bad
-    code.
-    """
+    """Probe for invalid_client using a deliberately invalid authorization code."""
     response = requests.post(
         OAUTH_TOKEN_ENDPOINT,
         data={
@@ -219,10 +193,8 @@ def _verify_client_credentials(client_id: str, client_secret: str, spec: AgentSp
         f"client id.\n\n"
         f"  client id: {client_id}\n"
         f"  secret   : Secret Manager '{spec.default_oauth_secret_name}'\n\n"
-        "Google would accept this when the authorization is created and then loop on the "
-        "consent screen forever, because the token exchange fails after the user approves.\n\n"
-        f"Store the secret belonging to that client, then run this again:\n"
-        f"  {spec.oauth_client_secret_env}=<the matching client secret>\n"
+        "Update the configured Secret Manager secret with the matching client secret, "
+        "then rerun registration. Stored secrets take precedence over environment values.\n"
     )
 
 
@@ -267,13 +239,7 @@ def _authorization_exists(project_id: str, authorization_id: str) -> bool:
 def ensure_authorization(
     project_id: str, authorization_id: str, agent_name: str, spec: AgentSpec
 ) -> None:
-    """Create the Gemini Enterprise authorization when it does not exist.
-
-    One authorization serves one agent, and one OAuth client backs one
-    authorization: Gemini Enterprise caches the user's consent per OAuth
-    client, so two agents sharing a client share a grant and the second never
-    receives a token of its own.
-    """
+    """Create the agent's authorization if it is missing."""
     if _authorization_exists(project_id, authorization_id):
         print(f"AUTHORIZATION_EXISTS={authorization_id}")
         return
@@ -283,11 +249,8 @@ def ensure_authorization(
     if not client_id or not client_secret:
         raise SystemExit(
             f"{spec.display_name} needs its own OAuth client to create authorization "
-            f"'{authorization_id}'. Gemini Enterprise caches the user's consent per OAuth "
-            "client, so an agent sharing another agent's client never receives a token of its "
-            "own.\n\n"
-            "OAuth clients cannot be created from the CLI. In the Google Cloud console, under "
-            "APIs & Services > Credentials, create an OAuth client with:\n"
+            f"'{authorization_id}'.\n\n"
+            "In the Google Cloud console, create an OAuth client with:\n"
             "  Application type: Web application\n"
             f"  Name: {spec.oauth_client_name}\n"
             "  Authorized redirect URIs (add both; the consent flow uses the second):\n"
@@ -351,14 +314,9 @@ def register_agent(
     spec: AgentSpec,
     reasoning_engine: str,
 ) -> str:
-    """Publish a deployed Reasoning Engine into a Gemini Enterprise app.
+    """Create or update the app registration for this runtime."""
 
-    Creates the delegated-auth authorization first when the agent needs one.
-    """
-
-    # The agent's source is the authority on whether it needs a delegated
-    # token, so a tool added without updating the spec is caught here rather
-    # than at the first user prompt.
+    # Catch undeclared delegated tools before registration.
     if detect_delegated_auth(spec) and not spec.uses_delegated_auth:
         raise SystemExit(
             f"{spec.display_name} uses delegated auth in its source but its AgentSpec does not "
@@ -398,9 +356,7 @@ def main() -> None:
 
     os.chdir(ROOT)
     load_environment(".env.dev")
-    # Registration points Gemini Enterprise at an existing runtime and never
-    # reads live configuration, so no config parameter is required here. The
-    # spec still resolves the agent's own authorization.
+    # Resolve the authorization ID; registration does not read runtime settings.
     spec = get_agent_spec(args.agent)
     project_id, _, _ = require_dev_environment(require_parameter=False, spec=spec)
 

@@ -14,7 +14,5 @@ GEMINI_ENTERPRISE_AUTHORIZATION_ID = BOOTSTRAP.gemini_enterprise_authorization_i
 if GEMINI_ENTERPRISE_AUTHORIZATION_ID is None:
     raise RuntimeError("GEMINI_ENTERPRISE_AUTHORIZATION_ID is required for this agent.")
 
-# An MCP server is bound at construction, before runtime config is reachable, so
-# this URL is bootstrap rather than a live setting. Google's managed BigQuery
-# endpoint is the default because it needs nothing deployed.
+# Changing the MCP endpoint requires redeployment.
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "").strip() or mcp_google_cloud.BIGQUERY

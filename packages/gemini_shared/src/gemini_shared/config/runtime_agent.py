@@ -1,9 +1,4 @@
-"""Wiring that resolves an agent's instruction and model per request.
-
-Both are read from runtime configuration rather than fixed at construction, so
-a published configuration change takes effect after the cache TTL without
-redeploying the agent.
-"""
+"""Resolve instructions and model names from cached runtime settings."""
 
 from __future__ import annotations
 

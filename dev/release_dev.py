@@ -1,10 +1,4 @@
-"""Take one agent from source to a usable Gemini Enterprise agent.
-
-    preflight -> package -> deploy (or update) -> register
-
-Each step is idempotent, so re-running is the normal way to ship a change.
-Shared infrastructure remains Terraform's responsibility.
-"""
+"""Package, deploy or update, then register a development agent."""
 
 from __future__ import annotations
 
@@ -16,7 +10,6 @@ from common import (
     ROOT,
     get_agent_spec,
     load_environment,
-    load_resource_name,
     require_dev_environment,
     state_path,
 )
@@ -40,8 +33,8 @@ def main() -> None:
 
     os.chdir(ROOT)
     load_environment(".env.dev")
-    project_id, location, staging_bucket = require_dev_environment()
     spec = get_agent_spec(args.agent)
+    project_id, location, staging_bucket = require_dev_environment(spec=spec)
 
     print("STEP=preflight")
     ensure_dev_prerequisites(project_id, location, staging_bucket, spec)
@@ -75,7 +68,7 @@ def main() -> None:
         return
 
     print("STEP=register")
-    register_agent(args.agent, app_id, project_id, spec, load_resource_name(args.agent))
+    register_agent(args.agent, app_id, project_id, spec, resource_name)
 
 
 if __name__ == "__main__":

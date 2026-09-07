@@ -1,13 +1,6 @@
-"""Gemini Enterprise delegated user authentication.
+"""Read Gemini Enterprise user tokens from ADK session state.
 
-Gemini Enterprise runs the OAuth consent flow and forwards the resulting user
-token in ADK session state. This scheme and provider read that token so a tool
-can call a downstream service with the signed-in user's own permissions.
-
-Importing this module registers the provider, which ADK requires before a tool
-using the scheme runs: it rehydrates a deployed scheme by matching ``type_``
-against ``CustomAuthScheme.__subclasses__()``.
-"""
+Importing this module registers the provider needed to rehydrate deployed auth schemes."""
 
 from __future__ import annotations
 
@@ -72,11 +65,7 @@ class GeminiEnterpriseDelegatedAuthProvider(BaseAuthProvider):
 
 
 def read_session_token(state: Mapping[str, Any], authorization_id: str | None) -> str | None:
-    """Return the delegated token Gemini Enterprise placed in session state.
-
-    For callers holding a context rather than a credential, such as the MCP
-    header provider.
-    """
+    """Read the named authorization token, with a single-entry session fallback."""
     if authorization_id and authorization_id in state:
         return state[authorization_id]
     if len(state) == 1:

@@ -1,8 +1,4 @@
-"""Cloud Storage access under the runtime's own Agent Identity.
-
-ADC resolves to the Agent Identity when deployed and to the developer locally,
-so the same code runs in both. Needs no Gemini Enterprise authorization.
-"""
+"""Read Cloud Storage using the runtime's credentials."""
 
 from __future__ import annotations
 

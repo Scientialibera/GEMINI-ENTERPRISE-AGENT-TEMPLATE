@@ -65,11 +65,7 @@ class BootstrapSettings:
 
 
 def _resolve_project_id() -> str:
-    """Resolve the project id from the environment, else from ADC.
-
-    GOOGLE_CLOUD_PROJECT is reserved by Agent Runtime, so it cannot be set by
-    Terraform and is not always present.
-    """
+    """Read the project ID from the environment, falling back to ADC."""
     # A placeholder must fail rather than fall through to ADC.
     if os.getenv(PROJECT_ENV):
         return _required_value(PROJECT_ENV)

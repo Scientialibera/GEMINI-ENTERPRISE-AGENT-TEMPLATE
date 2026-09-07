@@ -1,12 +1,4 @@
-"""Google's managed remote MCP servers.
-
-Google hosts these, so an agent gets the tools without deploying anything. The
-full list is at https://docs.cloud.google.com/mcp/supported-products.
-
-Each server authenticates the caller per tool call with OAuth 2.0 and IAM, so
-the delegated user token decides what a tool can reach. ``tools/list`` is not
-authenticated; a missing or unscoped token fails at the call instead.
-"""
+"""Managed Google Cloud MCP endpoints, OAuth scopes and tool allowlists."""
 
 from __future__ import annotations
 
@@ -21,8 +13,7 @@ COMPUTE_ENGINE = "https://compute.googleapis.com/mcp"
 BIGQUERY_SCOPE = "https://www.googleapis.com/auth/bigquery"
 CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
-# Read-only subset of the BigQuery server's tools. execute_sql is withheld so
-# the MCP path cannot mutate data; the user's own IAM still applies on top.
+# Exclude execute_sql; server-side IAM still controls access.
 BIGQUERY_READONLY_TOOLS = [
     "list_dataset_ids",
     "get_dataset_info",

@@ -6,6 +6,7 @@ import decimal
 import importlib
 import json
 import logging
+import os
 import secrets
 import sys
 import tarfile
@@ -32,14 +33,13 @@ common = importlib.import_module("common")
 packaging = importlib.import_module("package_agent")
 sys.path.remove(str(DEV))
 
-# Derived from the registry so an agent added to AGENTS is covered here without
-# editing this file.
+# Cover newly registered agents automatically.
 ALL_AGENTS = sorted(common.AGENTS)
 
 
 @pytest.fixture(autouse=True)
 def environment(monkeypatch):
-    for name in list(__import__("os").environ):
+    for name in list(os.environ):
         if name.startswith(("DEV_", "CONFIG_", "GEMINI_", "GOOGLE_CLOUD_")):
             monkeypatch.delenv(name)
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
@@ -220,7 +220,7 @@ def test_nested_bigquery_serialization_and_delegated_client(monkeypatch):
 
 
 def test_model_callback(monkeypatch):
-    """Both agents share one implementation, so exercise it directly."""
+    """All agents use the shared model callback."""
     from gemini_shared import apply_runtime_model
 
     request = SimpleNamespace(model="old")
@@ -234,16 +234,14 @@ def test_model_callback(monkeypatch):
 
 @pytest.mark.parametrize("agent", ALL_AGENTS)
 def test_every_tool_is_described_to_the_model(agent):
-    """ADK builds the tool declaration from the function itself, so a tool
-    without a docstring reaches the model with no description."""
+    """Each local tool must expose a description to ADK."""
     from google.adk.tools.base_toolset import BaseToolset
     from google.adk.tools.function_tool import FunctionTool
 
     module = importlib.import_module(f"{agent}.agent")
     undescribed = []
     for tool in module.root_agent.tools:
-        # A toolset's descriptions come from the remote server at request time,
-        # so there is nothing to assert offline.
+        # Remote tool descriptions require a server connection.
         if isinstance(tool, BaseToolset):
             continue
         declaration = (
@@ -259,7 +257,7 @@ def test_every_tool_is_described_to_the_model(agent):
 
 @pytest.mark.parametrize("agent", ALL_AGENTS)
 def test_instruction_resolves_from_runtime_configuration(agent):
-    """Prompt text belongs in runtime configuration, not in the agent package."""
+    """Each agent resolves its instruction through a callback."""
     module = importlib.import_module(f"{agent}.agent")
     assert callable(module.root_agent.instruction), (
         f"{agent} must resolve its instruction from runtime configuration"
@@ -267,9 +265,7 @@ def test_instruction_resolves_from_runtime_configuration(agent):
 
 
 def test_delegated_scheme_rehydrates_from_shared_module():
-    """A deployed scheme arrives as a base CustomAuthScheme and is rehydrated by
-    matching type_ against CustomAuthScheme.__subclasses__(), so the provider
-    resolves from gemini_shared without living beside the agent."""
+    """ADK must rehydrate the shared scheme by its type_ default."""
     from google.adk.auth.auth_schemes import CustomAuthScheme
     from google.adk.auth.auth_tool import AuthConfig
     from google.adk.auth.credential_manager import CredentialManager
@@ -289,16 +285,14 @@ def test_delegated_scheme_rehydrates_from_shared_module():
 
 
 def test_agent_identity_tooling_has_no_delegated_auth_prerequisite(monkeypatch):
-    """Storage access uses the runtime's own identity, so importing it must not
-    require a Gemini Enterprise authorization the way delegated auth does."""
+    """Storage tooling imports without a delegated authorization ID."""
     monkeypatch.delenv("GEMINI_ENTERPRISE_AUTHORIZATION_ID", raising=False)
     module = importlib.reload(importlib.import_module("gemini_shared.connectors.cloud_storage"))
     assert callable(module.list_bucket_objects)
 
 
 def test_mcp_headers_carry_the_signed_in_users_token():
-    """The MCP server applies the caller's own permissions, so the header must
-    carry the delegated user token rather than the runtime's identity."""
+    """MCP requests carry the current user's delegated token."""
     from gemini_shared.mcp.mcp_auth import delegated_bearer_headers
 
     token = secrets.token_urlsafe(16)
@@ -308,8 +302,7 @@ def test_mcp_headers_carry_the_signed_in_users_token():
 
 
 def test_mcp_headers_fail_loudly_without_a_token():
-    """Sending no Authorization header would reach the server as an anonymous
-    call, so an unresolved token must raise instead."""
+    """Missing tokens must fail before an MCP request."""
     from gemini_shared.mcp.mcp_auth import delegated_bearer_headers
 
     provider = delegated_bearer_headers("unit-test-authorization")
@@ -319,8 +312,7 @@ def test_mcp_headers_fail_loudly_without_a_token():
 
 
 def test_mcp_toolset_is_wired_to_a_remote_server():
-    """The MCP tools must come from a remote endpoint over Streamable HTTP, so
-    the template needs no MCP server of its own."""
+    """The MCP agent uses HTTPS and excludes the write-capable SQL tool."""
     from gemini_shared.mcp.mcp_google_cloud import BIGQUERY_READONLY_TOOLS
     from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 
@@ -334,18 +326,14 @@ def test_mcp_toolset_is_wired_to_a_remote_server():
 
 @pytest.mark.parametrize("agent", ALL_AGENTS)
 def test_delegated_auth_detection_matches_the_spec(agent):
-    """An agent's source is the authority on whether it needs a delegated token.
-
-    A tool added without updating the spec would otherwise deploy without an
-    authorization and fail at the first user prompt.
-    """
+    """The source marker and declared auth requirements must agree."""
     spec = common.get_agent_spec(agent)
     assert common.detect_delegated_auth(spec) == spec.uses_delegated_auth
 
 
 @pytest.mark.parametrize("agent", ALL_AGENTS)
 def test_delegated_agents_name_their_own_oauth_client(agent):
-    """Gemini Enterprise caches consent per OAuth client, so agents cannot share one."""
+    """Delegated agents have distinct client, secret and authorization names."""
     spec = common.get_agent_spec(agent)
     if not spec.uses_delegated_auth:
         return
@@ -358,11 +346,7 @@ def test_delegated_agents_name_their_own_oauth_client(agent):
 
 @pytest.mark.parametrize("agent", ALL_AGENTS)
 def test_oauth_scopes_cover_only_delegated_services(agent):
-    """Scopes bound what the user's token may reach, so they are per agent.
-
-    A tool running as the Agent Identity adds no scope: it acts as the runtime,
-    not as the user.
-    """
+    """Each agent requests scopes only for its delegated tools."""
     spec = common.get_agent_spec(agent)
     if not spec.uses_delegated_auth:
         assert spec.delegated_oauth_scopes == ()
@@ -376,12 +360,137 @@ def test_oauth_scopes_cover_only_delegated_services(agent):
 
 @pytest.mark.parametrize("agent", ALL_AGENTS)
 def test_every_agent_has_a_prompt(agent):
-    """The prompt is the agent's behaviour, so it is reviewed here like code.
-
-    Without one the agent deploys with a generic placeholder and silently
-    behaves like every other agent.
-    """
+    """Each registered agent has a source prompt."""
     spec = common.get_agent_spec(agent)
     prompt = spec.read_prompt()
     assert prompt, f"{agent} has no prompt.md at {spec.prompt_path}"
     assert len(prompt) > 40, f"{agent} prompt is too short to be a real instruction"
+
+
+@pytest.mark.parametrize("agent", ALL_AGENTS)
+@pytest.mark.parametrize("already_deployed", [False, True])
+def test_release_resolves_agent_defaults(monkeypatch, tmp_path, agent, already_deployed):
+    monkeypatch.syspath_prepend(str(DEV))
+    release = importlib.import_module("release_dev")
+    deploy = importlib.import_module("deploy_dev")
+    update = importlib.import_module("update_dev")
+    spec = common.get_agent_spec(agent)
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    monkeypatch.setenv("DEV_STAGING_BUCKET", "gs://test-bucket")
+    monkeypatch.setenv("GEMINI_ENTERPRISE_APP_ID", "test-app")
+    monkeypatch.delenv(common.AUTHORIZATION_ID_ENV)
+    monkeypatch.setattr(sys, "argv", ["release_dev.py", "--agent", agent])
+    monkeypatch.setattr(release, "ROOT", tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(release, "load_environment", Mock())
+    monkeypatch.setattr(release, "ensure_dev_prerequisites", Mock())
+    monkeypatch.setattr(release, "package_agent", Mock(return_value=tmp_path / "agent.tar.gz"))
+    monkeypatch.setattr(
+        release, "state_path", lambda name: SimpleNamespace(exists=lambda: already_deployed)
+    )
+    create = Mock(return_value="new-runtime")
+    change = Mock(return_value="existing-runtime")
+    register = Mock()
+    monkeypatch.setattr(deploy, "deploy_agent", create)
+    monkeypatch.setattr(update, "update_agent", change)
+    monkeypatch.setattr(release, "register_agent", register)
+
+    release.main()
+
+    assert os.environ[common.CONFIG_PARAMETER_ENV] == spec.config_parameter_id
+    if spec.uses_delegated_auth:
+        assert os.environ[common.AUTHORIZATION_ID_ENV] == spec.authorization_id
+    else:
+        assert common.AUTHORIZATION_ID_ENV not in os.environ
+    called, unused = (change, create) if already_deployed else (create, change)
+    called.assert_called_once_with(agent, "test-project", "us-central1", "gs://test-bucket", spec)
+    unused.assert_not_called()
+    register.assert_called_once_with(agent, "test-app", "test-project", spec, called.return_value)
+
+
+def test_runtime_cache_is_scoped_to_parameter(monkeypatch):
+    monkeypatch.setenv("CONFIG_PARAMETER", "first")
+    store = RuntimeConfigStore()
+    first = RuntimeConfig(config_revision="one", model="model-one", instruction="first")
+    second = first.model_copy(update={"config_revision": "two", "instruction": "second"})
+    load = Mock(side_effect=[first, second])
+    monkeypatch.setattr(store, "_load_remote", load)
+    assert store.get() == first
+
+    monkeypatch.setenv("CONFIG_PARAMETER", "second")
+    assert store.get() == second
+    assert load.call_count == 2
+    assert load.call_args.args[0].endswith("/parameters/second/versions/latest")
+
+
+def test_runtime_cache_does_not_mask_new_parameter_failure(monkeypatch):
+    monkeypatch.setenv("CONFIG_PARAMETER", "first")
+    store = RuntimeConfigStore()
+    config = RuntimeConfig(config_revision="one", model="model-one", instruction="first")
+    monkeypatch.setattr(store, "_load_remote", Mock(side_effect=[config, ValueError("unreadable")]))
+    assert store.get() == config
+
+    monkeypatch.setenv("CONFIG_PARAMETER", "second")
+    with pytest.raises(ValueError, match="unreadable"):
+        store.get()
+
+
+def test_runtime_status_resets_when_switching_to_local(monkeypatch):
+    monkeypatch.setenv("CONFIG_PARAMETER", "remote")
+    store = RuntimeConfigStore()
+    config = RuntimeConfig(config_revision="remote", model="model-one", instruction="remote")
+    monkeypatch.setattr(store, "_load_remote", Mock(return_value=config))
+    assert store.status()["source"] == "Google Cloud Parameter Manager"
+
+    monkeypatch.delenv("CONFIG_PARAMETER")
+    status = store.status()
+    assert status["source"] == "local environment"
+    assert status["resource"] is None
+    assert status["loaded_at"] is None
+    assert status["config_revision"] == "local"
+
+
+@pytest.mark.parametrize("raw", ["true", "1", " YES ", "on", "false", "0", " NO ", "off"])
+def test_dev_boolean_parsing(monkeypatch, raw):
+    from environment import env_bool
+
+    monkeypatch.setenv("DEV_TEST_FLAG", raw)
+    expected = raw.strip().lower() in {"true", "1", "yes", "on"}
+    assert env_bool("DEV_TEST_FLAG", not expected) is expected
+
+
+def test_dev_boolean_defaults_and_invalid_values(monkeypatch):
+    from environment import env_bool
+
+    assert env_bool("DEV_TEST_FLAG", True) is True
+    assert env_bool("DEV_TEST_FLAG", False) is False
+    for raw in ("", "perhaps"):
+        monkeypatch.setenv("DEV_TEST_FLAG", raw)
+        with pytest.raises(SystemExit, match="DEV_TEST_FLAG must be true or false"):
+            env_bool("DEV_TEST_FLAG", False)
+
+
+@pytest.mark.parametrize("raw", ["", " ", "REPLACE_WITH_ID", "<project>"])
+def test_dev_placeholder_parsing(monkeypatch, raw):
+    from environment import configured_value
+
+    monkeypatch.setenv("DEV_TEST_VALUE", raw)
+    assert configured_value("DEV_TEST_VALUE") == ""
+    assert common.is_missing_or_placeholder("DEV_TEST_VALUE")
+
+
+def test_dev_configured_value_is_stripped(monkeypatch):
+    from environment import configured_value
+
+    monkeypatch.setenv("DEV_TEST_VALUE", " real-value ")
+    assert configured_value("DEV_TEST_VALUE") == "real-value"
+    assert not common.is_missing_or_placeholder("DEV_TEST_VALUE")
+
+
+@pytest.mark.parametrize("agent", ALL_AGENTS)
+def test_config_status_tool_is_shared(agent):
+    from gemini_shared.config.tools import report_runtime_config
+
+    module = importlib.import_module(f"{agent}.tools.runtime_config_status")
+    assert module.report_runtime_config is report_runtime_config

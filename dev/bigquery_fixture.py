@@ -1,8 +1,4 @@
-"""Create or validate the optional BigQuery fixture used for developer testing.
-
-The fixture is application-test support only. It does not grant IAM and it is not
-part of the Terraform/shared-infrastructure ownership boundary.
-"""
+"""Prepare optional BigQuery sample data without changing IAM."""
 
 from __future__ import annotations
 
@@ -11,6 +7,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from environment import env_bool
 from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 
@@ -25,8 +22,6 @@ DEFAULT_DATASET_ID = "gemini_agent_template_dev"
 DEFAULT_TABLE_ID = "sample_orders"
 FIXTURE_DESCRIPTION = "Gemini Enterprise agent template developer fixture."
 RESOURCE_ID_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,1023}$")
-TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
-FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 
 FIXTURE_SCHEMA = (
     bigquery.SchemaField("order_id", "STRING", mode="REQUIRED"),
@@ -97,21 +92,9 @@ class BigQueryFixtureResult:
     seeded_rows: int
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    value = raw.strip().lower()
-    if value in TRUE_VALUES:
-        return True
-    if value in FALSE_VALUES:
-        return False
-    raise SystemExit(f"{name} must be true or false.")
-
-
 def bigquery_fixture_enabled() -> bool:
     """Return whether developer bootstrap should prepare the BigQuery fixture."""
-    return _env_bool(PREPARE_FIXTURE_ENV, True)
+    return env_bool(PREPARE_FIXTURE_ENV, True)
 
 
 def _resource_id(name: str, default: str) -> str:
@@ -145,16 +128,11 @@ def prepare_bigquery_fixture(
     project_id: str,
     default_location: str,
 ) -> BigQueryFixtureResult | None:
-    """Create or reuse a small deterministic BigQuery fixture for dev testing.
-
-    Existing non-empty fixture tables are never modified. IAM is intentionally out
-    of scope; the caller and delegated Gemini Enterprise test user must already have
-    the required BigQuery permissions.
-    """
+    """Reuse or create the fixture and seed it only when empty. Leave IAM unchanged."""
     if not bigquery_fixture_enabled():
         return None
 
-    allow_create = _env_bool(CREATE_FIXTURE_ENV, True)
+    allow_create = env_bool(CREATE_FIXTURE_ENV, True)
     dataset_id = _resource_id(DATASET_ID_ENV, DEFAULT_DATASET_ID)
     table_id = _resource_id(TABLE_ID_ENV, DEFAULT_TABLE_ID)
     location = os.getenv(LOCATION_ENV, "").strip() or default_location

@@ -47,8 +47,8 @@ class RuntimeConfig(BaseModel):
     environment: str = Field(default="dev", min_length=1)
     log_level: str = Field(default="INFO", min_length=1)
     agent_identity_bucket_name: str | None = None
-    storage_object_limit: int = Field(default=10, ge=1, le=100)
-    bigquery_query_row_limit: int = Field(default=100, ge=1, le=10_000)
+    storage_object_limit: int = Field(default=DEFAULT_STORAGE_OBJECT_LIMIT, ge=1, le=100)
+    bigquery_query_row_limit: int = Field(default=DEFAULT_BIGQUERY_QUERY_ROW_LIMIT, ge=1, le=10_000)
 
     @field_validator("model", "instruction", "config_revision", "environment")
     @classmethod
@@ -134,22 +134,25 @@ class RuntimeConfigStore:
         resource_name = self._version_name()
         if resource_name is None:
             config = RuntimeConfig.model_validate(_local_payload())
+            self.reset()
             logging.getLogger().setLevel(config.log_level)
             return config
 
         bootstrap = get_bootstrap_settings()
-        now = time.monotonic()
-        if not force_refresh and self._config is not None and now < self._expires_at:
-            return self._config
-
         with self._lock:
             now = time.monotonic()
-            if not force_refresh and self._config is not None and now < self._expires_at:
+            same_resource = self._resource_name == resource_name
+            if (
+                not force_refresh
+                and same_resource
+                and self._config is not None
+                and now < self._expires_at
+            ):
                 return self._config
             try:
                 loaded = self._load_remote(resource_name)
             except Exception:
-                if self._config is None:
+                if self._config is None or not same_resource:
                     raise
                 LOGGER.warning(
                     "Parameter Manager refresh failed; using last-known-good configuration."

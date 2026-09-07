@@ -1,12 +1,4 @@
-"""Connect an agent to a remote MCP server over Streamable HTTP.
-
-The server supplies the tools, so none are defined here. Works against any
-Streamable HTTP endpoint, including Google's managed servers such as
-``https://bigquery.googleapis.com/mcp``.
-
-The URL is bootstrap env: the toolset is built at construction, so changing it
-needs a redeploy.
-"""
+"""Connect to a Streamable HTTP MCP server with delegated authentication."""
 
 from __future__ import annotations
 

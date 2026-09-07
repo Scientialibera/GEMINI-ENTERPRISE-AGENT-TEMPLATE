@@ -6,12 +6,16 @@ import os
 import shutil
 import subprocess
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+from environment import configured_value, env_bool
+
+if TYPE_CHECKING:
+    from common import AgentSpec
+    from gemini_shared.config.runtime_config import RuntimeConfig
+    from google.cloud.parametermanager_v1 import ParameterManagerClient
 
 GCLOUD = shutil.which("gcloud")
-
-TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
-FALSE_VALUES = frozenset({"0", "false", "no", "off"})
-PLACEHOLDER_MARKER = "REPLACE"
 
 CREATE_PROJECT_ENV = "DEV_CREATE_PROJECT_IF_MISSING"
 BILLING_ACCOUNT_ENV = "DEV_BILLING_ACCOUNT_ID"
@@ -31,18 +35,6 @@ REQUIRED_DEV_SERVICES = (
     "serviceusage.googleapis.com",
     "storage.googleapis.com",
 )
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    value = raw.strip().lower()
-    if value in TRUE_VALUES:
-        return True
-    if value in FALSE_VALUES:
-        return False
-    raise SystemExit(f"{name} must be true or false.")
 
 
 def _run(args: Sequence[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -68,8 +60,8 @@ def _exists(args: Sequence[str]) -> bool:
 
 
 def _real_env_value(name: str) -> str:
-    value = os.getenv(name, "").strip()
-    if not value or PLACEHOLDER_MARKER in value or value.startswith("<"):
+    value = configured_value(name)
+    if not value:
         raise SystemExit(f"{name} must contain a real value.")
     return value
 
@@ -100,7 +92,7 @@ def ensure_project(project_id: str) -> None:
     if _exists(("projects", "describe", project_id, "--format=value(projectId)")):
         return
 
-    if not _env_bool(CREATE_PROJECT_ENV, False):
+    if not env_bool(CREATE_PROJECT_ENV, False):
         raise SystemExit(
             f"Project '{project_id}' does not exist or is not visible. "
             f"Create it through foundation IaC or set {CREATE_PROJECT_ENV}=true "
@@ -151,7 +143,7 @@ def ensure_required_services(
     if not missing:
         return
 
-    if not _env_bool(ENABLE_APIS_ENV, True):
+    if not env_bool(ENABLE_APIS_ENV, True):
         raise SystemExit(
             "Required APIs are disabled: "
             f"{', '.join(missing)}. Enable them or set {ENABLE_APIS_ENV}=true."
@@ -180,7 +172,7 @@ def ensure_staging_bucket(project_id: str, location: str, bucket_uri: str) -> No
     ):
         return
 
-    if not _env_bool(CREATE_STAGING_BUCKET_ENV, True):
+    if not env_bool(CREATE_STAGING_BUCKET_ENV, True):
         raise SystemExit(
             f"Staging bucket '{bucket_uri}' is missing. Create it or set "
             f"{CREATE_STAGING_BUCKET_ENV}=true."
@@ -201,12 +193,8 @@ def ensure_staging_bucket(project_id: str, location: str, bucket_uri: str) -> No
     )
 
 
-def _parameter_client(location: str):
-    """Parameter Manager client bound to the right endpoint.
-
-    Must go through ADC, not the gcloud CLI: gcloud uses its own OAuth client,
-    which is denied write access while ADC is authorized for the same user.
-    """
+def _parameter_client(location: str) -> ParameterManagerClient:
+    """Create an ADC client for the parameter's location."""
     from google.cloud import parametermanager_v1
 
     return parametermanager_v1.ParameterManagerClient(
@@ -214,7 +202,9 @@ def _parameter_client(location: str):
     )
 
 
-def _add_parameter_version(project_id, parameter, location, version_id, payload) -> None:
+def _add_parameter_version(
+    project_id: str, parameter: str, location: str, version_id: str, payload: str
+) -> None:
     from google.cloud import parametermanager_v1
 
     _parameter_client(location).create_parameter_version(
@@ -226,7 +216,9 @@ def _add_parameter_version(project_id, parameter, location, version_id, payload)
     )
 
 
-def _publish_instruction(project_id, parameter, location, current, prompt: str) -> None:
+def _publish_instruction(
+    project_id: str, parameter: str, location: str, current: RuntimeConfig, prompt: str
+) -> None:
     """Publish a new version carrying an edited prompt, keeping other settings."""
     config = current.model_dump()
     config["instruction"] = prompt
@@ -237,11 +229,7 @@ def _publish_instruction(project_id, parameter, location, current, prompt: str) 
 
 
 def _create_runtime_parameter(project_id: str, parameter: str, location: str, prompt: str) -> None:
-    """Create the agent's runtime parameter, seeded with the agent's prompt.
-
-    Runtime configuration is per-agent developer state, not shared
-    infrastructure, so deploying a new agent should not require a manual step.
-    """
+    """Create the runtime parameter with initial settings and the agent's prompt."""
     payload = json.dumps(
         {
             "config_revision": "bootstrap-v1",
@@ -274,13 +262,8 @@ def _parameter_endpoint(location: str) -> str:
     return f"parametermanager.{location}.rep.googleapis.com"
 
 
-def ensure_runtime_parameter(project_id: str, spec=None) -> None:
-    """Ensure the agent's runtime parameter exists and is readable.
-
-    The readability check must resolve through ADC, not the gcloud CLI: gcloud
-    uses its own OAuth client, which can be denied while ADC is authorized for
-    the same user.
-    """
+def ensure_runtime_parameter(project_id: str, spec: AgentSpec | None = None) -> None:
+    """Create or validate runtime settings, then publish any prompt change."""
     parameter = _real_env_value(CONFIG_PARAMETER_ENV)
     location = os.getenv(CONFIG_PARAMETER_LOCATION_ENV, "").strip() or DEFAULT_PARAMETER_LOCATION
     prompt = spec.read_prompt() if spec is not None else ""
@@ -303,9 +286,7 @@ def ensure_runtime_parameter(project_id: str, spec=None) -> None:
             raise SystemExit(f"Created '{parameter}' but it is still not readable: {exc}.") from exc
         return
 
-    # The prompt is the agent's behaviour, so an edit to prompt.md must reach
-    # the runtime. Publishing a version only when it differs keeps repeated
-    # deployments from accumulating identical ones.
+    # Keep the other live settings when publishing a prompt change.
     if prompt and prompt != current.instruction:
         _publish_instruction(project_id, parameter, location, current, prompt)
 
@@ -324,7 +305,7 @@ def prepare_dev_platform(
 
 
 def ensure_dev_prerequisites(
-    project_id: str, location: str, staging_bucket: str, spec=None
+    project_id: str, location: str, staging_bucket: str, spec: AgentSpec | None = None
 ) -> None:
     prepare_dev_platform(project_id, location, staging_bucket)
     ensure_runtime_parameter(project_id, spec)

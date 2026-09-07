@@ -1,4 +1,4 @@
-"""Minimal independently deployable ADK agent using the shared runtime contract."""
+"""Construct a basic ADK assistant with live runtime settings."""
 
 from __future__ import annotations
 
@@ -22,5 +22,5 @@ root_agent = Agent(
     tools=[report_runtime_config],
 )
 
-# Agent Runtime serves the AdkApp wrapper, not a bare Agent.
+# Expose the app to Agent Runtime.
 app = AdkApp(agent=root_agent, enable_tracing=True)

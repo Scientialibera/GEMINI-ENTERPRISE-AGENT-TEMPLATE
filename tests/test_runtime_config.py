@@ -1,3 +1,4 @@
+import pytest
 from gemini_shared.config.runtime_config import get_runtime_config, reset_runtime_config_for_tests
 
 
@@ -26,9 +27,5 @@ def test_local_runtime_config_requires_model(monkeypatch):
     monkeypatch.setenv("AGENT_INSTRUCTION", "test instruction")
     reset_runtime_config_for_tests()
 
-    try:
+    with pytest.raises(RuntimeError, match="GEMINI_MODEL"):
         get_runtime_config()
-    except RuntimeError as exc:
-        assert "GEMINI_MODEL" in str(exc)
-    else:
-        raise AssertionError("Expected missing GEMINI_MODEL to fail.")

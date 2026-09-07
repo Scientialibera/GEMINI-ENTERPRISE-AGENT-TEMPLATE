@@ -1,719 +1,341 @@
-# Gemini Enterprise ADK agent template
+# Gemini Enterprise ADK agents
 
-Application template for independently deployable Google ADK agents that share a common Python runtime package.
+This repository contains three Python agents and scripts to run them locally,
+deploy them to Agent Engine and register them in Gemini Enterprise.
 
-This branch contains agent code, shared application libraries, tests, deterministic packaging and the developer helpers that deploy and register agents. Shared Google Cloud infrastructure — APIs, IAM, Secret Manager and observability — belongs to the `template/terraform-iac-only` branch, which is applied once per project before any agent is deployed. See [What Terraform owns](#what-terraform-owns).
+| Agent | Purpose |
+|---|---|
+| basic_assistant | Answer questions and report the active runtime settings. |
+| auth_reference_agent | Read Cloud Storage with Agent Identity and query BigQuery with the user's delegated token. |
+| bigquery_mcp_agent | Explore BigQuery through Google's managed MCP server using the user's delegated token. |
 
-Start with [Which script to run](#which-script-to-run), then [Adding an agent](#adding-an-agent) for the full recipe: files, tools, MCP servers, identity, deployment.
+The dev/ scripts target development projects and require ENVIRONMENT=dev for remote
+operations. They do not change IAM. The companion template/terraform-iac-only branch
+contains the platform setup; review and apply its grants before deploying.
 
-## Which script to run
+## Set up the workstation
 
-Three workflows. Only the second needs Terraform, and only the third touches Gemini Enterprise.
+Install Python 3.12 or later, uv and the Google Cloud CLI. From this repository, run:
 
-**Working on an agent locally** — no cloud deployment, no Terraform:
-
-```bash
-uv run --group dev python dev/run_local.py --agent <agent>
-```
-
-Reads `dev/.env.local`, runs the agent in-process against real Google Cloud APIs using your own credentials. Delegated tools cannot be fully exercised this way, because there is no Gemini Enterprise session to forward a user token.
-
-**Preparing a project** — once, before the first deployment:
-
-```bash
-terraform apply                                        # the other branch: APIs, IAM, observability
-uv run --group dev python dev/bootstrap_dev.py         # optional: BigQuery sample fixture
-```
-
-Only `terraform apply` is required. `release_dev.py` runs the project preflight itself, so `bootstrap_dev.py` is worth running for the BigQuery fixture or to check the project before deploying anything.
-
-**Deploying an agent** — whenever its code or configuration changes:
-
-```bash
-uv run --group dev python dev/release_dev.py --agent <agent>
-```
-
-That runs preflight → package → deploy → register, and updates the existing Agent Engine rather than creating a second one when the agent has been deployed before. `--skip-register` stops after deployment.
-
-Run the steps separately when you want just one:
-
-| Step | Script | Creates |
-|---|---|---|
-| package | `package_agent.py` | the deterministic `.tar.gz` |
-| deploy | `deploy_dev.py` | a new Agent Engine, and the agent's runtime parameter |
-| update | `update_dev.py` | replaces the code in an Agent Engine that already exists |
-| register | `register_agent.py` | the authorization and the Gemini Enterprise agent |
-
-`deploy_dev.py` creates a new Agent Engine every time it runs, so use `update_dev.py` to change one that already exists. Deploying alone does not make an agent visible in Gemini Enterprise — registration does.
-
-## Repository layout
-
-```text
-agents/                     one independently deployable ADK application each
-├── auth_reference_agent/   reference for both authentication patterns
-│   └── src/auth_reference_agent/
-│       ├── agent.py        agent construction only
-│       ├── config.py       bootstrap values resolved once at import
-│       └── tools/          one module per tool
-│           ├── bigquery_query.py        BigQuery as the signed-in user
-│           ├── storage_objects.py       Cloud Storage as the agent
-│           └── runtime_config_status.py active runtime configuration
-├── bigquery_mcp_agent/     tools served by a remote MCP server, not written here
-│   └── src/bigquery_mcp_agent/
-│       ├── agent.py
-│       ├── config.py
-│       └── tools/
-│           ├── bigquery_mcp.py          BigQuery via Google's managed server
-│           └── runtime_config_status.py
-└── basic_assistant/        minimal agent; the shape to copy for a new one
-    └── src/basic_assistant/
-        ├── agent.py
-        ├── config.py
-        └── tools/
-
-packages/
-└── gemini_shared/          runtime behaviour every agent shares, by concern
-    ├── auth/               which identity a call is made with
-    │   ├── delegated.py    Gemini Enterprise delegated user token
-    │   └── tokens.py       read an access token out of a credential
-    ├── config/             what the agent is configured to do
-    │   ├── bootstrap.py    the small env contract read at process start
-    │   ├── runtime_config.py  live config from Parameter Manager, local fallback
-    │   └── runtime_agent.py   per-request instruction and model resolution
-    ├── connectors/         clients for Google Cloud services
-    │   └── cloud_storage.py   Cloud Storage under the runtime's own identity
-    └── mcp/                remote MCP servers over Streamable HTTP
-        ├── mcp_auth/       how to authenticate to any MCP server
-        │   ├── toolset.py  build a toolset from a server URL
-        │   └── headers.py  send the signed-in user's token to that server
-        └── mcp_google_cloud/  one folder per server; add mcp_<name> beside it
-            ├── servers.py     Google's endpoints, scopes and tool lists
-            └── toolsets.py    ready-made toolsets for those servers
-
-dev/                        developer tooling; never deployed with an agent
-├── .env.local.example      local execution settings
-├── .env.dev.example        developer sandbox deployment settings
-│
-│   run these:
-├── run_local.py            run an agent on this workstation
-├── bootstrap_dev.py        prepare the project once: APIs, bucket, fixture
-├── package_agent.py        build the deterministic archive
-├── deploy_dev.py           create the Agent Engine and its runtime parameter
-├── update_dev.py           update that same Agent Engine in place
-├── register_agent.py       publish it into a Gemini Enterprise app
-├── release_dev.py          package, deploy and register in one command
-│
-│   imported by the above, never run directly:
-├── common.py               agent registry and shared helpers
-├── bootstrap.py            project, API, bucket and parameter preflight
-└── bigquery_fixture.py     optional sample data for the delegated tool
-
-tests/                      lint and behaviour checks for the above
-pyproject.toml              workspace, dependencies and lint configuration
-```
-
-Each folder under `agents/` deploys on its own. Inside one: `agent.py` constructs, `config.py` resolves bootstrap values once, one module per tool under `tools/`. Shared behavior goes in `packages/gemini_shared`; domain logic stays in the agent.
-
-Two rules follow from how ADK works:
-
-- **Tool schemas are code.** ADK builds the declaration from the signature, type hints and docstring. No docstring, no description.
-- **Prompts are not code.** `instruction` is a callable reading live config per request. Authored in the agent's Parameter Manager parameter, delivered from there, set locally by `AGENT_INSTRUCTION`. No agent package holds prompt text.
-
-## Before first use
-
-Install Python 3.12+, `uv` and the Google Cloud CLI.
-
-For local Google Cloud access:
-
-```bash
-gcloud auth application-default login
-```
-
-For remote developer deployment configure both CLI authentication and ADC:
-
-```bash
+~~~bash
+uv sync --all-packages --group dev
 gcloud auth login
 gcloud auth application-default login
-```
+~~~
 
-Install and validate the workspace:
+The CLI uses the first login. Python clients use Application Default Credentials (ADC)
+from the second. Local execution needs ADC; the deployment preflight checks both.
 
-```bash
-uv sync --all-packages --group dev
+Run the checks before deploying:
+
+~~~bash
 uv run --group dev ruff format --check .
 uv run --group dev ruff check .
 uv run --group dev pytest
-```
+~~~
 
-`ruff` enforces Python 3.12 syntax, PEP 8, import order, bug-prone constructs and security checks. These run in CI and are the contract; this README is not.
+These tests use mocks for cloud calls. They do not replace testing the deployed agent
+and its consent flow in Gemini Enterprise.
 
-## What Terraform owns
+## Run an agent locally
 
-Two repositories, and the split is what keeps agents independent of infrastructure.
+Copy dev/.env.local.example to dev/.env.local. Set the project and model, then write
+the local instructions in AGENT_INSTRUCTION.
 
-| | Terraform (`template/terraform-iac-only`) | Agent repository (`dev/`) |
+~~~bash
+uv run --group dev python dev/run_local.py --agent basic_assistant
+~~~
+
+Replace basic_assistant with another registered agent to run it. The local runner calls
+real model and service APIs, so usage can incur charges.
+
+Leave CONFIG_PARAMETER unset to read settings from the local environment. Both
+delegated agents need an authorization ID to construct their tools, but user
+authentication must be tested through Gemini Enterprise, which supplies the session
+token. Local ADC does not reproduce that flow. Cloud Storage calls made locally use
+your workstation credentials.
+
+## Deploy and register
+
+Prepare the project with the companion platform stack. Create or select a Gemini
+Enterprise app and copy dev/.env.dev.example to dev/.env.dev. Set:
+
+~~~text
+GOOGLE_CLOUD_PROJECT=<project-id>
+GOOGLE_CLOUD_LOCATION=us-central1
+DEV_STAGING_BUCKET=gs://<staging-bucket>
+ENVIRONMENT=dev
+GEMINI_ENTERPRISE_APP_ID=<engine-id>
+~~~
+
+Use the app's engine ID for GEMINI_ENTERPRISE_APP_ID. The scripts load .env files
+without overriding variables already set in the shell.
+
+~~~bash
+uv run --group dev python dev/release_dev.py --agent basic_assistant
+~~~
+
+The release checks prerequisites, builds an archive, deploys or updates the runtime,
+then registers it in the app. It chooses an update when dev/.state/ contains a saved
+resource for that agent. Keep this ignored state directory between releases.
+
+Use --skip-register to stop after deployment. Registration is also skipped when the
+app ID is empty. For a delegated agent, registration prints OAuth setup details if its
+authorization is missing. Complete the setup below, then rerun register_agent.py.
+You do not need to redeploy code just to register a runtime.
+
+| Script in dev/ | Effect |
+|---|---|
+| bootstrap_dev.py | Check the sandbox and optionally prepare BigQuery sample data. |
+| `package_agent.py --agent <name>` | Build an archive containing one agent and gemini_shared. |
+| `deploy_dev.py --agent <name>` | Create a new Agent Engine and save its resource name. |
+| `update_dev.py --agent <name>` | Update the saved runtime, or the DEV_REASONING_ENGINE override. |
+| `register_agent.py --agent <name>` | Create or update the app listing for the deployed runtime. |
+
+Run each with `uv run --group dev python dev/<script>`. deploy_dev.py creates a new
+runtime on every run; use update_dev.py for an existing runtime. Registration matches
+listings by display name, so keep that name stable when updating an existing listing.
+
+The preflight creates a missing runtime parameter and publishes changes to prompt.md.
+It can also enable missing APIs and create a staging bucket; both controls default to
+enabled. Project creation is disabled by default. Check the
+[developer controls](dev/README.md#sandbox-controls) before using a shared project.
+
+## Configure delegated OAuth
+
+Use a separate OAuth client and authorization for each delegated agent in this template.
+The defaults are `<package-name>-authz` for the authorization and
+`<package-name>-oauth-client-secret` for its secret.
+
+Configure the project's OAuth consent screen, including the test users and scopes
+needed for your test. In Google Auth Platform, create a **Web application** client with
+the name printed by register_agent.py. Add both callbacks used by this integration:
+
+~~~text
+https://vertexaisearch.cloud.google.com/static/oauth/oauth.html
+https://vertexaisearch.cloud.google.com/oauth-redirect
+~~~
+
+The authorization resource uses the first URI and the consent flow uses the second.
+A missing callback can cause redirect_uri_mismatch when the user authorizes the agent.
+
+Add the client IDs to dev/.env.dev, keyed by agent name:
+
+~~~text
+OAUTH_CLIENTS=auth_reference_agent=<client-id>,bigquery_mcp_agent=<other-client-id>
+AUTH_REFERENCE_AGENT_OAUTH_CLIENT_SECRET=<initial-secret>
+BIGQUERY_MCP_AGENT_OAUTH_CLIENT_SECRET=<initial-secret>
+~~~
+
+`<AGENT>_OAUTH_CLIENT_ID` overrides that agent's map entry. Variable prefixes use the
+package name in uppercase with hyphens replaced by underscores.
+
+~~~bash
+uv run --group dev python dev/register_agent.py --agent auth_reference_agent
+uv run --group dev python dev/register_agent.py --agent bigquery_mcp_agent
+~~~
+
+When the stored secret is missing, registration imports the initial secret into Secret
+Manager. Remove its raw value from .env.dev after a successful import. Existing stored
+secrets take precedence over environment values; rotate them in Secret Manager.
+
+Registration checks for a mismatched client ID and secret before creating an
+authorization. Existing authorizations are reused; rerunning registration does not
+change their OAuth settings. If the client or scopes change, review the authorization
+as a separate change and retest consent.
+
+Each agent declares delegated service scopes in AgentSpec.delegated_oauth_scopes.
+The BigQuery examples request the BigQuery scope plus the shared identity scopes.
+Agent Identity tools do not add delegated scopes.
+
+The OAuth client's name identifies it in the console. The consent screen's app name
+is what users see during sign-in.
+
+## Test the deployed agents
+
+Open an agent in Gemini Enterprise and send one of its starter prompts. For delegated
+tools, complete **Authorize** and confirm BigQuery returns data the signed-in user can
+access. Test another user with different permissions to check access boundaries.
+Signing in alone does not prove delegated API access works.
+
+For Cloud Storage, set agent_identity_bucket_name in the runtime parameter and grant
+the deployed Agent Identity access to that bucket through the approved IAM process.
+Call list_storage_objects and check its reported identity and returned objects.
+
+Use report_runtime_config to check the active parameter, revision and model. It returns
+configuration metadata and excludes secrets and prompt text.
+
+The optional BigQuery fixture provides five sample orders. Run bootstrap_dev.py to
+prepare it, or use a dataset the test user can already query.
+See [fixture settings](dev/README.md#bigquery-fixture).
+
+## Manage configuration
+
+| Setting | Location | How a change takes effect |
 |---|---|---|
-| Runs | once per project, then rarely | once per agent, whenever it changes |
-| Creates | APIs, IAM, Secret Manager, observability | Agent Engines, runtime parameters, authorizations, registrations |
-| Knows about agents | nothing | everything |
+| Model, instructions, log level and tool limits | Parameter Manager | After the runtime cache expires. |
+| Parameter address, model location, authorization ID and MCP endpoint | Runtime environment | Update the deployed runtime. |
+| OAuth client secret | Secret Manager | Update the stored version and review any existing authorization that uses it. |
+| Workstation settings | Ignored dev/.env.local and dev/.env.dev | Reload the process; shell variables take precedence. |
 
-**Terraform runs first**, because it grants the IAM everything else depends on: the developer's permission to deploy, and the project-wide roles every Agent Identity inherits. That grant targets a trust-domain principal set rather than named identities, so an agent deployed later picks it up with no apply.
+### Runtime settings
 
-**Terraform creates no Agent Engines.** It has no agent names, no source archives, no per-agent configuration. Adding an agent to this repository therefore never touches Terraform, and observability is project-wide and grouped by runtime id, so a new agent appears in the existing dashboard and alerts on its own.
+Each agent defaults to `<package-name>-config`. CONFIG_PARAMETER can override the name
+or select a full parameter/version resource. Unversioned addresses resolve to
+versions/latest. RuntimeConfig rejects unknown fields and invalid values.
 
-Everything an agent needs beyond that is created by the dev scripts at deploy time, including its Parameter Manager configuration and its Gemini Enterprise authorization. The only exception is its OAuth client, which no API can create.
+~~~json
+{
+  "config_revision": "example-v1",
+  "model": "<approved-model-id>",
+  "instruction": "Answer using the available tools. Ask when the request is unclear.",
+  "environment": "dev",
+  "log_level": "INFO",
+  "agent_identity_bucket_name": null,
+  "storage_object_limit": 10,
+  "bigquery_query_row_limit": 100
+}
+~~~
 
-## Configuration model
+Replace the model placeholder before publishing. Storage limits allow 1–100 objects;
+BigQuery row limits allow 1–10,000 rows. These limits apply to the custom tools.
+The remote MCP server controls its own tool behavior.
 
-Where a value lives decides what changing it costs.
+Settings are cached for CONFIG_REFRESH_SECONDS. After a successful load, a failed
+refresh retains the last valid settings for that same parameter and retries within
+30 seconds or the configured refresh interval, whichever is shorter. The first failed
+load raises an error. Switching parameters requires a successful read of the new one.
 
-| Configuration | Source | Cost of a change |
-|---|---|---|
-| Live app config | Parameter Manager | Picked up after the TTL. No redeploy |
-| Bootstrap config | Agent Engine env | Redeploy; can create a new revision |
-| Secrets | Secret Manager | Per-secret rotation |
-| Local dev config | `dev/.env.local`, `dev/.env.dev` | Workstation only |
+The instruction and model callbacks use this cache for each request. Publish a new
+parameter version to change live settings without redeploying code.
 
-Live config covers model, instruction, log level and query limits, validated by `gemini_shared.RuntimeConfig`. The MCP server URL is bootstrap, not live: the toolset is built at construction.
+### Prompt source
 
-The agent reads `CONFIG_PARAMETER` at `versions/latest`, cached for `CONFIG_REFRESH_SECONDS`. After one successful load, a failed refresh keeps the last-known-good config and retries.
+Edit `agents/<agent>/prompt.md` to maintain the prompt in version control. Deployment
+compares it with the live instruction and publishes a version if they differ, retaining
+the other settings. Prompt files are outside src/ and excluded from the runtime archive.
 
-`before_model_callback` re-reads the model each request, so a model change needs no deployment.
+For a live-only edit, publish the instruction directly in Parameter Manager. Also update
+prompt.md if you want to keep that edit: the next deployment publishes the repository
+prompt again. Local runs use AGENT_INSTRUCTION rather than loading prompt.md.
 
-Never put a live setting in bootstrap env as well.
+### Bootstrap settings
 
-## Bootstrap environment
+dev/common.py forwards these environment keys to the runtime:
 
-Remote deployments pass only the small bootstrap contract:
-
-```text
+~~~text
 CONFIG_PARAMETER
 CONFIG_PARAMETER_LOCATION
 CONFIG_REFRESH_SECONDS
 BOOTSTRAP_MODEL
 GEMINI_MODEL_LOCATION
-GEMINI_ENTERPRISE_AUTHORIZATION_ID   # agents using the delegated token
-MCP_SERVER_URL                       # agents using an MCP toolset
-```
-
-`dev/common.py` sends these through `RUNTIME_ENV_KEYS`. A new bootstrap variable must be added there or it never reaches the deployed agent.
-
-`GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` are used locally and are supplied by Agent Runtime when deployed. Do not add reserved Agent Runtime variables to the deployed env map.
-
-## Local execution
-
-Copy the local example:
-
-```bash
-cp dev/.env.local.example dev/.env.local
-```
-
-Fill the required values, then run:
-
-```bash
-uv run --group dev python dev/run_local.py --agent basic_assistant
-```
-
-or any other agent in `AGENTS`:
-
-```bash
-uv run --group dev python dev/run_local.py --agent auth_reference_agent
-uv run --group dev python dev/run_local.py --agent bigquery_mcp_agent
-```
-
-Local execution intentionally omits `CONFIG_PARAMETER`; the shared runtime reads live values directly from the local process environment.
-
-The delegated BigQuery tool itself requires a delegated Gemini Enterprise user token, so a direct local ADK invocation cannot fully reproduce that authorization path. The optional BigQuery fixture described below is created from the developer workstation with ADC and provides a real dataset/table for debugging and for the final deployed Gemini Enterprise end-to-end test.
-
-## First remote developer deployment
-
-Copy the remote example:
-
-```bash
-cp dev/.env.dev.example dev/.env.dev
-```
-
-The initial sequence is:
-
-```text
-Once per project:
-  1. configure gcloud + ADC
-  2. console: create the Gemini Enterprise app
-  3. console: configure the OAuth consent screen
-  4. apply the companion Terraform platform stack (APIs, IAM, observability)
-  5. fill dev/.env.dev deployment coordinates
-  6. optional: run bootstrap_dev.py for the BigQuery sample fixture
-
-Once per agent:
-  7. run tests/lint
-  8. package the agent
-  9. run deploy_dev.py: creates the Agent Engine and the agent's runtime parameter
- 10. console: create the agent's OAuth client, if it uses delegated auth
- 11. run register_agent.py: publishes it into a Gemini Enterprise app
-```
-
-Steps 2, 3 and 10 are console-only; nothing else in the flow is manual. Terraform comes at 4 because it grants the IAM the dev scripts and the deployed agents rely on; it is applied once and then rarely changes, and adding an agent never requires an apply. See [What Terraform owns](#what-terraform-owns).
-
-`release_dev.py --agent <name>` runs steps 8, 9 and 11 in one command, and performs the project preflight — auth, project, APIs, staging bucket — on the way. Step 6 is therefore optional: `bootstrap_dev.py` repeats that same preflight, and exists for the BigQuery fixture.
-
-Deploying an Agent Engine does not make it visible in Gemini Enterprise. Step 11 is what puts it on the Agents page and enables the delegated consent flow.
-
-Registration stops at step 10 with the exact client name, redirect URIs, scopes and variables to set; see [OAuth clients for delegated auth](#oauth-clients-for-delegated-auth). An agent with no delegated tools skips it entirely.
-
-### Greenfield: zero to three agents
-
-Starting from an empty project, in order.
-
-**1. Console, once.** Neither can be created from an API.
-
-- **Gemini Enterprise app.** Create one in the Gemini Enterprise console. Its **id** is what `GEMINI_ENTERPRISE_APP_ID` needs, and it is not the display name shown in the console header. List ids with:
-
-  ```bash
-  curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-       -H "X-Goog-User-Project: $PROJECT" \
-    "https://discoveryengine.googleapis.com/v1alpha/projects/$PROJECT/locations/global/collections/default_collection/engines" \
-    | python -c "import sys,json;[print(e['name'].split('/')[-1]) for e in json.load(sys.stdin).get('engines',[])]"
-  ```
-
-- **OAuth consent screen.** Under **APIs & Services > OAuth consent screen**. Required before any OAuth client can be created, and its App name is what every user sees on every consent prompt. See [Two names](#two-names-only-one-of-which-users-see).
-
-**2. Platform, once.**
-
-```bash
-gcloud auth login && gcloud auth application-default login
-cd ../<terraform-branch> && terraform init && terraform apply
-cp dev/.env.dev.example dev/.env.dev      # fill project, region, bucket, app id
-```
-
-`release_dev.py` runs the project preflight itself — auth, project, APIs, staging bucket — so `bootstrap_dev.py` is optional. Run it only for the BigQuery sample fixture, which is the one thing it does that nothing else does:
-
-```bash
-uv run --group dev python dev/bootstrap_dev.py
-```
-
-**3. The agent with no delegated auth.** One command, nothing manual:
-
-```bash
-uv run --group dev python dev/release_dev.py --agent basic_assistant
-```
-
-**4. The two delegated agents.** Each stops once, for its own OAuth client:
-
-```bash
-uv run --group dev python dev/release_dev.py --agent auth_reference_agent
-# stops, naming the client to create; add its id and secret to dev/.env.dev
-uv run --group dev python dev/release_dev.py --agent auth_reference_agent
-
-uv run --group dev python dev/release_dev.py --agent bigquery_mcp_agent
-# stops the same way, for a second client of its own
-uv run --group dev python dev/release_dev.py --agent bigquery_mcp_agent
-```
-
-Both client ids go in one keyed map:
-
-```text
-OAUTH_CLIENTS=auth_reference_agent=<id>,bigquery_mcp_agent=<other id>
-```
-
-So from empty to three agents: **five console actions** — the app, the consent screen, and one OAuth client per delegated agent — and **five commands**, four of which are the same `release_dev.py` invocation. Everything else, including each agent's Parameter Manager configuration and Gemini Enterprise authorization, is created for you.
-
-**5. Verify.** Open each agent in Gemini Enterprise and send a prompt. A delegated agent shows **Authorize** on first use; the token it receives is what its tools run as.
-
-Run the developer platform preflight:
-
-```bash
-uv run --group dev python dev/bootstrap_dev.py
-```
-
-The preflight is idempotent.
-
-| Resource | Existing | Missing |
-|---|---|---|
-| GCP project | Reuse | Stop by default; create only when `DEV_CREATE_PROJECT_IF_MISSING=true` |
-| Billing | Leave unchanged | Required only when the helper creates a project |
-| Required APIs | Reuse enabled APIs | Enable only missing APIs when allowed |
-| Dev staging bucket | Reuse | Create when `DEV_CREATE_STAGING_BUCKET_IF_MISSING=true` |
-| Optional BigQuery test fixture | Reuse and validate | Create/seed when enabled; otherwise skip/fail according to fixture flags |
-| Parameter Manager runtime config | Verify the agent's own parameter | Stop at deploy time and name the missing parameter |
-| IAM | Use existing grants | Never self-grant; fix through the appropriate platform/IAM process |
-
-Project creation is disabled by default because it affects organization placement, quota and billing.
-
-## Optional BigQuery developer fixture
-
-The delegated BigQuery tool needs queryable data, which a clean project lacks. The bootstrap can create a small dataset for it.
-
-Default behavior:
-
-```text
-DEV_PREPARE_BIGQUERY_FIXTURE=true
-DEV_CREATE_BIGQUERY_FIXTURE_IF_MISSING=true
-DEV_BIGQUERY_DATASET_ID=gemini_agent_template_dev
-DEV_BIGQUERY_TABLE_ID=sample_orders
-DEV_BIGQUERY_LOCATION=
-```
-
-On a fresh sandbox, `bootstrap_dev.py` enables the BigQuery API, creates the dataset/table when missing and inserts five deterministic sample order rows only when the table is empty. Existing non-empty fixture tables are not modified.
-
-The fixture is not an application dependency and is not production infrastructure. If the project already contains BigQuery data that the signed-in Gemini Enterprise test user can query, set:
-
-```text
-DEV_PREPARE_BIGQUERY_FIXTURE=false
-```
-
-The agent does not hardcode the fixture dataset or table. Its BigQuery discovery flow lists the datasets/tables visible to the delegated user, so an existing real development dataset can be used instead.
-
-The helper grants no IAM. Two identities need permissions already:
-
-- whoever runs `bootstrap_dev.py`: create and read the fixture resources
-- the signed-in Gemini Enterprise user: create query jobs and read the dataset
-
-Fix missing permissions through IAM, never by adding self-grant logic. Terraform does not create this dataset; it is developer test support.
-
-## Deterministic application packaging
-
-Build the deployment artifact:
-
-```bash
-uv run --group dev python dev/package_agent.py --agent <agent>
-```
-
-Output is `artifacts/<agent>.tar.gz`, gitignored. Timestamps and ownership are normalized and `requirements.txt` is generated, so unchanged source rebuilds to identical bytes.
-
-The archive holds only the selected agent and `gemini_shared`. Other agents are not bundled.
-
-## Developer-owned Agent Engine deployment
-
-Once the agent's runtime parameter exists:
-
-```bash
-uv run --group dev python dev/deploy_dev.py --agent <agent>   # create
-uv run --group dev python dev/update_dev.py --agent <agent>   # code or bootstrap changes
-```
-
-The Reasoning Engine resource is recorded under ignored `dev/.state/`.
-
-Parameter Manager changes need no update. A running agent picks them up after the TTL.
-
-## Gemini Enterprise registration
-
-Deployment and registration are separate. `deploy_dev.py` creates the Agent Engine; the agent only appears in a Gemini Enterprise app after it is registered:
-
-```bash
-uv run --group dev python dev/register_agent.py --agent basic_assistant
-```
-
-Set `GEMINI_ENTERPRISE_APP_ID` in `dev/.env.dev` to the app (engine) id. This is not the web app client id shown in the console URL.
-
-Registration is idempotent. An agent with the same display name is patched to point at the current Reasoning Engine rather than duplicated.
-
-Each agent's registration metadata — description, invocation description and starter prompts — lives in its `AgentSpec` in `dev/common.py`, so the registered listing stays in the repository rather than being maintained by hand in the console.
-
-Agents with delegated tools additionally need a Gemini Enterprise authorization, which triggers the user consent flow and forwards the resulting token to the agent. `register_agent.py` reuses the authorization when it already exists, and creates it otherwise.
-
-One authorization serves one agent: registering a second agent against an authorization already bound elsewhere fails with `is used by another agent`. Each agent therefore defaults to its own, named `<package-name>-authz`, so adding a delegated-auth agent needs no shared configuration change. `GEMINI_ENTERPRISE_AUTHORIZATION_ID` overrides that default for a single run.
-
-The authorization's OAuth scopes must cover everything that agent's delegated tools call.
-
-## OAuth clients for delegated auth
-
-Every delegated-auth agent needs **its own OAuth client**. Gemini Enterprise caches the user's consent per client, so two agents sharing one share a single grant: the second is handed a token it never consented to, every call fails with `401`, and no amount of re-consenting fixes it.
-
-OAuth clients cannot be created from the CLI or any API. This is the one manual step in the whole flow. Registration stops and prints the exact client name, redirect URIs, scopes and environment variables to use, all derived from the agent, so nothing has to be worked out by hand.
-
-In the console, under **APIs & Services > Credentials**, create a **Web application** client and add **both** redirect URIs:
-
-```text
-https://vertexaisearch.cloud.google.com/static/oauth/oauth.html
-https://vertexaisearch.cloud.google.com/oauth-redirect
-```
-
-Both are required. The authorization resource stores the first, but the live consent flow redirects to the second. A client with only the first is accepted when the authorization is created and then fails with `redirect_uri_mismatch` the moment a user clicks **Authorize**.
-
-Then put the id and secret in `dev/.env.dev` and run registration again:
-
-```text
-OAUTH_CLIENTS=<agent>=<client id>,<other agent>=<its client id>
-<AGENT>_OAUTH_CLIENT_SECRET=<client secret>
-```
-
-`OAUTH_CLIENTS` is keyed by agent name rather than positional, so adding or removing an agent cannot shift another onto the wrong client. The secret is copied into Secret Manager as `<package-name>-oauth-client-secret` on that run and read from there afterwards, so remove it from the file once it has run.
-
-Registration verifies that the secret actually belongs to the client id before writing the authorization. A mismatched pair is otherwise accepted at creation and only surfaces later as an endless consent loop, because the token exchange fails after the user has already approved.
-
-### Two names, only one of which users see
-
-| Name | Scope | Where it appears |
-|---|---|---|
-| OAuth client **Name** | one per client | the console credentials list |
-| OAuth consent screen **App name** | one per **project** | the "Sign in with Google" screen |
-
-Naming a client after its agent keeps the credentials list readable, but users always see the project's single consent screen App name. Google offers no way to vary it per client, so set it to something that makes sense for every agent in the project.
-
-## Identity model
-
-Three identities, never interchangeable:
-
-| Identity | Used by | Granted by |
-|---|---|---|
-| Developer ADC | `dev/` helpers on the workstation | Terraform: Agent Engine deploy, staging bucket, Parameter Manager read |
-| Agent Identity | the deployed runtime | Terraform, on the project principal set |
-| Delegated user token | tools and MCP calls acting as the user | Gemini Enterprise OAuth consent |
-
-Developer permissions do not transfer to the Agent Identity. Terraform pre-authorizes the principal set for non-sensitive roles such as Parameter Manager read; keep sensitive data access scoped to the individual agent.
-
-Delegated access stays user-scoped and inherits nothing from the Agent Identity.
-
-Developer helpers never create or modify IAM.
-
-## Authentication reference agent
-
-`auth_reference_agent` shows both patterns, using tools written here against the Google Cloud APIs:
-
-| Tool | Identity | Reaches |
-|---|---|---|
-| `list_storage_objects` | Agent Identity | Cloud Storage |
-| `query_bigquery` | delegated user token | BigQuery |
-
-Reaching BigQuery through a remote MCP server instead is a separate agent, `bigquery_mcp_agent`, so each agent demonstrates one way of obtaining its tools.
-
-The scheme, provider and registration live in `gemini_shared.auth.delegated`, shared by every agent.
-
-A deployed scheme arrives as a base `CustomAuthScheme`. ADK rehydrates it by matching `type_` against `CustomAuthScheme.__subclasses__()`, so the defining module must already be imported when a tool runs. Importing anything from `gemini_shared` does that.
-
-Unimported module:
-
-```text
-No auth provider registered for custom auth scheme
-```
-
-A new scheme must set a `type_` default; rehydration matches on that value.
-
-## Remote MCP servers
-
-An MCP server supplies tools the agent did not write. `bigquery_mcp_agent` uses Google's managed BigQuery server, so nothing is deployed:
-
-```python
-bigquery_mcp_toolset = bigquery_readonly_toolset(
-    authorization_id=GEMINI_ENTERPRISE_AUTHORIZATION_ID,
-    server_url=MCP_SERVER_URL,      # https://bigquery.googleapis.com/mcp
-)
-```
-
-Two sub-packages:
-
-- `mcp_auth/` authenticates to any MCP server. Names no server.
-- `mcp_google_cloud/` holds Google's URLs, scopes and tool lists. Add a server as `mcp_<name>/`.
-
-`mcp_auth/headers.py` sends `Authorization: Bearer <user token>` on every call, using the same delegated token as the BigQuery tool. The server enforces that user's IAM, so each user sees only their own data. The Agent Identity is not used here.
-
-The agent reaches BigQuery both ways on purpose. Write a tool when the logic is yours; use an MCP server when the tools already exist.
-
-[Google's managed endpoints](https://docs.cloud.google.com/mcp/supported-products) cover BigQuery, Cloud Run, Logging, Monitoring, Storage and Compute. `MCP_SERVER_URL` accepts any Streamable HTTP server. It is bootstrap env, not live config, because the toolset is built at construction.
-
-### tool_filter
-
-A client-side allowlist. ADK fetches the server's full tool list, keeps the names you list and discards the rest, so the model never sees the others:
-
-```python
-tool_filter=["list_dataset_ids"]    # 1 tool reaches the model
-tool_filter=None                    # all 6 do, including execute_sql
-```
-
-It stops the model from calling a tool. It does not revoke anything at the server: the user's IAM and the token's scopes still decide what a call may do.
-
-`bigquery_readonly_toolset` omits `execute_sql`, leaving the five read-only tools.
-
-### Scopes
-
-The delegated token needs the server's scope: `https://www.googleapis.com/auth/bigquery` or `.../auth/cloud-platform` for BigQuery. A missing scope fails at the tool call, not at startup, because `tools/list` is unauthenticated and `tools/call` is not.
-
-### Names
-
-`tool_name_prefix="bq_mcp"` yields `bq_mcp_list_dataset_ids`, keeping MCP tools distinct from local ones in the model's tool list and in traces.
-
-## Adding an agent
-
-Copy `agents/basic_assistant/` and change the names. Every file below is required; the recipe is complete as written.
-
-### 1. Package files
-
-`agents/<agent>/pyproject.toml` — add a dependency only if a tool imports it. `[mcp]` is required for MCP toolsets, `[agent-identity]` for Agent Identity.
-
-```toml
-[project]
-name = "<agent-name>"
-version = "0.1.0"
-requires-python = ">=3.12"
-dependencies = [
-  "gemini-shared",
-  "google-adk[extensions]==2.7.1",
-]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/<agent>"]
-```
-
-`src/<agent>/__init__.py`:
-
-```python
-from .agent import app, root_agent
-
-__all__ = ["app", "root_agent"]
-```
-
-`src/<agent>/config.py` — bootstrap values only, resolved once. Use `require_auth=True` when any tool uses the delegated token.
-
-```python
-from gemini_shared import get_bootstrap_settings
-
-BOOTSTRAP = get_bootstrap_settings()
-PROJECT_ID = BOOTSTRAP.project_id
-```
-
-`src/<agent>/agent.py` — construction only. No tool logic, no prompt text.
-
-```python
-root_agent = Agent(
-    name="<agent>",                        # unique; keep stable after registration
-    model=Gemini(
-        model=BOOTSTRAP.bootstrap_model,
-        client_kwargs={"location": BOOTSTRAP.model_location},
-    ),
-    description="<one line, shown in Gemini Enterprise>",
-    instruction=runtime_instruction,       # from Parameter Manager, per request
-    before_model_callback=apply_runtime_model,
-    tools=[...],
-)
-
-app = AdkApp(agent=root_agent, enable_tracing=True)   # Agent Runtime serves this
-```
-
-### 2. Add a tool
-
-One module per tool under `src/<agent>/tools/`, re-exported from `tools/__init__.py`. ADK builds the model-facing schema from the docstring and type hints. No docstring means no description.
-
-```python
-def report_order_status(order_id: str) -> dict[str, object]:
-    """Return the current status of one order.
-
-    Args:
-        order_id: The order identifier to look up.
-    """
-```
-
-Return JSON-serializable values. `date`, `Decimal` and `bytes` break the run; convert them first.
-
-To act as the signed-in user, wrap the function so ADK injects the credential:
-
-```python
-tool = AuthenticatedFunctionTool(
-    func=query_bigquery,                                  # takes credential: AuthCredential
-    auth_config=delegated_auth_config(GEMINI_ENTERPRISE_AUTHORIZATION_ID),
-)
-```
-
-### 3. Add an MCP server
-
-Google's managed servers need nothing deployed:
-
-```python
-from gemini_shared.mcp.mcp_google_cloud import bigquery_readonly_toolset
-
-toolset = bigquery_readonly_toolset(authorization_id=GEMINI_ENTERPRISE_AUTHORIZATION_ID)
-```
-
-Any other Streamable HTTP server:
-
-```python
+GEMINI_ENTERPRISE_AUTHORIZATION_ID
+MCP_SERVER_URL
+~~~
+
+Add new bootstrap keys to RUNTIME_ENV_KEYS if they must reach the deployed agent.
+The platform supplies the deployed project and runtime location; keep reserved runtime
+variables out of the forwarded map. The MCP URL is resolved when constructing the
+toolset, so changing it requires a runtime update.
+
+## Repository layout
+
+~~~text
+agents/<agent>/
+  prompt.md                  version-controlled instruction
+  pyproject.toml             agent dependencies and wheel settings
+  src/<agent>/
+    agent.py                 construct the Agent and AdkApp
+    config.py                resolve bootstrap settings
+    tools/                   tool implementations and shared-tool exports
+packages/gemini_shared/src/gemini_shared/
+  auth/                      delegated credential provider and token readers
+  config/                    bootstrap settings, live cache, callbacks and status tool
+  connectors/                shared Google Cloud clients
+  mcp/mcp_auth/              authenticated Streamable HTTP toolsets
+  mcp/mcp_google_cloud/      managed endpoints and BigQuery tool allowlist
+dev/                         local, packaging, deployment and registration scripts
+tests/                       import, validation and behavior tests
+~~~
+
+Each archive includes one agent and the shared package. Packaging excludes caches and
+bytecode, rejects symlinks and normalizes timestamps and ownership. Unchanged inputs
+produce identical archive bytes. Outputs go under ignored artifacts/; deployment state
+goes under ignored dev/.state/.
+
+## Add an agent
+
+1. Copy agents/basic_assistant/. Rename the package directory, project name in
+   pyproject.toml and wheel path. Set a stable agent name in agent.py.
+2. Write prompt.md. Keep instructions specific to the task and available tools.
+3. Add tools under tools/ and export them from tools/__init__.py. Keep tool logic
+   separate from agent construction. Share reusable behavior in gemini_shared.
+4. Add an AgentSpec to AGENTS in dev/common.py. Supply the package name, import module,
+   display name, source paths, deployment requirements and registration text.
+   For delegated tools, declare AUTHORIZATION_ID_ENV and the required service scopes.
+5. Add dependencies to the agent's pyproject.toml and deployment requirements.
+   Use the existing agents as examples for the agent-identity and mcp extras.
+6. Add the source directory to pytest's pythonpath in the root pyproject.toml, add an
+   import test and test the new tools. Registry-based tests include the agent automatically.
+7. Run uv sync --all-packages --group dev, lint and tests. Try the local runner, then
+   release the agent and test it in Gemini Enterprise.
+
+Keep runtime_instruction, apply_runtime_model and the AdkApp wrapper from the copied
+agent. Tool functions need type hints and short docstrings: ADK uses them to describe
+the tools to the model. Document arguments the model must supply and return
+JSON-compatible values. The BigQuery example converts dates, decimals and byte strings.
+
+### Choose tool authentication
+
+| Access needed | Implementation |
+|---|---|
+| A shared capability available through the agent | Use runtime credentials and grant Agent Identity access to the specific resource. |
+| Access limited to the signed-in user's permissions | Use a delegated session token. Configure the authorization and scopes for that service. |
+
+Developer ADC, deployed Agent Identity and delegated user tokens are separate
+credentials. Grant each only the access needed. Deployment scripts do not grant IAM.
+
+For custom delegated tools, use AuthenticatedFunctionTool with
+delegated_auth_config(authorization_id). See auth_reference_agent for the credential
+argument and BigQuery client construction. Importing gemini_shared registers the
+provider needed to rehydrate the auth scheme after deployment; preserve this import
+when reorganizing the package.
+
+### Connect an MCP toolset
+
+Use bigquery_readonly_toolset for the existing BigQuery example. To connect another
+Streamable HTTP server that accepts the configured delegated token:
+
+~~~python
 from gemini_shared.mcp.mcp_auth import delegated_mcp_toolset
 
 toolset = delegated_mcp_toolset(
     server_url=MCP_SERVER_URL,
     authorization_id=GEMINI_ENTERPRISE_AUTHORIZATION_ID,
-    tool_filter=["read_only_tool"],   # allowlist; omit and the model sees every server tool
+    tool_filter=["read_only_tool"],
     tool_name_prefix="ext",
 )
-```
+~~~
 
-Add the `mcp` extra to the agent's `pyproject.toml` and to its `requirements` in `dev/common.py`.
+Use the server's actual tool names and required OAuth scopes. Configure a compatible
+authorization provider for that service; a Google token is not valid for every MCP server.
 
-Used by more than one agent? Put the URL, scopes and tool list in `packages/gemini_shared/src/gemini_shared/mcp/mcp_<name>/`.
+Always supply an explicit allowlist for application toolsets. tool_filter=None exposes
+all tools returned by the server, including future additions. The BigQuery allowlist
+contains five read-only tools and excludes execute_sql. Filtering limits tools shown
+to the model; server-side permissions still control access.
 
-### 4. Choose the identity
+Headers use the current session token for each request. Tool descriptions are cached
+for five minutes by default. Keep shared endpoints, scopes and tool lists under
+gemini_shared/mcp/ when multiple agents use them.
 
-| Downstream access | Use | Needs |
-|---|---|---|
-| Same for all users | Agent Identity | Covered by the platform stack's project-wide roles |
-| Varies by user | Delegated token | Authorization id + OAuth scopes covering every call |
+## Code conventions
 
-Delegated tools and MCP servers share one token, so the authorization's scopes must cover both.
+Use Python 3.12-compatible code with type hints on shared functions. Ruff checks import
+order, PEP 8 rules and common correctness and security issues, with a 100-character
+line limit. Comments should explain constraints or decisions that the code does not.
 
-### 5. Register with the dev tooling
-
-Add an `AgentSpec` to `AGENTS` in `dev/common.py`. Without it the dev scripts cannot see the agent.
-
-```python
-"<agent>": AgentSpec(
-    package_name="<agent-name>",              # matches pyproject [project].name
-    module="<agent>.agent",
-    display_name="<Shown in Gemini Enterprise>",
-    extra_packages=(
-        "agents/<agent>/src/<agent>",
-        "packages/gemini_shared/src/gemini_shared",
-    ),
-    requirements=COMMON_REQUIREMENTS,          # + extras this agent imports
-    required_remote_bootstrap_env=(),           # (AUTHORIZATION_ID_ENV,) if delegated
-    registration_description="...",             # what it does
-    invocation_description="...",               # when to call it
-    starter_prompts=("...",),
-),
-```
-
-### 6. Configure and deploy
-
-Live settings (model, instruction, limits) go in the agent's own Parameter Manager parameter, `<package-name>-config`; bootstrap values go in the deployed env map. Never both. A delegated-auth agent likewise gets its own authorization, `<package-name>-authz`. Both names are derived from the spec, so no shared configuration changes and no Terraform apply is needed to add an agent.
-
-```bash
-uv run --group dev ruff format . && uv run --group dev ruff check . && uv run --group dev pytest
-uv run --group dev python dev/run_local.py --agent <agent>
-uv run --group dev python dev/release_dev.py --agent <agent>
-```
-
-`release_dev.py` packages, deploys and registers. Deploying alone does not make the agent visible in Gemini Enterprise; registration does.
-
-The runtime parameter is created on the first deployment, so nothing has to exist beforehand. A delegated-auth agent stops at registration until it has its own OAuth client, which is the only manual step; the message names everything to create. See [OAuth clients for delegated auth](#oauth-clients-for-delegated-auth).
-
-### 7. Extend the tests
-
-`tests/test_validation.py` parametrizes over `AGENTS`, so the new agent inherits the checks that every tool has a description and that the instruction resolves from runtime configuration as soon as its spec exists.
-
-Two places still name agents explicitly: add the agent's `src` directory to `pythonpath` in the root `pyproject.toml`, and add an import test to `tests/test_imports.py`.
-
-## Code standards
-
-- Python 3.12, PEP 8, `ruff` clean.
-- Constants and repeated config keys at module scope.
-- Type hints on shared functions; frozen slotted dataclasses.
-- Subprocesses: argument arrays, no shell, resolved executable path.
-- Writes only to ignored state/artifact paths or secure temp dirs.
-- External input and env values fail fast with actionable errors.
-- Shared logic in `gemini_shared` or `dev/common.py`; domain logic in the agent.
-- No `assert` in production control flow.
-- Never log credentials, secrets or delegated tokens.
-
-## Repository rules
-
-- No IAM mutation from application code.
-- No Terraform or shared infrastructure in this branch.
-- No committed `.env`, credentials or secrets.
-- No long-lived service-account keys.
-- No setting duplicated across `.env`, Parameter Manager and Terraform.
-- No QA or prod deployment from `dev/` helpers.
-- No hardcoded MCP URL in an agent. Use `mcp/mcp_<name>/` or bootstrap env.
-- No MCP toolset without `tool_filter`.
-- Test fixtures stay optional, bounded and out of shared infrastructure.
+Keep domain logic with its agent and reusable logic in the shared package. Pass
+subprocess arguments as a list without a shell. Validate external input before cloud
+operations. Never log tokens or secrets, commit credentials or .env files, or add IAM
+self-grants to application code. The dev/ workflow is limited to development projects.

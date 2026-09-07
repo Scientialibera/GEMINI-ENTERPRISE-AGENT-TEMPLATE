@@ -1,8 +1,4 @@
-"""Read the access token out of an ADK credential.
-
-Kept separate from the auth scheme so a caller that only needs the token, such
-as the MCP header provider, does not import the provider registration.
-"""
+"""Read access tokens from ADK credentials."""
 
 from __future__ import annotations
 

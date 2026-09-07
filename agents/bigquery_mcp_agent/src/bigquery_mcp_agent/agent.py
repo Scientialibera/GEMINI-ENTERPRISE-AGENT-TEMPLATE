@@ -1,9 +1,4 @@
-"""Agent whose data tools come from a remote MCP server rather than this repository.
-
-Google hosts the BigQuery MCP server, so nothing is deployed to get its tools.
-Each call carries the signed-in user's delegated token, which is what decides
-what the tools may read.
-"""
+"""Construct an agent using the managed BigQuery MCP server."""
 
 from __future__ import annotations
 
@@ -33,5 +28,5 @@ root_agent = Agent(
     ],
 )
 
-# Agent Runtime serves the AdkApp wrapper, not a bare Agent.
+# Expose the app to Agent Runtime.
 app = AdkApp(agent=root_agent, enable_tracing=True)

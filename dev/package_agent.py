@@ -89,7 +89,7 @@ def package_agent(agent_name: str, output: Path) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build a deterministic Agent Engine source archive for Terraform."
+        description="Build a deterministic source archive for one Agent Engine application."
     )
     parser.add_argument("--agent", required=True)
     parser.add_argument("--output")

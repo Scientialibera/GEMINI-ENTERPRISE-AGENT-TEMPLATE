@@ -13,6 +13,7 @@ from typing import Any
 
 import vertexai
 from dotenv import load_dotenv
+from environment import configured_value
 from vertexai.agent_engines import AdkApp
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +23,6 @@ STATE_DIR = DEV_DIR / ".state"
 DEV_ENVIRONMENT = "dev"
 ENVIRONMENT_LABEL = "dev"
 GCS_URI_PREFIX = "gs://"
-PLACEHOLDER_TOKENS = ("REPLACE", "<")
 
 VERTEX_API_VERSION = "v1beta1"
 
@@ -33,22 +33,16 @@ ENVIRONMENT_ENV = "ENVIRONMENT"
 CONFIG_PARAMETER_ENV = "CONFIG_PARAMETER"
 DEV_REASONING_ENGINE_ENV = "DEV_REASONING_ENGINE"
 AUTHORIZATION_ID_ENV = "GEMINI_ENTERPRISE_AUTHORIZATION_ID"
-# Keyed rather than positional: every entry names its agent, so adding or
-# removing one cannot shift another agent onto the wrong OAuth client.
+# Map each agent name to its OAuth client ID.
 OAUTH_CLIENTS_ENV = "OAUTH_CLIENTS"
 
-# An agent that reads the authorization id is, by definition, one whose tools
-# are handed a delegated user token: both the authenticated-tool path and the
-# MCP header provider take it as their argument. Referencing it is therefore
-# what marks an agent as needing its own OAuth client.
+# Source marker used to check the spec's delegated-auth declaration.
 DELEGATED_AUTH_MARKER = AUTHORIZATION_ID_ENV
 
-# Identity scopes every consent screen carries, regardless of what the agent
-# goes on to call.
+# Identity scopes included in each delegated authorization.
 IDENTITY_OAUTH_SCOPES = ("openid", "email", "profile")
 
-# Scopes for the Google services an agent's delegated tools can reach. Named
-# here so an agent declares a service rather than repeating a URL.
+# Service scopes requested by delegated tools.
 BIGQUERY_SCOPE = "https://www.googleapis.com/auth/bigquery"
 CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 CLOUD_STORAGE_READONLY_SCOPE = "https://www.googleapis.com/auth/devstorage.read_only"
@@ -66,7 +60,7 @@ RUNTIME_ENV_KEYS = (
     "BOOTSTRAP_MODEL",
     "GEMINI_MODEL_LOCATION",
     AUTHORIZATION_ID_ENV,
-    # Bound at construction, so it is bootstrap rather than live configuration.
+    # The toolset binds this endpoint at construction.
     "MCP_SERVER_URL",
 )
 
@@ -87,8 +81,7 @@ AUTH_REFERENCE_REQUIREMENTS = (
 )
 
 BIGQUERY_MCP_REQUIREMENTS = (
-    # The mcp extra pulls the client used to reach remote MCP servers. No
-    # BigQuery client library: the server owns the calls, not this agent.
+    # Install the remote MCP client.
     "google-adk[extensions,mcp]==2.7.1",
 )
 
@@ -101,10 +94,7 @@ class AgentSpec:
     extra_packages: tuple[str, ...]
     requirements: tuple[str, ...]
     required_remote_bootstrap_env: tuple[str, ...] = ()
-    # OAuth scopes the signed-in user consents to, beyond identity. These bound
-    # what this agent's delegated tools may reach, so an agent declares only the
-    # services it actually calls with the user's token. A tool using Agent
-    # Identity instead needs no scope here: it runs as the runtime, not the user.
+    # Service scopes beyond the identity scopes; exclude Agent Identity tools.
     delegated_oauth_scopes: tuple[str, ...] = ()
     # Gemini Enterprise registration metadata, used by register_agent.py.
     registration_description: str = ""
@@ -113,57 +103,27 @@ class AgentSpec:
 
     @property
     def config_parameter_id(self) -> str:
-        """Parameter Manager parameter holding this agent's live configuration.
-
-        Each agent reads its own parameter, so adding an agent to AGENTS does
-        not require editing shared configuration. CONFIG_PARAMETER in the
-        environment still wins when set, which keeps a one-off override
-        available without changing code.
-        """
+        """Default Parameter Manager name for this agent."""
         return f"{self.package_name}-config"
 
     @property
     def authorization_id(self) -> str:
-        """Gemini Enterprise authorization supplying this agent's delegated token.
-
-        Gemini Enterprise rejects an authorization that another agent already
-        uses, so agents cannot share one. Deriving the name per agent is what
-        allows a second delegated-auth agent to be registered without editing
-        shared configuration. GEMINI_ENTERPRISE_AUTHORIZATION_ID in the
-        environment still wins when set.
-        """
+        """Default Gemini Enterprise authorization name for this agent."""
         return f"{self.package_name}-authz"
 
     @property
     def uses_delegated_auth(self) -> bool:
-        """Whether this agent receives a delegated user token.
-
-        Declared in the spec, and independently detected from what the agent
-        imports by ``detect_delegated_auth``. The scripts check both, so an
-        agent that grows a delegated tool without updating its spec still gets
-        the client it needs rather than failing at the first user prompt.
-        """
+        """Whether the spec requires a delegated user token."""
         return AUTHORIZATION_ID_ENV in self.required_remote_bootstrap_env
 
     @property
     def oauth_client_name(self) -> str:
-        """Display name for this agent's OAuth client, shown in the console.
-
-        The scripts report this exact name when the client is missing, so the
-        one created by hand matches the one they expect.
-        """
+        """Suggested OAuth client name in the console."""
         return f"{self.display_name} ({ENVIRONMENT_LABEL})"
 
     @property
     def oauth_client_id_env(self) -> str:
-        """Per-agent override naming this agent's own OAuth client.
-
-        Gemini Enterprise caches the user's consent per OAuth client, so two
-        agents sharing a client share one grant and the second never receives a
-        token of its own. Each delegated-auth agent therefore needs its own
-        client. Prefer the keyed OAUTH_CLIENTS map; this remains for a one-off
-        override.
-        """
+        """Per-agent OAuth client ID override."""
         return f"{self.env_prefix}_OAUTH_CLIENT_ID"
 
     @property
@@ -173,13 +133,7 @@ class AgentSpec:
 
     @property
     def oauth_client_secret_env(self) -> str:
-        """Environment variable holding the raw client secret for a first run.
-
-        Set once in the gitignored dev/.env.dev after creating the console
-        client. Registration copies it into Secret Manager and reads it from
-        there afterwards, so the value does not have to stay on the
-        workstation.
-        """
+        """Environment variable for importing the initial client secret."""
         return f"{self.env_prefix}_OAUTH_CLIENT_SECRET"
 
     @property
@@ -199,12 +153,7 @@ class AgentSpec:
 
     @property
     def prompt_path(self) -> Path:
-        """File holding this agent's instruction.
-
-        The prompt is the agent's behaviour, so it is reviewed in the
-        repository like code. It is delivered through Parameter Manager rather
-        than packaged, which is what lets it change without a redeployment.
-        """
+        """Source prompt published to Parameter Manager during deployment."""
         return ROOT / "agents" / self.module.split(".")[0] / "prompt.md"
 
     def read_prompt(self) -> str:
@@ -224,13 +173,10 @@ AGENTS: dict[str, AgentSpec] = {
         ),
         requirements=COMMON_REQUIREMENTS,
         registration_description=(
-            "Minimal pro-code ADK agent. Reads its model and instruction from Parameter "
-            "Manager at request time, so live configuration changes take effect without "
-            "redeploying the runtime."
+            "Basic ADK assistant with model settings and instructions managed in Parameter Manager."
         ),
         invocation_description=(
-            "Use this agent to check the active runtime configuration of the pro-code "
-            "template, such as the published config revision or the model in use."
+            "Check the active configuration revision, parameter resource and model."
         ),
         starter_prompts=(
             "Report the active config revision and model.",
@@ -247,20 +193,14 @@ AGENTS: dict[str, AgentSpec] = {
         ),
         requirements=COMMON_REQUIREMENTS + AUTH_REFERENCE_REQUIREMENTS,
         required_remote_bootstrap_env=(AUTHORIZATION_ID_ENV,),
-        # Only BigQuery: the Cloud Storage tool runs as the Agent Identity, not
-        # as the user, so it needs no delegated scope.
+        # Storage uses Agent Identity and needs no delegated scope.
         delegated_oauth_scopes=(BIGQUERY_SCOPE,),
         registration_description=(
-            "Reference pro-code ADK agent for the two supported authentication patterns. "
-            "Agent Identity is used for agent-scoped access to Cloud Storage, while a "
-            "Gemini Enterprise delegated user token is used to query BigQuery under the "
-            "signed-in user's own permissions. Both tools are written in this repository "
-            "against the Google Cloud APIs."
+            "Read Cloud Storage with Agent Identity and query BigQuery with the signed-in "
+            "user's delegated credentials."
         ),
         invocation_description=(
-            "Use this agent to demonstrate agent authentication: report which identity the "
-            "runtime is using, read Cloud Storage as the agent itself, or query BigQuery as "
-            "the signed-in user."
+            "Inspect Cloud Storage objects or query BigQuery and check the identity used."
         ),
         starter_prompts=(
             "Which identity is this agent running as?",
@@ -281,16 +221,10 @@ AGENTS: dict[str, AgentSpec] = {
         # The MCP server authenticates this same token on every tool call.
         delegated_oauth_scopes=(BIGQUERY_SCOPE,),
         registration_description=(
-            "Pro-code ADK agent whose data tools come from Google's managed BigQuery MCP "
-            "server rather than from this repository. Nothing is deployed to obtain them, "
-            "the tool list is filtered to read-only operations, and each call carries the "
-            "signed-in user's delegated token."
+            "Explore BigQuery with read-only tools from Google's managed MCP server, "
+            "using the signed-in user's delegated credentials."
         ),
-        invocation_description=(
-            "Use this agent to explore BigQuery through a remote MCP server: list datasets "
-            "and tables, inspect their schemas, or run a read-only query as the signed-in "
-            "user."
-        ),
+        invocation_description="Discover BigQuery schemas and run read-only queries through MCP.",
         starter_prompts=(
             "List my BigQuery datasets using the MCP tools.",
             "Describe the schema of the sample orders table.",
@@ -307,12 +241,7 @@ def load_environment(filename: str) -> None:
 
 
 def oauth_client_id_for(agent_name: str, spec: AgentSpec) -> str:
-    """Return the OAuth client id configured for one agent.
-
-    Reads the keyed OAUTH_CLIENTS map, which names its agent in every entry so
-    that adding or removing an agent cannot shift another onto the wrong
-    client. The per-agent variable overrides it for a single run.
-    """
+    """Read the per-agent override, then the OAUTH_CLIENTS map."""
     override = os.getenv(spec.oauth_client_id_env, "").strip()
     if override:
         return override
@@ -331,11 +260,7 @@ def _parse_oauth_clients() -> dict[str, str]:
         if not entry:
             continue
         if "=" not in entry:
-            raise SystemExit(
-                f"{OAUTH_CLIENTS_ENV} entry '{entry}' is not agent=client_id. Every entry names "
-                "its agent, so that adding or removing an agent cannot shift another onto the "
-                "wrong client."
-            )
+            raise SystemExit(f"{OAUTH_CLIENTS_ENV} entry '{entry}' must use agent=client_id.")
         agent, _, client_id = entry.partition("=")
         agent, client_id = agent.strip(), client_id.strip()
         if agent in clients:
@@ -350,11 +275,7 @@ def _parse_oauth_clients() -> dict[str, str]:
 
 
 def detect_delegated_auth(spec: AgentSpec) -> bool:
-    """Report whether the agent's own modules reach the delegated-token reader.
-
-    Reads the agent's source rather than importing it, so this stays usable
-    before the bootstrap environment is complete.
-    """
+    """Check source for the authorization marker without importing the agent."""
     return any(
         DELEGATED_AUTH_MARKER in path.read_text(encoding="utf-8")
         for path in ROOT.glob(f"agents/{_package_dir(spec)}/**/*.py")
@@ -375,8 +296,7 @@ def get_agent_spec(agent_name: str) -> AgentSpec:
 
 
 def is_missing_or_placeholder(name: str) -> bool:
-    value = os.getenv(name, "").strip()
-    return not value or any(token in value for token in PLACEHOLDER_TOKENS)
+    return not configured_value(name)
 
 
 def require_dev_environment(
@@ -391,10 +311,7 @@ def require_dev_environment(
             f"'{DEV_ENVIRONMENT}'. Shared QA/prod deployment belongs to Terraform."
         )
 
-    # An agent defaults to its own parameter and its own authorization.
-    # Resolving them into the environment here keeps every later reader — the
-    # deployed env_vars, the prerequisite check, the registration call and
-    # gemini_shared itself — on the same values.
+    # Resolve per-agent defaults before building the runtime environment.
     if spec is not None:
         if require_parameter and is_missing_or_placeholder(CONFIG_PARAMETER_ENV):
             os.environ[CONFIG_PARAMETER_ENV] = spec.config_parameter_id
@@ -431,8 +348,7 @@ def validate_agent_remote_environment(spec: AgentSpec) -> None:
 
 
 def runtime_env() -> dict[str, str]:
-    # require_dev_environment resolves the agent's parameter into the
-    # environment before this runs.
+    # require_dev_environment must resolve per-agent defaults first.
     return {key: os.environ[key] for key in RUNTIME_ENV_KEYS if not is_missing_or_placeholder(key)}
 
 
@@ -456,12 +372,7 @@ def build_client(project_id: str, location: str, staging_bucket: str) -> vertexa
 
 @contextmanager
 def staged_extra_packages(spec: AgentSpec) -> Iterator[list[str]]:
-    """Yield flattened extra_package paths for upload.
-
-    The SDK preserves each path in the uploaded tar and the runtime extracts it
-    at the container root, so a src-layout package must be staged flat to be
-    importable by name.
-    """
+    """Stage packages under flat names and restore the working directory on exit."""
     with tempfile.TemporaryDirectory(prefix="agent-deploy-") as temp_dir:
         staged_root = Path(temp_dir)
         staged: list[str] = []

@@ -1,8 +1,4 @@
-"""Google's managed MCP servers, as a shared asset.
-
-Endpoints and tool lists live here so no agent hardcodes a URL. Authentication
-comes from ``mcp_auth``, which knows nothing about these servers.
-"""
+"""Endpoints and toolsets for Google's managed MCP servers."""
 
 from .servers import (
     BIGQUERY,

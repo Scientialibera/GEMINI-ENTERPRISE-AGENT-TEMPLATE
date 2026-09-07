@@ -1,10 +1,4 @@
-"""BigQuery tools from Google's managed remote MCP server.
-
-The tools are defined by the server rather than by this repository, and each
-call carries the signed-in user's delegated token, so the user's own IAM decides
-what the server may reach. The endpoint and read-only tool list are a shared
-asset in ``gemini_shared.mcp.mcp_google_cloud``.
-"""
+"""Configure read-only BigQuery MCP tools with delegated user authentication."""
 
 from __future__ import annotations
 

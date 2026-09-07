@@ -1,8 +1,4 @@
-"""Build the Authorization header an MCP server receives.
-
-``McpToolset`` calls the header provider on every tool call, so the header is
-built per request and a token is never cached across users.
-"""
+"""Build MCP headers per request to keep tokens scoped to the current user."""
 
 from __future__ import annotations
 
@@ -18,11 +14,7 @@ AUTHORIZATION_HEADER = "Authorization"
 def delegated_bearer_headers(
     authorization_id: str,
 ) -> Callable[[ReadonlyContext], dict[str, str]]:
-    """Return a header provider that sends the signed-in user's token.
-
-    The MCP server then applies that user's own permissions, so two users
-    calling the same tool see only the data each is entitled to.
-    """
+    """Build a header provider using the current user's session token."""
 
     def provider(readonly_context: ReadonlyContext) -> dict[str, str]:
         token = read_session_token(readonly_context.state, authorization_id)

@@ -5,11 +5,12 @@ import sys
 import tarfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 DEV_DIR = ROOT / "dev"
 PACKAGE_MODULE_PATH = DEV_DIR / "package_agent.py"
-# The shared sub-packages are listed so a nested module cannot silently be
-# dropped from the archive.
+# Check that nested shared modules reach the archive.
 EXPECTED_ARCHIVE_MEMBERS = {
     "requirements.txt",
     "basic_assistant",
@@ -22,6 +23,7 @@ EXPECTED_ARCHIVE_MEMBERS = {
     "gemini_shared/config/__init__.py",
     "gemini_shared/config/bootstrap.py",
     "gemini_shared/config/runtime_config.py",
+    "gemini_shared/config/tools.py",
     "gemini_shared/mcp/__init__.py",
     "gemini_shared/mcp/mcp_auth/__init__.py",
     "gemini_shared/mcp/mcp_auth/toolset.py",
@@ -42,14 +44,17 @@ def _load_package_module():
         sys.path.remove(str(DEV_DIR))
 
 
-def test_package_is_deterministic_and_has_expected_layout(tmp_path: Path) -> None:
+@pytest.mark.parametrize("agent", ["basic_assistant", "auth_reference_agent", "bigquery_mcp_agent"])
+def test_package_is_deterministic_and_has_expected_layout(tmp_path: Path, agent: str) -> None:
     module = _load_package_module()
-    first = module.package_agent("basic_assistant", tmp_path / "first.tar.gz")
-    second = module.package_agent("basic_assistant", tmp_path / "second.tar.gz")
+    first = module.package_agent(agent, tmp_path / "first.tar.gz")
+    second = module.package_agent(agent, tmp_path / "second.tar.gz")
 
     assert first.read_bytes() == second.read_bytes()
 
     with tarfile.open(first, mode="r:gz") as archive:
         members = {member.name for member in archive.getmembers()}
 
-    assert EXPECTED_ARCHIVE_MEMBERS.issubset(members)
+    expected = {name.replace("basic_assistant", agent) for name in EXPECTED_ARCHIVE_MEMBERS}
+    assert expected.issubset(members)
+    assert {name.split("/")[0] for name in members} == {"requirements.txt", agent, "gemini_shared"}
