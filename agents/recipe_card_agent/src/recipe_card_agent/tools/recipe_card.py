@@ -11,6 +11,8 @@ from .card_template import load_recipes, render_deck
 
 PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 UNSAFE_NAME = re.compile(r"[^a-z0-9]+")
+# Authenticated browser download; the viewer still needs read access.
+CONSOLE_URL_PREFIX = "https://storage.cloud.google.com"
 
 
 def render_recipe_card(recipe_json: str) -> dict[str, object]:
@@ -51,17 +53,15 @@ def render_recipe_card(recipe_json: str) -> dict[str, object]:
 
     created = ensure_bucket(PROJECT_ID, OUTPUT_BUCKET, OUTPUT_BUCKET_LOCATION)
     deck = render_deck(data, PROJECT_ID)
-    uri = upload_bytes(
-        PROJECT_ID,
-        OUTPUT_BUCKET,
-        f"{slug}/{slug}-recipe-cards.pptx",
-        deck,
-        PPTX_CONTENT_TYPE,
-    )
+    object_name = f"{slug}/{slug}-recipe-cards.pptx"
+    uri = upload_bytes(PROJECT_ID, OUTPUT_BUCKET, object_name, deck, PPTX_CONTENT_TYPE)
     return {
         "bucket": OUTPUT_BUCKET,
         "bucket_created": created,
         "recipe_count": len(recipes),
         "size_bytes": len(deck),
         "deck_uri": uri,
+        # A gs:// URI cannot be opened in a browser. This one can, by anyone the
+        # bucket's IAM already allows, so it is the link a person is given.
+        "deck_url": f"{CONSOLE_URL_PREFIX}/{OUTPUT_BUCKET}/{object_name}",
     }

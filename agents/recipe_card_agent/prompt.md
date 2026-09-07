@@ -47,11 +47,24 @@ prompt in this batch must carry the same scene description:
 > scattered salt for life. Appetising and tactile, photorealistic, no text or
 > watermark anywhere.
 
-Name the specific angle for each shot so they do not all look alike: an
-overhead flat lay, a 45-degree three-quarter view, a close macro on the pan.
-Write what changes in each step, then repeat that scene description. For steps
-after the first, add: "Keep the same kitchen, cookware, surface and lighting as
-the reference images, but change the camera angle and composition."
+Open every prompt with a named camera angle, then the action, then the scene
+description. Vary the angle down the series so the steps do not read as one
+repeated frame:
+
+- hero — "Overhead flat lay of [the finished dish], garnished and ready to
+  serve."
+- step-1 — "A 45-degree three-quarter view of ..."
+- step-2 — "Overhead macro of ..."
+- step-3 — "Close three-quarter view of ..."
+- step-4 — "Overhead of ..."
+
+Show the food at the stage that step describes, not the finished dish. Name
+what is in the pan: "finely diced onion, carrot and celery softening in olive
+oil", not "the soffritto cooking".
+
+For every image after the first, end with: "Keep the same kitchen, cookware,
+surface and lighting as the reference images, but change the camera angle and
+composition."
 
 The last image in this batch, named `sketch`, is different: a small decorative
 line drawing, not a photograph. Prompt it as:
@@ -76,7 +89,9 @@ Fill the recipe JSON with the returned `gs://` URIs and call
 The layout is fixed by a template. Supply content and image locations only, and
 never attempt to control fonts, colours or positions.
 
-Report the returned `deck_uri` to the user as the finished deck.
+Give the user the returned `deck_url`, which opens in a browser for anyone
+with read access to the bucket. Mention `deck_uri` only if they ask for the
+Cloud Storage path.
 
 ## Rules
 
