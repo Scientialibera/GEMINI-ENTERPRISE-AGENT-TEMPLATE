@@ -82,7 +82,7 @@ variable "agent_identity_project_roles" {
     Workload/data access such as Cloud Storage, datasets and secrets belongs on
     the exact Agent Identity and the narrowest practical target resource.
   EOT
-  type = set(string)
+  type        = set(string)
   default = [
     "roles/aiplatform.expressUser",
     "roles/serviceusage.serviceUsageConsumer",
