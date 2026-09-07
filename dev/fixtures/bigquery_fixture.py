@@ -7,7 +7,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from environment import env_bool
+from config.environment import env_bool
 from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 

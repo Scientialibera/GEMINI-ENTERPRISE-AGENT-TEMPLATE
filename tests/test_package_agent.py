@@ -9,7 +9,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 DEV_DIR = ROOT / "dev"
-PACKAGE_MODULE_PATH = DEV_DIR / "package_agent.py"
+PACKAGE_MODULE_PATH = DEV_DIR / "deploy" / "package_agent.py"
 # Check that nested shared modules reach the archive.
 EXPECTED_ARCHIVE_MEMBERS = {
     "requirements.txt",

@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Runnable directly as well as imported by release_dev.py, so dev/ has to be
+# on sys.path either way: running this file puts only its own folder there.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import os
 
-from bigquery_fixture import (
+from common import ROOT, load_environment, require_dev_environment
+from fixtures.bigquery_fixture import (
     BIGQUERY_API_SERVICE,
     bigquery_fixture_enabled,
     prepare_bigquery_fixture,
 )
-from bootstrap import ensure_runtime_parameter, prepare_dev_platform
-from common import ROOT, load_environment, require_dev_environment
-from environment import configured_value
+
+from config.bootstrap import ensure_runtime_parameter, prepare_dev_platform
+from config.environment import configured_value
 
 
 def main() -> None:
@@ -37,7 +45,7 @@ def main() -> None:
     if configured_value("CONFIG_PARAMETER"):
         ensure_runtime_parameter(project_id)
     print("DEV_PREREQUISITES=ready")
-    print("NEXT_STEP=Run deploy_dev.py --agent <name>; it creates that agent's parameter.")
+    print("NEXT_STEP=Run deploy/deploy_dev.py --agent <name>; it creates that agent's parameter.")
 
 
 if __name__ == "__main__":

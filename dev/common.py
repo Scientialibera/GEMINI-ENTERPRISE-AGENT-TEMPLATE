@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any
 
 import vertexai
+from config.environment import configured_value
 from dotenv import load_dotenv
-from environment import configured_value
 from vertexai.agent_engines import AdkApp
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -426,8 +426,8 @@ def load_resource_name(agent_name: str) -> str:
     path = state_path(agent_name)
     if not path.exists():
         raise SystemExit(
-            f"No local dev state found for {agent_name}. Run deploy_dev.py first "
-            f"or set {DEV_REASONING_ENGINE_ENV}."
+            f"No local dev state found for {agent_name}. Run deploy/deploy_dev.py "
+            f"first or set {DEV_REASONING_ENGINE_ENV}."
         )
     payload = json.loads(path.read_text(encoding="utf-8"))
     resource_name = payload.get("reasoning_engine")

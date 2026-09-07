@@ -45,7 +45,11 @@ select = ["E", "F", "I", "UP", "B", "S", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]
-"dev/bootstrap.py" = ["S603"]
+"dev/config/bootstrap.py" = ["S603"]
 # S105 flags the environment variable name that holds the OAuth client secret
 # and the public Google token endpoint. Neither is a credential value.
-"dev/register_agent.py" = ["S105"]
+"dev/register/register_agent.py" = ["S105", "E402"]
+# E402: these scripts run directly as well as being imported, so they put dev/
+# on sys.path before importing anything from it.
+"dev/deploy/*.py" = ["E402"]
+"dev/config/bootstrap_dev.py" = ["E402"]

@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Runnable directly as well as imported by release_dev.py, so dev/ has to be
+# on sys.path either way: running this file puts only its own folder there.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import argparse
 import gzip
 import os

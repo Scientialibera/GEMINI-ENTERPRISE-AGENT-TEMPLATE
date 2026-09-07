@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import os
 
-from bootstrap import ensure_dev_prerequisites
 from common import (
     ROOT,
     get_agent_spec,
@@ -13,8 +12,9 @@ from common import (
     require_dev_environment,
     state_path,
 )
-from package_agent import package_agent
-from register_agent import APP_ENGINE_ID_ENV, register_agent
+from config.bootstrap import ensure_dev_prerequisites
+from deploy.package_agent import package_agent
+from register.register_agent import APP_ENGINE_ID_ENV, register_agent
 
 ARTIFACTS_DIR = ROOT / "artifacts"
 
@@ -46,11 +46,11 @@ def main() -> None:
     already_deployed = state_path(args.agent).exists()
     print("STEP=update" if already_deployed else "STEP=deploy")
     if already_deployed:
-        from update_dev import update_agent
+        from deploy.update_dev import update_agent
 
         resource_name = update_agent(args.agent, project_id, location, staging_bucket, spec)
     else:
-        from deploy_dev import deploy_agent
+        from deploy.deploy_dev import deploy_agent
 
         resource_name = deploy_agent(args.agent, project_id, location, staging_bucket, spec)
     print(f"REASONING_ENGINE={resource_name}")

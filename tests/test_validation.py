@@ -27,10 +27,10 @@ from google.cloud import bigquery
 
 DEV = Path(__file__).resolve().parents[1] / "dev"
 sys.path.insert(0, str(DEV))
-bootstrap = importlib.import_module("bootstrap")
-fixture = importlib.import_module("bigquery_fixture")
+bootstrap = importlib.import_module("config.bootstrap")
+fixture = importlib.import_module("fixtures.bigquery_fixture")
 common = importlib.import_module("common")
-packaging = importlib.import_module("package_agent")
+packaging = importlib.import_module("deploy.package_agent")
 sys.path.remove(str(DEV))
 
 # Cover newly registered agents automatically.
@@ -372,8 +372,8 @@ def test_every_agent_has_a_prompt(agent):
 def test_release_resolves_agent_defaults(monkeypatch, tmp_path, agent, already_deployed):
     monkeypatch.syspath_prepend(str(DEV))
     release = importlib.import_module("release_dev")
-    deploy = importlib.import_module("deploy_dev")
-    update = importlib.import_module("update_dev")
+    deploy = importlib.import_module("deploy.deploy_dev")
+    update = importlib.import_module("deploy.update_dev")
     spec = common.get_agent_spec(agent)
     monkeypatch.setenv("ENVIRONMENT", "dev")
     monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
@@ -453,7 +453,7 @@ def test_runtime_status_resets_when_switching_to_local(monkeypatch):
 
 @pytest.mark.parametrize("raw", ["true", "1", " YES ", "on", "false", "0", " NO ", "off"])
 def test_dev_boolean_parsing(monkeypatch, raw):
-    from environment import env_bool
+    from config.environment import env_bool
 
     monkeypatch.setenv("DEV_TEST_FLAG", raw)
     expected = raw.strip().lower() in {"true", "1", "yes", "on"}
@@ -461,7 +461,7 @@ def test_dev_boolean_parsing(monkeypatch, raw):
 
 
 def test_dev_boolean_defaults_and_invalid_values(monkeypatch):
-    from environment import env_bool
+    from config.environment import env_bool
 
     assert env_bool("DEV_TEST_FLAG", True) is True
     assert env_bool("DEV_TEST_FLAG", False) is False
@@ -473,7 +473,7 @@ def test_dev_boolean_defaults_and_invalid_values(monkeypatch):
 
 @pytest.mark.parametrize("raw", ["", " ", "REPLACE_WITH_ID", "<project>"])
 def test_dev_placeholder_parsing(monkeypatch, raw):
-    from environment import configured_value
+    from config.environment import configured_value
 
     monkeypatch.setenv("DEV_TEST_VALUE", raw)
     assert configured_value("DEV_TEST_VALUE") == ""
@@ -481,7 +481,7 @@ def test_dev_placeholder_parsing(monkeypatch, raw):
 
 
 def test_dev_configured_value_is_stripped(monkeypatch):
-    from environment import configured_value
+    from config.environment import configured_value
 
     monkeypatch.setenv("DEV_TEST_VALUE", " real-value ")
     assert configured_value("DEV_TEST_VALUE") == "real-value"

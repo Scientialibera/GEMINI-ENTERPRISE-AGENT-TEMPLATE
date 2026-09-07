@@ -8,7 +8,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 DEV_DIR = ROOT / "dev"
-MODULE_PATH = DEV_DIR / "bigquery_fixture.py"
+MODULE_PATH = DEV_DIR / "fixtures" / "bigquery_fixture.py"
 
 
 def _load_module():

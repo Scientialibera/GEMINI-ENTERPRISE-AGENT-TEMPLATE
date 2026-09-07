@@ -86,11 +86,11 @@ You do not need to redeploy code just to register a runtime.
 
 | Script in dev/ | Effect |
 |---|---|
-| bootstrap_dev.py | Check the sandbox and optionally prepare BigQuery sample data. |
-| `package_agent.py --agent <name>` | Build an archive containing one agent and gemini_shared. |
-| `deploy_dev.py --agent <name>` | Create a new Agent Engine and save its resource name. |
-| `update_dev.py --agent <name>` | Update the saved runtime, or the DEV_REASONING_ENGINE override. |
-| `register_agent.py --agent <name>` | Create or update the app listing for the deployed runtime. |
+| config/bootstrap_dev.py | Check the sandbox and optionally prepare BigQuery sample data. |
+| `deploy/package_agent.py --agent <name>` | Build an archive containing one agent and gemini_shared. |
+| `deploy/deploy_dev.py --agent <name>` | Create a new Agent Engine and save its resource name. |
+| `deploy/update_dev.py --agent <name>` | Update the saved runtime, or the DEV_REASONING_ENGINE override. |
+| `register/register_agent.py --agent <name>` | Create or update the app listing for the deployed runtime. |
 
 Run each with `uv run --group dev python dev/<script>`. deploy_dev.py creates a new
 runtime on every run; use update_dev.py for an existing runtime. Registration matches
@@ -131,8 +131,8 @@ BIGQUERY_MCP_AGENT_OAUTH_CLIENT_SECRET=<initial-secret>
 package name in uppercase with hyphens replaced by underscores.
 
 ~~~bash
-uv run --group dev python dev/register_agent.py --agent auth_reference_agent
-uv run --group dev python dev/register_agent.py --agent bigquery_mcp_agent
+uv run --group dev python dev/register/register_agent.py --agent auth_reference_agent
+uv run --group dev python dev/register/register_agent.py --agent bigquery_mcp_agent
 ~~~
 
 When the stored secret is missing, registration imports the initial secret into Secret
@@ -165,7 +165,7 @@ Call list_storage_objects and check its reported identity and returned objects.
 Use report_runtime_config to check the active parameter, revision and model. It returns
 configuration metadata and excludes secrets and prompt text.
 
-The optional BigQuery fixture provides five sample orders. Run bootstrap_dev.py to
+The optional BigQuery fixture provides five sample orders. Run config/bootstrap_dev.py to
 prepare it, or use a dataset the test user can already query.
 See [fixture settings](dev/README.md#bigquery-fixture).
 

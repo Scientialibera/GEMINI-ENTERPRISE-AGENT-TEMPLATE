@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Runnable directly as well as imported by release_dev.py, so dev/ has to be
+# on sys.path either way: running this file puts only its own folder there.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import argparse
 import os
 
-from bootstrap import ensure_dev_prerequisites
 from common import (
     ROOT,
     AgentSpec,
@@ -12,43 +18,39 @@ from common import (
     deployment_config,
     get_agent_spec,
     load_environment,
+    load_resource_name,
     require_dev_environment,
-    save_state,
     staged_extra_packages,
     validate_agent_remote_environment,
 )
-from vertexai import types
+from config.bootstrap import ensure_dev_prerequisites
 
 
-def deploy_agent(
+def update_agent(
     agent_name: str,
     project_id: str,
     location: str,
     staging_bucket: str,
     spec: AgentSpec,
 ) -> str:
-    """Create a developer-owned Agent Engine and record its resource name."""
+    """Update the Agent Engine this developer already owns."""
     validate_agent_remote_environment(spec)
+    resource_name = load_resource_name(agent_name)
 
     client = build_client(project_id, location, staging_bucket)
     app = build_app(spec)
     with staged_extra_packages(spec) as extra_packages:
-        remote = client.agent_engines.create(
+        updated = client.agent_engines.update(
+            name=resource_name,
             agent=app,
-            config={
-                "display_name": f"{spec.display_name} [dev]",
-                **deployment_config(spec, staging_bucket, extra_packages),
-                "identity_type": types.IdentityType.AGENT_IDENTITY,
-            },
+            config=deployment_config(spec, staging_bucket, extra_packages),
         )
-    resource_name = remote.api_resource.name
-    save_state(agent_name, resource_name)
-    return resource_name
+    return updated.api_resource.name
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Create a developer-owned Agent Engine instance in dev."
+        description="Update an existing developer-owned Agent Engine instance in dev."
     )
     parser.add_argument("--agent", required=True)
     args = parser.parse_args()
@@ -59,8 +61,8 @@ def main() -> None:
     project_id, location, staging_bucket = require_dev_environment(spec=spec)
     ensure_dev_prerequisites(project_id, location, staging_bucket, spec)
 
-    resource_name = deploy_agent(args.agent, project_id, location, staging_bucket, spec)
-    print(f"DEPLOYED_DEV_RESOURCE={resource_name}")
+    resource_name = update_agent(args.agent, project_id, location, staging_bucket, spec)
+    print(f"UPDATED_DEV_RESOURCE={resource_name}")
 
 
 if __name__ == "__main__":
