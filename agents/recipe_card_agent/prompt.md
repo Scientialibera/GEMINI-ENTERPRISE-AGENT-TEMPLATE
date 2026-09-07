@@ -28,19 +28,37 @@ A canned or packaged item is shown in a plain unmarked container: crushed
 tomatoes in a plain metal can, milk in a clear glass jug, parmesan in a plain
 white bowl. Never name or depict a brand.
 
-**Then the hero and steps together, with `mode="sequential_reference"`.** Order
-them `hero`, `step-1`, `step-2`, and so on. The tool feeds each finished image
-into the next, so the pot, cookware, surface and lighting carry through the
-series without you passing images yourself. Every prompt in this batch must
-carry the same scene description:
+**Then the hero, steps and sketch together, with
+`mode="sequential_reference"`.** Order them `hero`, `step-1`, `step-2`, and so
+on, ending with `sketch`. The tool feeds each finished image into the next, so
+the cookware, surface and lighting carry through the series without you passing
+images yourself.
 
-> Overhead food photography for a recipe card. Bright natural daylight, white
-> marble countertop, navy linen napkin, unbranded stainless and stoneware
-> cookware. Warm, appetising, photorealistic, no text or watermark anywhere.
+This is editorial photography for a cooking magazine, not a snapshot. Every
+prompt in this batch must carry the same scene description:
 
+> Editorial food photography for a premium cooking magazine, shot on a 50mm
+> lens at f/2.8 with shallow depth of field. A bright, characterful kitchen:
+> honed white Carrara marble countertop with grey veining, warm brass fixtures,
+> pale oak cutting boards, a navy linen napkin, and unbranded stainless,
+> copper and cream stoneware cookware. Soft directional window light from the
+> left with gentle falloff and warm highlights. Rich saturated colour, crisp
+> texture on the food, shallow shadows, styled with a few loose herbs or
+> scattered salt for life. Appetising and tactile, photorealistic, no text or
+> watermark anywhere.
+
+Name the specific angle for each shot so they do not all look alike: an
+overhead flat lay, a 45-degree three-quarter view, a close macro on the pan.
 Write what changes in each step, then repeat that scene description. For steps
-after the first, add: "Match the cookware, surface, lighting and props of the
-reference images exactly."
+after the first, add: "Keep the same kitchen, cookware, surface and lighting as
+the reference images, but change the camera angle and composition."
+
+The last image in this batch, named `sketch`, is different: a small decorative
+line drawing, not a photograph. Prompt it as:
+
+> A delicate single-colour navy blue ink line drawing of [the dish's signature
+> ingredients], in the style of a vintage botanical engraving. Fine hatching,
+> no shading, no colour fill, isolated on a plain white background. No text.
 
 ## 3. Render the deck
 
@@ -48,8 +66,11 @@ Fill the recipe JSON with the returned `gs://` URIs and call
 `render_recipe_card` once.
 
 - `hero_image_path` is the hero image.
-- Each step's `image_path` is its matching `step-N` image.
+- Each step's `image_path` is its own `step-N` image. Every step gets a
+  different one; never point two steps at the same image.
 - Each ingredient's `image_path` is its `ingredient-<item>` image.
+- `decorative_image_path` and `variations_image_path` are both the `sketch`
+  image.
 - `footer_image_path` may reuse the hero.
 
 The layout is fixed by a template. Supply content and image locations only, and

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
@@ -780,22 +781,40 @@ def add_overview_slide(prs, recipe):
 # -----------------------------------------------------------------------------
 
 
+# A tip long enough to wrap needs a taller banner, or the second line is
+# clipped by the box drawn behind it.
+TIP_CHARS_PER_LINE = 92
+TIP_LINE_HEIGHT = 0.26
+TIP_VERTICAL_PADDING = 0.30
+
+# Floor for a step bullet line, below which the text stops being readable.
+MIN_BULLET_LINE_HEIGHT = 0.30
+
+
 def add_top_tip(slide, text):
-    add_box(slide, 0.34, 0.30, 9.22, 0.52, C["yellow2"], C["yellow2"], radius=True)
+    tip = f"Cooking Tip: {limit_text(text, 200)}"
+    lines = max(1, math.ceil(len(tip) / TIP_CHARS_PER_LINE))
+    box_h = lines * TIP_LINE_HEIGHT + TIP_VERTICAL_PADDING
+
+    add_box(slide, 0.34, 0.30, 9.22, box_h, C["yellow2"], C["yellow2"], radius=True)
     add_text(
         slide,
-        f"Cooking Tip: {limit_text(text, 130)}",
+        tip,
         0.53,
-        0.39,
+        0.30,
         8.85,
-        0.22,
+        box_h,
         font_face=HEAD_FONT,
         font_size=15.5,
         color=C["dark_blue"],
         bold=True,
+        valign="middle",
     )
-    add_rule(slide, 0.34, 0.92, 4.55, C["line"], 0.8)
-    add_rule(slide, 5.12, 0.92, 4.44, C["line"], 0.8)
+
+    rule_y = 0.30 + box_h + 0.10
+    add_rule(slide, 0.34, rule_y, 4.55, C["line"], 0.8)
+    add_rule(slide, 5.12, rule_y, 4.44, C["line"], 0.8)
+    return rule_y
 
 
 def add_step_block(slide, step, idx, x, y, w, h):
@@ -808,7 +827,7 @@ def add_step_block(slide, step, idx, x, y, w, h):
         w,
         0.42,
         font_face=HEAD_FONT,
-        font_size=18 if len(title) > 36 else 21,
+        font_size=17 if len(title) > 30 else 21,
         color=C["dark_blue"],
         bold=True,
         valign="top",
@@ -833,38 +852,30 @@ def add_step_block(slide, step, idx, x, y, w, h):
         placeholder="STEP IMAGE",
     )
 
+    # A dropped bullet is a lost cooking instruction, so every one is drawn and
+    # the type shrinks to fit instead. The floor keeps a step with an unusual
+    # number of instructions legible rather than merely present.
     bullets = split_instructions(step)
-    max_bullets = min(5, len(bullets))
-    line_h = 0.44 if len(bullets) > 4 else 0.50
+    available_h = h - 0.78
+    line_h = min(0.50, available_h / max(1, len(bullets)))
+    line_h = max(line_h, MIN_BULLET_LINE_HEIGHT)
+    font_size = 10.0 if line_h >= 0.44 else max(8.0, 10.0 * (line_h / 0.44))
     by = y + 0.58
 
-    for b in range(max_bullets):
+    for bullet in bullets:
         add_checkbox(slide, x, by + 0.035, 0.12)
         add_text(
             slide,
-            limit_text(bullets[b], 120),
+            limit_text(bullet, 160),
             x + 0.26,
             by - 0.02,
             text_w - 0.30,
             line_h,
-            font_size=10.0,
+            font_size=font_size,
             valign="top",
             margin=0.01,
         )
         by += line_h
-
-    if len(bullets) > max_bullets:
-        add_text(
-            slide,
-            f"+ {len(bullets) - max_bullets} more instruction(s).",
-            x + 0.26,
-            by,
-            text_w - 0.30,
-            0.18,
-            font_size=7.7,
-            color=C["muted"],
-            italic=True,
-        )
 
     add_rule(slide, x, y + h - 0.05, w, C["line"], 0.55)
 
@@ -933,19 +944,22 @@ def add_bottom_banner(slide, recipe, y):
 
 def add_steps_slide(prs, recipe, page_index, step_start, steps_on_page, total_step_pages):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_top_tip(
+    rule_y = add_top_tip(
         slide,
         recipe.get("cooking_tip")
         or "Reserve a little cooking liquid before draining. It helps the sauce coat evenly.",
     )
 
+    # The grid starts below the banner, which grows when the tip wraps.
+    top = rule_y + 0.18
+    row_two = top + 3.84
     blocks = [
-        (0.34, 1.10, 4.45, 3.60),
-        (5.18, 1.10, 4.38, 3.60),
-        (0.34, 4.94, 4.45, 3.60),
-        (5.18, 4.94, 4.38, 3.60),
+        (0.34, top, 4.45, 3.60),
+        (5.18, top, 4.38, 3.60),
+        (0.34, row_two, 4.45, 3.60),
+        (5.18, row_two, 4.38, 3.60),
     ]
-    add_vrule(slide, 4.98, 1.00, 7.65, C["line"], 0.75)
+    add_vrule(slide, 4.98, top - 0.10, 7.65, C["line"], 0.75)
 
     for i, step in enumerate(steps_on_page):
         add_step_block(slide, step, step_start + i, *blocks[i])
