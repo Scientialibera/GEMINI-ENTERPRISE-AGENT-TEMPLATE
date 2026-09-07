@@ -41,11 +41,15 @@ which is what allows agents to be added to the monorepo independently of infrast
 Organization and orgless projects use different trust-domain prefixes; configure exactly
 one through the provided variables.
 
-Common roles should be limited to runtime/platform basics such as model/quota use and
-Parameter Manager reads. Cloud Storage, dataset, secret and other workload-data access
-should target an individual Agent Identity at the narrowest practical resource scope.
-The companion dev helper can apply explicitly configured exact-agent project roles and
-Cloud Storage bucket bindings after deployment, once the Reasoning Engine ID exists.
+The baseline covers runtime/platform basics such as model/quota use, Parameter Manager
+reads and project-wide Cloud Storage object reads, which is what lets the reference
+agents run on a fresh project. Every role in it reaches every current and future
+runtime, so add one only when that is intended.
+
+Access to a particular bucket, dataset or secret should target an individual Agent
+Identity at the narrowest practical resource scope. The companion dev helper applies
+explicitly configured exact-agent project roles and Cloud Storage bucket bindings after
+deployment, once the Reasoning Engine ID exists.
 
 ## Terraform runner
 
