@@ -169,6 +169,7 @@ def test_apply_agent_identity_iam_targets_exact_principal(monkeypatch):
                 "gs://agent-bucket",
                 f"--member={PRINCIPAL}",
                 "--role=roles/storage.objectViewer",
+                "--condition=None",
                 "--project=test-project",
                 "--quiet",
             )
