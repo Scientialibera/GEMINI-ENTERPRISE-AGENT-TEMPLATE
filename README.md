@@ -27,7 +27,7 @@ Terraform manages:
 - required Google Cloud APIs
 - Secret Manager resources
 - developer deployment IAM
-- project-wide runtime IAM for every Agent Identity
+- baseline project-wide runtime IAM for every Agent Identity
 - Cloud Logging retention and Log Analytics for all agent runtimes
 - log-based metrics, dashboard and alerting
 
@@ -37,7 +37,9 @@ A separate foundation/bootstrap layer should manage project creation, billing as
 
 Terraform does not create Agent Engines, their runtime configuration, their Gemini Enterprise registration, or the Discovery Engine authorization used for delegated user consent.
 
-The agent repository owns all four, through `dev/deploy_dev.py` and `dev/register_agent.py`. That split is what makes the monorepo extensible: adding an agent is an entry in `AGENTS`, and it inherits this stack's IAM and observability without a Terraform change. Registration and the authorization are additionally unsuited to Terraform because the provider exposes no resource for either and the authorization requires an OAuth client secret that must not enter Terraform state.
+The agent repository owns those resources through its deployment and registration helpers. Adding an agent is an entry in `AGENTS`; the new runtime automatically receives its own Agent Identity and inherits this stack's baseline principal-set IAM and observability without a Terraform change. Registration and the authorization are additionally unsuited to Terraform because the provider exposes no resource for either and the authorization requires an OAuth client secret that must not enter Terraform state.
+
+Exact per-agent data access is also intentionally outside this shared stack because the Reasoning Engine ID does not exist until the agent is deployed. The companion agent repository can apply explicitly configured exact-Agent-Identity IAM after deployment when the caller already has IAM-administration permission on the target resource. Shared Terraform remains authoritative for baseline platform grants.
 
 Each agent reads its own Parameter Manager parameter, named after its package. The agent repository creates and publishes that parameter, so config changes never require an infrastructure change.
 
@@ -51,7 +53,7 @@ Confirm:
 4. A remote backend exists for shared environments.
 5. `terraform.tfvars.example` was copied and every applicable placeholder was replaced.
 6. Secret payloads are supplied outside `terraform.tfvars`.
-7. Developer and Agent Identity roles match the intended environment.
+7. Developer and baseline Agent Identity roles match the intended environment.
 
 Validate and apply:
 
@@ -69,12 +71,13 @@ This stack is applied once per project and then changes rarely. Deploying an age
 
 | Configuration | Authoritative source | Runtime delivery | Change behavior |
 |---|---|---|---|
-| Infrastructure and IAM | Terraform | Google Cloud resources | Terraform apply |
+| Shared infrastructure and baseline IAM | Terraform | Google Cloud resources | Terraform apply |
+| Exact per-agent workload IAM | Agent repository dev IAM helper / approved IAM process | IAM binding on the specific Agent Identity and resource | No Terraform apply |
 | Live non-secret settings | Agent repository | Parameter Manager | No Agent Runtime revision |
 | Process/bootstrap settings | Agent repository `dev/.env.dev` | Agent Engine env | New Agent Runtime revision possible |
 | Secrets | Approved secret process + Terraform metadata | Secret Manager | Secret-specific behavior |
 
-Only the first and last rows belong to this stack. Runtime and bootstrap configuration moved to the agent repository so that adding an agent is not an infrastructure change.
+Shared infrastructure, baseline IAM and managed secret metadata belong to this stack. Runtime, bootstrap and exact-agent workload IAM live with the agent deployment lifecycle so adding an agent does not require a second platform Terraform apply.
 
 Each agent reads its own parameter at `<parameter>/versions/latest` and refreshes on a cache interval, so a published configuration change takes effect without redeploying the runtime.
 
@@ -90,13 +93,17 @@ Terraform can grant configured developers/groups:
 
 The staging bucket may be created by the developer-sandbox bootstrap; this workload stack only grants access to the configured bucket.
 
+If the same developer or automation identity also runs the per-agent IAM helper, it needs separate permission to update IAM on each configured target resource. Deployment permission alone does not imply IAM-administration permission.
+
 ## Developer-created Agent Identities
 
 A developer-created Agent Engine receives a separate Agent Identity. Developer ADC permissions do not transfer to it.
 
-This stack pre-authorizes every Agent Runtime Agent Identity in the project for common non-sensitive roles, using Google's project Agent Identity principal-set format. Because the grant targets the trust domain rather than a named identity, an agent deployed later inherits it with no Terraform change. That is what keeps the agent repository extensible.
+This stack pre-authorizes every Agent Runtime Agent Identity in the project for common platform roles, using Google's project Agent Identity principal-set format. Because the grant targets the trust domain rather than a named identity, an agent deployed later inherits it with no Terraform change. That is what keeps the agent repository extensible.
 
-Use an organization ID for organization projects, or `developer_agent_identity_orgless=true` for orgless projects. Do not grant sensitive datasets, buckets or production data through the all-agent principal set; grant those to the specific Agent Identity that requires them.
+Use an organization ID for organization projects, or `developer_agent_identity_orgless=true` for orgless projects. The common role list should remain limited to platform plumbing such as Agent Platform use, Service Usage and Parameter Manager reads. Do not put Cloud Storage, BigQuery dataset, Secret Manager payload or other workload-data access into the all-agent principal set unless every current and future runtime is intended to receive it.
+
+After a runtime exists, the agent repository can derive its exact Agent Identity principal from the project, location and Reasoning Engine ID. Explicitly configured per-agent roles can then be granted at the narrowest practical resource scope without a second platform Terraform apply. If no per-agent IAM is configured, the runtime still has its unique Agent Identity and only receives the baseline principal-set grants.
 
 ## Secret handling
 
@@ -114,7 +121,7 @@ Keep these principals separate:
 
 1. Developer identity: local execution and developer-owned deployment.
 2. Terraform execution identity: infrastructure changes; normally GitHub OIDC -> WIF -> dedicated Terraform service account.
-3. Agent Identity: runtime identity for each deployed Agent Engine, covered by this stack's principal-set roles.
+3. Agent Identity: unique runtime identity for each deployed Agent Engine, covered by this stack's baseline principal-set roles and optionally exact per-agent workload grants.
 4. Agent caller: user/group/workload allowed to query a Reasoning Engine.
 5. Delegated end user: user-scoped OAuth token used by delegated tools.
 6. Agent Platform service agent: Google-managed identity used for platform operations.
@@ -123,13 +130,13 @@ Do not reuse the Terraform execution service account as an Agent Identity.
 
 ## Agent source boundary
 
-Terraform never sees agent source. The agent repository builds a deterministic `.tar.gz` with `dev/package_agent.py` and deploys it with `dev/deploy_dev.py`, which owns the entrypoint, requirements and bootstrap environment for that agent.
+Terraform never sees agent source. The agent repository builds a deterministic `.tar.gz` with `dev/deploy/package_agent.py` and deploys it with `dev/deploy/deploy_dev.py`, which owns the entrypoint, requirements and bootstrap environment for that agent.
 
 ## Multi-agent safety
 
-This stack is applied once per project and carries no per-agent resources, so agents cannot collide in it. Observability is project-wide and groups by runtime id, which means a new agent appears in the existing dashboard and alert without configuration.
+This stack is applied once per project and carries no per-agent runtime resources, so agents cannot collide in it. Observability is project-wide and groups by runtime id, which means a new agent appears in the existing dashboard and alert without configuration.
 
-Agents that need more than the shared roles are a deliberate exception: grant those on the specific resource, to the specific Agent Identity, rather than widening the all-agent principal set.
+Agents that need more than the shared baseline roles should receive exact-Agent-Identity grants on the specific resource rather than widening the all-agent principal set. The companion dev IAM helper supports that pattern after the runtime exists.
 
 For broader platform-wide resources such as WIF, Terraform runner IAM or remote state, use the foundation/bootstrap layer.
 
@@ -157,7 +164,8 @@ The root files in this branch are a compact platform template. Split them into e
 | Agent bootstrap env (agent repository) | No | Yes/possible |
 | Agent source archive (agent repository) | No | Yes |
 | Adding an agent to the monorepo | No | n/a |
-| IAM, APIs, secrets, observability | Yes | No |
+| Exact per-agent workload IAM after deploy | No | No |
+| Shared baseline IAM, APIs, secrets, observability | Yes | No |
 
 ## Terraform standards
 
