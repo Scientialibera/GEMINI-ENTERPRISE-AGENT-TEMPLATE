@@ -76,18 +76,17 @@ variable "developer_agent_identity_orgless" {
 
 variable "agent_identity_project_roles" {
   description = <<-EOT
-    Project roles granted to every Agent Identity in this project, through a
-    trust-domain principal set rather than per-agent bindings. This is what lets
-    a developer add an agent to the repository and deploy it without a Terraform
-    change. An agent needing more than these roles is a deliberate exception and
-    should be granted separately on the specific resource it reads.
+    Baseline project roles granted to every Agent Identity in this project,
+    through a trust-domain principal set rather than per-agent bindings. Keep
+    this list limited to common platform plumbing required by every runtime.
+    Workload/data access such as Cloud Storage, datasets and secrets belongs on
+    the exact Agent Identity and the narrowest practical target resource.
   EOT
-  type        = set(string)
+  type = set(string)
   default = [
     "roles/aiplatform.expressUser",
     "roles/serviceusage.serviceUsageConsumer",
     "roles/parametermanager.parameterAccessor",
-    "roles/storage.objectViewer",
   ]
 }
 
