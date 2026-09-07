@@ -241,6 +241,7 @@ def apply_agent_identity_iam(
                     bucket_uri,
                     f"--member={principal}",
                     f"--role={role}",
+                    "--condition=None",
                     f"--project={project_id}",
                     "--quiet",
                 )
