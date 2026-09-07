@@ -10,8 +10,10 @@ deploy them to Agent Engine and register them in Gemini Enterprise.
 | bigquery_mcp_agent | Explore BigQuery through Google's managed MCP server using the user's delegated token. |
 
 The dev/ scripts target development projects and require ENVIRONMENT=dev for remote
-operations. They do not change IAM. The companion template/terraform-iac-only branch
-contains the platform setup; review and apply its grants before deploying.
+operations. The companion template/terraform-iac-only branch contains shared platform
+setup and baseline IAM. Deployment never grants IAM to the caller itself. An optional
+per-agent IAM helper can apply explicitly configured roles to the exact Agent Identity
+after its runtime exists, but only when the caller already has permission to change IAM.
 
 ## Set up the workstation
 
@@ -76,8 +78,9 @@ uv run --group dev python dev/release_dev.py --agent basic_assistant
 ~~~
 
 The release checks prerequisites, builds an archive, deploys or updates the runtime,
-then registers it in the app. It chooses an update when dev/.state/ contains a saved
-resource for that agent. Keep this ignored state directory between releases.
+applies any explicitly configured Agent Identity IAM and then registers the runtime in
+the app. It chooses an update when dev/.state/ contains a saved resource for that agent.
+Keep this ignored state directory between releases.
 
 Use --skip-register to stop after deployment. Registration is also skipped when the
 app ID is empty. For a delegated agent, registration prints OAuth setup details if its
@@ -88,8 +91,9 @@ You do not need to redeploy code just to register a runtime.
 |---|---|
 | config/bootstrap_dev.py | Check the sandbox and optionally prepare BigQuery sample data. |
 | `deploy/package_agent.py --agent <name>` | Build an archive containing one agent and gemini_shared. |
-| `deploy/deploy_dev.py --agent <name>` | Create a new Agent Engine and save its resource name. |
+| `deploy/deploy_dev.py --agent <name>` | Create a new Agent Engine with Agent Identity and save its resource name. |
 | `deploy/update_dev.py --agent <name>` | Update the saved runtime, or the DEV_REASONING_ENGINE override. |
+| `iam/apply_agent_identity_iam.py --agent <name>` | Apply configured IAM roles to the exact deployed Agent Identity. |
 | `register/register_agent.py --agent <name>` | Create or update the app listing for the deployed runtime. |
 
 Run each with `uv run --group dev python dev/<script>`. deploy_dev.py creates a new
@@ -112,12 +116,15 @@ UI-only means the current Google/Gemini Enterprise workflow requires a console a
 |---|---|---|---|---|
 | Access to the target GCP project | Developer / deployment identity | Cloud or platform admin | IAM, normally through the companion Terraform platform stack | No |
 | Create/update Agent Engine resources | Developer / deployment identity | Cloud or platform admin | IAM grant; `dev/deploy/deploy_dev.py` and `dev/deploy/update_dev.py` consume it | No |
+| Create the Agent Identity for a runtime | Agent Engine deployment | Google Agent Engine | `identity_type=AGENT_IDENTITY` in `dev/deploy/deploy_dev.py`; Google provisions the identity | No |
+| Baseline IAM shared by every Agent Identity | All deployed runtimes | Cloud/platform admin | Terraform principal-set bindings in the companion platform branch | No |
+| Extra project-scoped IAM for one Agent Identity | One deployed runtime | IAM admin or authorized automation identity | `<AGENT>_AGENT_IDENTITY_PROJECT_ROLES` consumed by `dev/iam/apply_agent_identity_iam.py` | No |
+| Cloud Storage access for one Agent Identity | One deployed runtime | Storage/IAM admin or authorized automation identity | `<AGENT>_AGENT_IDENTITY_STORAGE_BUCKET_ROLES` consumed by `dev/iam/apply_agent_identity_iam.py`; bucket scope preferred | No |
 | Read/create the agent runtime parameter and publish versions | Developer deployment flow; runtime reads it | Cloud or platform admin grants access; dev tooling creates agent-owned parameters | IAM plus `dev/config/bootstrap.py` / deployment preflight | No |
 | Enable required Google Cloud APIs | Project | Cloud or platform admin, or developer with Service Usage permission | Terraform or `dev/config/bootstrap_dev.py` when enabled | No |
 | Create/use the developer staging bucket | Developer deployment flow | Cloud or platform admin, or developer with Storage permission | Terraform/existing bucket or `dev/config/bootstrap_dev.py` when enabled | No |
 | Create the optional BigQuery fixture dataset/table | Developer | Data/cloud admin, or developer with BigQuery create permissions | `dev/config/bootstrap_dev.py`; unnecessary when suitable test data already exists | No |
 | Query BigQuery through delegated auth | Signed-in Gemini Enterprise user | Data/IAM admin | User IAM on the target BigQuery project/dataset/table; the agent cannot elevate it | No |
-| Read a Cloud Storage bucket with Agent Identity | Deployed Agent Identity | Data/IAM admin | IAM grant on the specific bucket/resource; deployment scripts do not self-grant it | No |
 | Gemini Enterprise application | Registration flow | Gemini Enterprise administrator | Create/select the app in the Gemini Enterprise admin UI; copy its engine ID to `.env.dev` | Yes for initial app creation |
 | OAuth consent screen / test-user configuration | Delegated-auth agents | Google Cloud / Google Auth Platform administrator | Google Auth Platform console | Yes |
 | Dedicated OAuth client ID and client secret for each delegated agent | Registration flow | Google Cloud / Google Auth Platform administrator | Create a Web application client in Google Auth Platform with both documented redirect URIs | Yes |
@@ -125,10 +132,55 @@ UI-only means the current Google/Gemini Enterprise workflow requires a console a
 | Gemini Enterprise authorization resource | Delegated-auth agent | Registration flow using its caller permissions | `dev/register/register_agent.py` creates/reuses the per-agent authorization | No |
 | Gemini Enterprise agent listing / registration | End users | Registration flow using its caller permissions | `dev/register/register_agent.py` creates/updates the app listing | No |
 
-The dev scripts consume existing IAM; they never grant themselves new IAM. If a
-programmable step fails for lack of permission, fix the grant through the approved
-platform/IAM path rather than adding privilege-escalation logic to the application
-scripts.
+The deployment helpers never grant IAM to the developer or otherwise self-elevate. The
+Agent Identity IAM helper only grants the roles explicitly configured for the selected
+runtime. Its caller must already have permission to update the target project's or
+bucket's IAM policy. If that permission is missing, have an administrator run the IAM
+helper or grant through the approved platform process. The helper rejects roles/owner
+and roles/editor.
+
+### Per-agent Agent Identity IAM
+
+Every remote runtime is created with Agent Identity, including agents with no additional
+resource permissions. The identity is therefore independent of the optional IAM config.
+
+Environment variable names are derived from the agent package name:
+
+~~~text
+<AGENT>_AGENT_IDENTITY_ID=
+<AGENT>_AGENT_IDENTITY_PROJECT_ROLES=
+<AGENT>_AGENT_IDENTITY_STORAGE_BUCKET_ROLES=
+~~~
+
+For `auth_reference_agent` the prefix is `AUTH_REFERENCE_AGENT`.
+`*_AGENT_IDENTITY_ID` is optional and acts only as an assertion. Normally leave it
+empty; the IAM helper derives the exact principal from the deployed Reasoning Engine.
+If supplied and it does not match the runtime's actual Agent Identity, the helper fails
+before changing IAM.
+
+Project roles are comma-separated:
+
+~~~text
+AUTH_REFERENCE_AGENT_AGENT_IDENTITY_PROJECT_ROLES=roles/logging.logWriter
+~~~
+
+Cloud Storage grants should normally be bucket-scoped:
+
+~~~text
+AUTH_REFERENCE_AGENT_AGENT_IDENTITY_STORAGE_BUCKET_ROLES=gs://agent-test-bucket=roles/storage.objectViewer
+~~~
+
+Multiple bucket bindings use semicolons between buckets and `|` between roles on the
+same bucket. `deploy_dev.py` and `update_dev.py` invoke the helper automatically after
+the runtime exists. To change only IAM later:
+
+~~~bash
+uv run --group dev python dev/iam/apply_agent_identity_iam.py --agent auth_reference_agent
+~~~
+
+If no per-agent IAM settings are present, this helper makes no IAM calls. The runtime
+still has its unique Agent Identity and receives only the common project principal-set
+roles from Terraform.
 
 ## Configure delegated OAuth
 
@@ -187,9 +239,15 @@ tools, complete **Authorize** and confirm BigQuery returns data the signed-in us
 access. Test another user with different permissions to check access boundaries.
 Signing in alone does not prove delegated API access works.
 
-For Cloud Storage, set agent_identity_bucket_name in the runtime parameter and grant
-the deployed Agent Identity access to that bucket through the approved IAM process.
-Call list_storage_objects and check its reported identity and returned objects.
+For Cloud Storage, set agent_identity_bucket_name in the runtime parameter and configure
+a bucket-scoped binding for the exact runtime identity, for example:
+
+~~~text
+AUTH_REFERENCE_AGENT_AGENT_IDENTITY_STORAGE_BUCKET_ROLES=gs://agent-test-bucket=roles/storage.objectViewer
+~~~
+
+Rerun the release or only `dev/iam/apply_agent_identity_iam.py`, then call
+list_storage_objects and check its reported identity and returned objects.
 
 Use report_runtime_config to check the active parameter, revision and model. It returns
 configuration metadata and excludes secrets and prompt text.
@@ -267,6 +325,9 @@ The platform supplies the deployed project and runtime location; keep reserved r
 variables out of the forwarded map. The MCP URL is resolved when constructing the
 toolset, so changing it requires a runtime update.
 
+Agent Identity IAM variables are deployment-time controls only. They are intentionally
+not forwarded into the runtime environment.
+
 ## Repository layout
 
 ~~~text
@@ -283,7 +344,7 @@ packages/gemini_shared/src/gemini_shared/
   connectors/                shared Google Cloud clients
   mcp/mcp_auth/              authenticated Streamable HTTP toolsets
   mcp/mcp_google_cloud/      managed endpoints and BigQuery tool allowlist
-dev/                         local, packaging, deployment and registration scripts
+dev/                         local, packaging, deployment, IAM and registration scripts
 tests/                       import, validation and behavior tests
 ~~~
 
@@ -318,11 +379,13 @@ JSON-compatible values. The BigQuery example converts dates, decimals and byte s
 
 | Access needed | Implementation |
 |---|---|
-| A shared capability available through the agent | Use runtime credentials and grant Agent Identity access to the specific resource. |
+| A shared capability available through the agent | Use runtime credentials. Every remote runtime already has Agent Identity; configure exact-agent IAM only for the resources that agent needs. |
 | Access limited to the signed-in user's permissions | Use a delegated session token. Configure the authorization and scopes for that service. |
 
 Developer ADC, deployed Agent Identity and delegated user tokens are separate
-credentials. Grant each only the access needed. Deployment scripts do not grant IAM.
+credentials. Grant each only the access needed. The deployment scripts never grant IAM
+to the developer. Per-agent IAM is applied only when explicitly configured and only by
+a caller that already has permission to change the target IAM policy.
 
 For custom delegated tools, use AuthenticatedFunctionTool with
 delegated_auth_config(authorization_id). See auth_reference_agent for the credential
