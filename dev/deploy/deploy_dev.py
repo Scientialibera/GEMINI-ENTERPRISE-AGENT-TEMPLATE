@@ -24,6 +24,7 @@ from common import (
     validate_agent_remote_environment,
 )
 from config.bootstrap import ensure_dev_prerequisites
+from iam.apply_agent_identity_iam import apply_agent_identity_iam
 from vertexai import types
 
 
@@ -49,7 +50,10 @@ def deploy_agent(
             },
         )
     resource_name = remote.api_resource.name
+    # Persist first so an IAM failure does not cause a second runtime to be created
+    # on the next release attempt.
     save_state(agent_name, resource_name)
+    apply_agent_identity_iam(agent_name, project_id, resource_name, spec)
     return resource_name
 
 

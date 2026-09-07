@@ -1,8 +1,8 @@
 # Developer scripts
 
 Run these scripts from the repository root. Remote commands require ENVIRONMENT=dev
-and existing IAM grants. Follow the root [setup guide](../README.md) for authentication,
-OAuth client setup and runtime configuration.
+and existing deployment permissions. Follow the root [setup guide](../README.md) for
+authentication, OAuth client setup, Agent Identity IAM and runtime configuration.
 
 ~~~bash
 uv run --group dev python dev/run_local.py --agent basic_assistant
@@ -15,16 +15,17 @@ precedence. Both files and dev/.state/ are ignored by Git.
 
 ## Layout
 
-Scripts are grouped by what they do. release_dev.py runs the whole sequence, so
+Scripts are grouped by what they do. release_dev.py runs the normal sequence, so
 it and the local runner sit at the top level; the rest are the individual steps
 it calls, each also runnable on its own.
 
 ~~~text
 dev/
-  release_dev.py       preflight, package, deploy or update, then register
+  release_dev.py       preflight, package, deploy or update, IAM, then register
   run_local.py         run one agent on the workstation, no deployment
   common.py            agent registry, deployment settings, package paths, state
   deploy/              build an archive and create or update a runtime
+  iam/                 exact Agent Identity IAM after the runtime exists
   register/            publish a runtime into a Gemini Enterprise app
   config/              environment parsing and project preflight
   fixtures/            optional sample data for a dev sandbox
@@ -32,11 +33,12 @@ dev/
 
 | Script | Purpose |
 |---|---|
-| release_dev.py | Run preflight, package, deploy or update, then register. |
+| release_dev.py | Run preflight, package, deploy or update, optional Agent Identity IAM, then register. |
 | run_local.py | Run one agent against real APIs using workstation credentials. |
 | deploy/package_agent.py | Build an archive with one agent and the shared package. |
-| deploy/deploy_dev.py | Create a new runtime and save its resource name. |
+| deploy/deploy_dev.py | Create a new runtime with Agent Identity and save its resource name. |
 | deploy/update_dev.py | Update the runtime from saved state or DEV_REASONING_ENGINE. |
+| iam/apply_agent_identity_iam.py | Apply explicitly configured roles to the exact deployed Agent Identity. |
 | register/register_agent.py | Register the runtime and create a missing delegated authorization. |
 | config/bootstrap_dev.py | Check the sandbox and prepare optional BigQuery sample data. |
 
@@ -75,11 +77,67 @@ enabled by default; set their flags to false to require pre-existing resources.
 An empty staging location uses GOOGLE_CLOUD_LOCATION.
 
 The CLI account needs permission for enabled setup operations. Python clients use ADC
-for Parameter Manager and the fixture. The scripts reuse existing resources without
+for Parameter Manager and the fixture. Bootstrap reuses existing resources without
 assigning IAM or changing billing on an existing project.
 
-Use the companion Terraform stack for shared platform resources and IAM. Review its
-grants before deploying an agent with new resource-access requirements.
+Use the companion Terraform stack for shared platform resources and baseline IAM.
+Review its grants before deploying an agent with new resource-access requirements.
+
+## Agent Identity IAM
+
+Every remote Agent Engine is created with `identity_type=AGENT_IDENTITY`, so every
+deployed agent receives its own Google-managed Agent Identity even when no additional
+IAM is configured.
+
+Agent-specific IAM is optional and parameterized from the agent package name:
+
+~~~text
+<AGENT>_AGENT_IDENTITY_ID=
+<AGENT>_AGENT_IDENTITY_PROJECT_ROLES=
+<AGENT>_AGENT_IDENTITY_STORAGE_BUCKET_ROLES=
+~~~
+
+For `auth_reference_agent` these become:
+
+~~~text
+AUTH_REFERENCE_AGENT_AGENT_IDENTITY_ID=
+AUTH_REFERENCE_AGENT_AGENT_IDENTITY_PROJECT_ROLES=
+AUTH_REFERENCE_AGENT_AGENT_IDENTITY_STORAGE_BUCKET_ROLES=
+~~~
+
+`*_AGENT_IDENTITY_ID` is an optional assertion, not the source of identity. Normally
+leave it empty. The helper derives the exact principal from the deployed Reasoning
+Engine. If a value is supplied and does not match, the command stops before changing
+IAM.
+
+Project roles are comma-separated. Use them only when project scope is actually
+required:
+
+~~~text
+AUTH_REFERENCE_AGENT_AGENT_IDENTITY_PROJECT_ROLES=roles/logging.logWriter
+~~~
+
+Cloud Storage bindings are resource-scoped and use
+`gs://bucket=role|role;gs://other=role`:
+
+~~~text
+AUTH_REFERENCE_AGENT_AGENT_IDENTITY_STORAGE_BUCKET_ROLES=gs://agent-test-bucket=roles/storage.objectViewer
+~~~
+
+`deploy_dev.py` and `update_dev.py` invoke the IAM helper automatically after the
+runtime exists. You can also rerun only IAM after changing these settings:
+
+~~~bash
+uv run --group dev python dev/iam/apply_agent_identity_iam.py --agent auth_reference_agent
+~~~
+
+If none of the per-agent IAM variables is set, the helper makes no IAM calls. The
+Agent Identity still exists and receives only the common principal-set roles from the
+Terraform platform stack.
+
+The identity running this helper must already be allowed to change IAM on the target
+project or bucket. The helper does not grant permissions to itself and rejects
+`roles/owner` and `roles/editor`. Prefer resource-scoped bindings for data access.
 
 ## BigQuery fixture
 

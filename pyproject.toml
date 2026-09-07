@@ -53,3 +53,6 @@ select = ["E", "F", "I", "UP", "B", "S", "SIM", "RUF"]
 # on sys.path before importing anything from it.
 "dev/deploy/*.py" = ["E402"]
 "dev/config/bootstrap_dev.py" = ["E402"]
+# The IAM helper resolves gcloud to an absolute executable path and passes an
+# argument vector without a shell. S603 is intentionally scoped to this file.
+"dev/iam/*.py" = ["E402", "S603"]

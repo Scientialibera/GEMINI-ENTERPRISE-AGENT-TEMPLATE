@@ -24,6 +24,7 @@ from common import (
     validate_agent_remote_environment,
 )
 from config.bootstrap import ensure_dev_prerequisites
+from iam.apply_agent_identity_iam import apply_agent_identity_iam
 
 
 def update_agent(
@@ -45,7 +46,9 @@ def update_agent(
             agent=app,
             config=deployment_config(spec, staging_bucket, extra_packages),
         )
-    return updated.api_resource.name
+    resource_name = updated.api_resource.name
+    apply_agent_identity_iam(agent_name, project_id, resource_name, spec)
+    return resource_name
 
 
 def main() -> None:
