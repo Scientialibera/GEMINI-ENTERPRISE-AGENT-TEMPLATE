@@ -101,6 +101,35 @@ It can also enable missing APIs and create a staging bucket; both controls defau
 enabled. Project creation is disabled by default. Check the
 [developer controls](dev/README.md#sandbox-controls) before using a shared project.
 
+### Permissions and setup ownership
+
+This table separates **who is responsible for granting or creating something** from
+**whether it is technically automatable**. An administrator-owned IAM change can still
+be performed by Terraform or code when the executing identity already has permission.
+UI-only means the current Google/Gemini Enterprise workflow requires a console action.
+
+| Requirement / permission | Needed by | Owner / grantor | How it is supplied | UI-only? |
+|---|---|---|---|---|
+| Access to the target GCP project | Developer / deployment identity | Cloud or platform admin | IAM, normally through the companion Terraform platform stack | No |
+| Create/update Agent Engine resources | Developer / deployment identity | Cloud or platform admin | IAM grant; `dev/deploy/deploy_dev.py` and `dev/deploy/update_dev.py` consume it | No |
+| Read/create the agent runtime parameter and publish versions | Developer deployment flow; runtime reads it | Cloud or platform admin grants access; dev tooling creates agent-owned parameters | IAM plus `dev/config/bootstrap.py` / deployment preflight | No |
+| Enable required Google Cloud APIs | Project | Cloud or platform admin, or developer with Service Usage permission | Terraform or `dev/config/bootstrap_dev.py` when enabled | No |
+| Create/use the developer staging bucket | Developer deployment flow | Cloud or platform admin, or developer with Storage permission | Terraform/existing bucket or `dev/config/bootstrap_dev.py` when enabled | No |
+| Create the optional BigQuery fixture dataset/table | Developer | Data/cloud admin, or developer with BigQuery create permissions | `dev/config/bootstrap_dev.py`; unnecessary when suitable test data already exists | No |
+| Query BigQuery through delegated auth | Signed-in Gemini Enterprise user | Data/IAM admin | User IAM on the target BigQuery project/dataset/table; the agent cannot elevate it | No |
+| Read a Cloud Storage bucket with Agent Identity | Deployed Agent Identity | Data/IAM admin | IAM grant on the specific bucket/resource; deployment scripts do not self-grant it | No |
+| Gemini Enterprise application | Registration flow | Gemini Enterprise administrator | Create/select the app in the Gemini Enterprise admin UI; copy its engine ID to `.env.dev` | Yes for initial app creation |
+| OAuth consent screen / test-user configuration | Delegated-auth agents | Google Cloud / Google Auth Platform administrator | Google Auth Platform console | Yes |
+| Dedicated OAuth client ID and client secret for each delegated agent | Registration flow | Google Cloud / Google Auth Platform administrator | Create a Web application client in Google Auth Platform with both documented redirect URIs | Yes |
+| Store the OAuth client secret in Secret Manager | Registration flow | Registration script using existing Secret Manager access | `dev/register/register_agent.py` imports the initial secret when no stored version exists | No |
+| Gemini Enterprise authorization resource | Delegated-auth agent | Registration flow using its caller permissions | `dev/register/register_agent.py` creates/reuses the per-agent authorization | No |
+| Gemini Enterprise agent listing / registration | End users | Registration flow using its caller permissions | `dev/register/register_agent.py` creates/updates the app listing | No |
+
+The dev scripts consume existing IAM; they never grant themselves new IAM. If a
+programmable step fails for lack of permission, fix the grant through the approved
+platform/IAM path rather than adding privilege-escalation logic to the application
+scripts.
+
 ## Configure delegated OAuth
 
 Use a separate OAuth client and authorization for each delegated agent in this template.
