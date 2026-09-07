@@ -33,14 +33,14 @@ developer_agent_identity_orgless         = false
 # developer_agent_identity_organization_id = null
 # developer_agent_identity_orgless         = true
 
-# ROLES FOR EVERY AGENT IDENTITY IN THE PROJECT
+# BASELINE ROLES FOR EVERY AGENT IDENTITY IN THE PROJECT
 # Granted through a trust-domain principal set, so agents added later inherit
-# them without a Terraform change.
+# them without a Terraform change. Keep only common runtime/platform plumbing
+# here. Workload data access belongs to the exact Agent Identity after deploy.
 agent_identity_project_roles = [
   "roles/aiplatform.expressUser",
   "roles/serviceusage.serviceUsageConsumer",
   "roles/parametermanager.parameterAccessor",
-  "roles/storage.objectViewer",
 ]
 
 # OBSERVABILITY
