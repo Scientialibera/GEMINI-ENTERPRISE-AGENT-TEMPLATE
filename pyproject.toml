@@ -22,6 +22,9 @@ dev = [
   "pytest>=8.3.0,<9.0.0",
   "requests>=2.32.0,<3.0.0",
   "ruff>=0.12.0,<1.0.0",
+  "python-pptx>=1.0.2,<2.0.0",
+  "pillow>=11.0.0",
+  "google-genai>=2.22.0,<3.0.0",
 ]
 
 [tool.pytest.ini_options]
@@ -34,6 +37,7 @@ pythonpath = [
   "agents/basic_assistant/src",
   "agents/auth_reference_agent/src",
   "agents/bigquery_mcp_agent/src",
+  "agents/recipe_card_agent/src",
 ]
 
 [tool.ruff]
@@ -56,3 +60,12 @@ select = ["E", "F", "I", "UP", "B", "S", "SIM", "RUF"]
 # The IAM helper resolves gcloud to an absolute executable path and passes an
 # argument vector without a shell. S603 is intentionally scoped to this file.
 "dev/iam/*.py" = ["E402", "S603"]
+# The card renderer degrades a missing or unreadable image to a placeholder
+# rather than losing the whole deck, so these handlers are deliberately silent.
+# E501 covers the layout tables, which stay readable as single lines.
+"agents/recipe_card_agent/src/recipe_card_agent/tools/card_template.py" = [
+  "E501",
+  "S110",
+  "S112",
+  "SIM105",
+]

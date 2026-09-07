@@ -1,4 +1,4 @@
-"""Read Cloud Storage using the runtime's credentials."""
+"""Read and write Cloud Storage using the runtime's credentials."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ AUTHENTICATION_MODE_LOCAL_ADC = "local ADC"
 EXECUTION_ENVIRONMENT_RUNTIME = "Agent Runtime"
 EXECUTION_ENVIRONMENT_LOCAL = "local development"
 LOCAL_ENGINE_ID = "not available locally"
+GS_URI_PREFIX = "gs://"
 
 
 def list_bucket_objects(project_id: str) -> dict[str, object]:
@@ -47,3 +48,58 @@ def list_bucket_objects(project_id: str) -> dict[str, object]:
         "object_count_returned": len(object_names),
         "objects": object_names,
     }
+
+
+def ensure_bucket(project_id: str, bucket_name: str, location: str) -> bool:
+    """Return the bucket, creating it when it does not exist.
+
+    An output bucket is the agent's own working store rather than shared
+    infrastructure, so creating it on first use keeps a new deployment from
+    needing a manual step. Creating it requires storage.buckets.create on the
+    project; without that the caller sees the IAM error rather than a
+    surprise.
+
+    Returns:
+        True when this call created the bucket.
+    """
+    client = storage.Client(project=project_id)
+    bucket = client.bucket(bucket_name)
+    if bucket.exists():
+        return False
+
+    # Uniform access keeps object ACLs from drifting away from the bucket
+    # policy, which is what the platform's IAM assumes.
+    bucket.iam_configuration.uniform_bucket_level_access_enabled = True
+    client.create_bucket(bucket, location=location)
+    return True
+
+
+def upload_bytes(
+    project_id: str,
+    bucket_name: str,
+    object_name: str,
+    data: bytes,
+    content_type: str,
+) -> str:
+    """Upload one object and return its gs:// URI."""
+    client = storage.Client(project=project_id)
+    blob = client.bucket(bucket_name).blob(object_name)
+    blob.upload_from_string(data, content_type=content_type)
+    return f"gs://{bucket_name}/{object_name}"
+
+
+def download_bytes(project_id: str, uri: str) -> bytes:
+    """Download one gs:// object."""
+    bucket_name, object_name = parse_gs_uri(uri)
+    client = storage.Client(project=project_id)
+    return client.bucket(bucket_name).blob(object_name).download_as_bytes()
+
+
+def parse_gs_uri(uri: str) -> tuple[str, str]:
+    """Split a gs://bucket/object URI into its two parts."""
+    if not uri.startswith(GS_URI_PREFIX):
+        raise ValueError(f"Not a Cloud Storage URI: {uri}")
+    bucket_name, _, object_name = uri.removeprefix(GS_URI_PREFIX).partition("/")
+    if not bucket_name or not object_name:
+        raise ValueError(f"Cloud Storage URI must name a bucket and an object: {uri}")
+    return bucket_name, object_name

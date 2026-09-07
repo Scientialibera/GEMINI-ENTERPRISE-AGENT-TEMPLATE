@@ -62,6 +62,11 @@ RUNTIME_ENV_KEYS = (
     AUTHORIZATION_ID_ENV,
     # The toolset binds this endpoint at construction.
     "MCP_SERVER_URL",
+    # Recipe card agent: output bucket and image model.
+    "RECIPE_CARD_BUCKET",
+    "RECIPE_CARD_BUCKET_LOCATION",
+    "IMAGE_MODEL",
+    "IMAGE_MODEL_LOCATION",
 )
 
 COMMON_REQUIREMENTS = (
@@ -78,6 +83,14 @@ AUTH_REFERENCE_REQUIREMENTS = (
     "google-cloud-storage==3.13.1",
     "google-cloud-bigquery==3.43.0",
     "google-auth>=2.35.0,<3.0.0",
+)
+
+RECIPE_CARD_REQUIREMENTS = (
+    # Image generation, Cloud Storage publishing and the PowerPoint renderer.
+    "google-genai>=2.22.0,<3.0.0",
+    "google-cloud-storage==3.13.1",
+    "python-pptx>=1.0.2,<2.0.0",
+    "pillow>=11.0.0",
 )
 
 BIGQUERY_MCP_REQUIREMENTS = (
@@ -206,6 +219,30 @@ AGENTS: dict[str, AgentSpec] = {
             "Which identity is this agent running as?",
             "List the BigQuery datasets and tables I can access.",
             "Show total revenue by region from the sample orders table.",
+        ),
+    ),
+    "recipe_card_agent": AgentSpec(
+        package_name="recipe-card-agent",
+        module="recipe_card_agent.agent",
+        display_name="Recipe Card Agent",
+        extra_packages=(
+            "agents/recipe_card_agent/src/recipe_card_agent",
+            "packages/gemini_shared/src/gemini_shared",
+        ),
+        requirements=COMMON_REQUIREMENTS + RECIPE_CARD_REQUIREMENTS,
+        registration_description=(
+            "Produces print-ready recipe cards for a pantry business. Writes the recipe, "
+            "generates consistent unbranded food photography in batches, and publishes an "
+            "editable PowerPoint deck to Cloud Storage under its own Agent Identity."
+        ),
+        invocation_description=(
+            "Use this agent to create a recipe card for a dish: it writes the recipe, "
+            "generates the photography and returns a link to the finished deck."
+        ),
+        starter_prompts=(
+            "Create a recipe card for chicken tikka masala.",
+            "Make a card for a vegetarian lentil soup, 6 servings.",
+            "Build a recipe card for classic beef chili.",
         ),
     ),
     "bigquery_mcp_agent": AgentSpec(

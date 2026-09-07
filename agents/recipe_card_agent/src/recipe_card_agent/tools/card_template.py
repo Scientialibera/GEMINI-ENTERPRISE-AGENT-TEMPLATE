@@ -1,0 +1,1044 @@
+"""Render recipe cards as an editable PowerPoint deck.
+
+Layout lives here and content arrives as JSON, so the agent fills in values and
+image locations while this module owns presentation and pagination. Keeping the
+two apart is what makes every card come out identically structured.
+
+Page 1  : title panel, hero image, ingredient rail, overview, tools, chef note,
+          allergens and footer.
+Page 2+ : cooking steps in a 2x2 grid, each reserving an image area. More than
+          four steps continue onto further pages, and the last one carries the
+          variations, bottom banner and footer.
+
+Image fields accept a local path or a gs:// URI. A URI is downloaded once per
+render into a temporary directory, because python-pptx embeds image bytes from
+a file. A missing or unreadable image degrades to a labelled placeholder rather
+than failing the render.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import tempfile
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Any
+
+from PIL import Image
+from pptx import Presentation
+from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
+from pptx.util import Inches, Pt
+
+# -----------------------------------------------------------------------------
+# PAGE / THEME
+# -----------------------------------------------------------------------------
+
+PAGE_W = 10.0
+PAGE_H = 13.33
+LEFT_W = 3.45
+GAP = 0.28
+RIGHT_X = LEFT_W + GAP
+RIGHT_W = PAGE_W - RIGHT_X - 0.22
+
+C = {
+    "blue": "6F97C5",
+    "dark_blue": "07347A",
+    "yellow": "F9B800",
+    "yellow2": "FFC515",
+    "ink": "1D2530",
+    "muted": "5C6573",
+    "pale": "F5F1E6",
+    "line": "0D3D85",
+    "white": "FFFFFF",
+    "cream": "FBF8F0",
+    "grey": "E8E8E8",
+    "border": "D8D8D8",
+}
+
+HEAD_FONT = "Georgia"
+BODY_FONT = "Aptos"
+
+
+def rgb(hex_color: str) -> RGBColor:
+    h = hex_color.lstrip("#")
+    return RGBColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+def clean(value: Any, fallback: str = "") -> str:
+    if value is None:
+        return fallback
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value if v)
+    return str(value)
+
+
+def limit_text(value: Any, n: int) -> str:
+    s = clean(value)
+    if len(s) <= n:
+        return s
+    return s[: max(0, n - 1)].rstrip() + "…"
+
+
+GS_URI_PREFIX = "gs://"
+
+# Populated per render by build_pptx: gs:// URI -> downloaded local file. The
+# same image is referenced several times in a card, so it is fetched once.
+_RESOLVED_IMAGES: dict[str, str] = {}
+
+
+def _resolve(path: Any) -> str:
+    """Return a local path for a local path or an already-downloaded URI."""
+    if not isinstance(path, str) or not path:
+        return ""
+    if path.startswith(GS_URI_PREFIX):
+        return _RESOLVED_IMAGES.get(path, "")
+    return path
+
+
+def prefetch_images(data: dict[str, Any], project_id: str, directory: str) -> None:
+    """Download every gs:// image the deck references.
+
+    Done once up front rather than at each draw call, because a single image
+    appears in more than one place and python-pptx needs a real file.
+    """
+    from gemini_shared.connectors.cloud_storage import download_bytes
+
+    _RESOLVED_IMAGES.clear()
+    for uri in sorted(_image_uris(data)):
+        target = Path(directory) / f"{hashlib.sha256(uri.encode()).hexdigest()[:16]}.png"
+        try:
+            target.write_bytes(download_bytes(project_id, uri))
+            _RESOLVED_IMAGES[uri] = str(target)
+        except Exception:
+            # A missing object degrades to the placeholder rather than losing
+            # the whole deck.
+            continue
+
+
+def _image_uris(data: dict[str, Any]) -> set[str]:
+    """Collect every gs:// value under any *_image_path key."""
+    found: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if (
+                    key.endswith("image_path")
+                    and isinstance(value, str)
+                    and value.startswith(GS_URI_PREFIX)
+                ):
+                    found.add(value)
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(data)
+    return found
+
+
+def exists(path: Any) -> bool:
+    resolved = _resolve(path)
+    return bool(resolved) and os.path.exists(resolved)
+
+
+def chunks(seq: list[Any], size: int) -> Iterable[list[Any]]:
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
+
+
+# -----------------------------------------------------------------------------
+# LOW-LEVEL DRAWING HELPERS
+# -----------------------------------------------------------------------------
+
+
+def add_box(slide, x, y, w, h, fill, line=None, radius=False):
+    shape_type = MSO_SHAPE.ROUNDED_RECTANGLE if radius else MSO_SHAPE.RECTANGLE
+    shp = slide.shapes.add_shape(shape_type, Inches(x), Inches(y), Inches(w), Inches(h))
+    shp.fill.solid()
+    shp.fill.fore_color.rgb = rgb(fill)
+    shp.line.color.rgb = rgb(line or fill)
+    shp.line.width = Pt(0.9 if line else 0.1)
+    # Reduce the exaggerated corner rounding of PowerPoint's rounded rectangle.
+    if radius and hasattr(shp, "adjustments") and len(shp.adjustments):
+        try:
+            shp.adjustments[0] = 0.08
+        except Exception:
+            pass
+    return shp
+
+
+def add_rule(slide, x, y, w, color=None, width=1.0):
+    line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Pt(width))
+    line.fill.solid()
+    line.fill.fore_color.rgb = rgb(color or C["line"])
+    line.line.fill.background()
+    return line
+
+
+def add_vrule(slide, x, y, h, color=None, width=1.0):
+    line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Pt(width), Inches(h))
+    line.fill.solid()
+    line.fill.fore_color.rgb = rgb(color or C["line"])
+    line.line.fill.background()
+    return line
+
+
+def add_text(
+    slide,
+    text,
+    x,
+    y,
+    w,
+    h,
+    *,
+    font_size=12,
+    font_face=BODY_FONT,
+    color=None,
+    bold=False,
+    italic=False,
+    align="left",
+    valign="middle",
+    margin=0.0,
+    fit=True,
+    line_spacing=None,
+):
+    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+    tf = box.text_frame
+    tf.clear()
+    tf.margin_left = Inches(margin)
+    tf.margin_right = Inches(margin)
+    tf.margin_top = Inches(margin)
+    tf.margin_bottom = Inches(margin)
+    tf.word_wrap = True
+    tf.vertical_anchor = {
+        "top": MSO_ANCHOR.TOP,
+        "middle": MSO_ANCHOR.MIDDLE,
+        "bottom": MSO_ANCHOR.BOTTOM,
+    }.get(valign, MSO_ANCHOR.MIDDLE)
+    if fit:
+        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+
+    p = tf.paragraphs[0]
+    p.alignment = {
+        "left": PP_ALIGN.LEFT,
+        "center": PP_ALIGN.CENTER,
+        "right": PP_ALIGN.RIGHT,
+    }.get(align, PP_ALIGN.LEFT)
+    if line_spacing is not None:
+        p.line_spacing = line_spacing
+
+    run = p.add_run()
+    run.text = clean(text)
+    f = run.font
+    f.name = font_face
+    f.size = Pt(font_size)
+    f.bold = bold
+    f.italic = italic
+    f.color.rgb = rgb(color or C["ink"])
+    return box
+
+
+def add_checkbox(slide, x, y, size=0.12):
+    shp = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(size), Inches(size)
+    )
+    shp.fill.background()
+    shp.line.color.rgb = rgb(C["ink"])
+    shp.line.width = Pt(0.7)
+    return shp
+
+
+def _image_size(path: str) -> tuple[int, int]:
+    with Image.open(_resolve(path)) as im:
+        return im.size
+
+
+def add_picture_crop(slide, path: str, x, y, w, h):
+    """Add image cropped to fill a target box without distorting aspect ratio."""
+    if not exists(path):
+        return None
+    iw, ih = _image_size(path)
+    src_aspect = iw / ih
+    dst_aspect = w / h
+    pic = slide.shapes.add_picture(
+        _resolve(path), Inches(x), Inches(y), width=Inches(w), height=Inches(h)
+    )
+    if src_aspect > dst_aspect:
+        # Image is wider than target: crop left/right.
+        shown_ratio = dst_aspect / src_aspect
+        crop = (1.0 - shown_ratio) / 2.0
+        pic.crop_left = crop
+        pic.crop_right = crop
+    elif src_aspect < dst_aspect:
+        # Image is taller than target: crop top/bottom.
+        shown_ratio = src_aspect / dst_aspect
+        crop = (1.0 - shown_ratio) / 2.0
+        pic.crop_top = crop
+        pic.crop_bottom = crop
+    return pic
+
+
+def add_picture_contain(slide, path: str, x, y, w, h):
+    """Add image fully contained in target box, preserving aspect ratio."""
+    if not exists(path):
+        return None
+    iw, ih = _image_size(path)
+    src_aspect = iw / ih
+    dst_aspect = w / h
+    if src_aspect >= dst_aspect:
+        rw = w
+        rh = w / src_aspect
+        rx = x
+        ry = y + (h - rh) / 2
+    else:
+        rh = h
+        rw = h * src_aspect
+        rx = x + (w - rw) / 2
+        ry = y
+    return slide.shapes.add_picture(
+        _resolve(path), Inches(rx), Inches(ry), width=Inches(rw), height=Inches(rh)
+    )
+
+
+def add_image(slide, path, x, y, w, h, *, crop=True, placeholder="IMAGE"):
+    if exists(path):
+        try:
+            return (
+                add_picture_crop(slide, path, x, y, w, h)
+                if crop
+                else add_picture_contain(slide, path, x, y, w, h)
+            )
+        except Exception:
+            pass
+
+    add_box(slide, x, y, w, h, C["grey"], C["line"], radius=True)
+    add_text(
+        slide,
+        placeholder,
+        x + 0.05,
+        y + h / 2 - 0.13,
+        w - 0.10,
+        0.26,
+        font_size=9,
+        color=C["muted"],
+        bold=True,
+        align="center",
+    )
+    return None
+
+
+def add_circle_image(slide, path, cx, cy, d, fallback=""):
+    circle = slide.shapes.add_shape(
+        MSO_SHAPE.OVAL,
+        Inches(cx - d / 2),
+        Inches(cy - d / 2),
+        Inches(d),
+        Inches(d),
+    )
+    circle.fill.solid()
+    circle.fill.fore_color.rgb = rgb(C["white"] if exists(path) else C["cream"])
+    circle.line.color.rgb = rgb(C["border"])
+    circle.line.width = Pt(0.6)
+
+    # python-pptx cannot directly mask an image to an ellipse. Use a cropped square
+    # image placed inside the circle; with ingredient cutout PNGs this reads visually
+    # as the same circular ingredient treatment while remaining editable.
+    if exists(path):
+        pad = 0.025
+        add_image(
+            slide,
+            path,
+            cx - d / 2 + pad,
+            cy - d / 2 + pad,
+            d - 2 * pad,
+            d - 2 * pad,
+            crop=True,
+            placeholder=fallback,
+        )
+    else:
+        add_text(
+            slide,
+            (fallback[:1] or "?").upper(),
+            cx - d / 2,
+            cy - 0.11,
+            d,
+            0.22,
+            font_size=8.5,
+            color=C["line"],
+            bold=True,
+            align="center",
+        )
+
+
+def split_instructions(step: dict[str, Any]) -> list[str]:
+    bullets = step.get("bullets")
+    if isinstance(bullets, list):
+        return [clean(v).strip() for v in bullets if clean(v).strip()]
+
+    body = clean(step.get("body") or step.get("instructions"))
+    if not body:
+        return []
+    if "\n" in body:
+        return [re.sub(r"^[-•□\s]+", "", s).strip() for s in body.splitlines() if s.strip()]
+
+    body = re.sub(r";\s+", ". ", body)
+    parts = re.split(r"\.\s+", body)
+    out = []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        if not re.search(r"[.!?]$", p):
+            p += "."
+        out.append(p)
+    return out
+
+
+def title_font(title: str) -> float:
+    n = len(clean(title))
+    if n > 34:
+        return 26
+    if n > 24:
+        return 31
+    return 36
+
+
+# -----------------------------------------------------------------------------
+# PAGE 1
+# -----------------------------------------------------------------------------
+
+
+def add_header_page1(slide, recipe):
+    add_box(slide, 0, 0, LEFT_W, 3.70, C["blue"])
+    add_rule(slide, 0, 0.72, LEFT_W, C["white"], 0.8)
+    add_text(
+        slide,
+        f"◷  {clean(recipe.get('total_time'), '45 MINUTE RECIPE').upper()}",
+        0.72,
+        0.21,
+        2.3,
+        0.28,
+        font_size=14,
+        color=C["white"],
+        bold=True,
+    )
+    add_text(slide, "▰", 1.53, 1.18, 0.40, 0.28, color=C["dark_blue"], font_size=21, align="center")
+    add_text(
+        slide,
+        recipe.get("title", ""),
+        0.37,
+        1.58,
+        LEFT_W - 0.74,
+        0.86,
+        font_face=HEAD_FONT,
+        font_size=title_font(clean(recipe.get("title"))),
+        color=C["white"],
+        align="center",
+        margin=0.01,
+    )
+    add_text(
+        slide,
+        recipe.get("subtitle", ""),
+        0.36,
+        2.62,
+        LEFT_W - 0.72,
+        0.44,
+        font_size=17,
+        color=C["white"],
+        bold=True,
+        align="center",
+        margin=0.01,
+    )
+
+
+def add_ingredient_rail(slide, recipe):
+    y0 = 3.86
+    add_box(slide, 0.68, y0, 2.10, 0.38, C["yellow"], C["yellow"], radius=True)
+    add_text(
+        slide,
+        f"{clean(recipe.get('servings'), '4')} SERVINGS",
+        0.78,
+        y0 + 0.04,
+        1.90,
+        0.26,
+        font_size=15,
+        bold=True,
+        color=C["dark_blue"],
+        align="center",
+    )
+
+    panel_y = 4.45
+    panel_h = 7.94
+    add_box(slide, 0.27, panel_y, LEFT_W - 0.54, panel_h, C["white"], C["line"], radius=True)
+
+    ingredients = list(recipe.get("ingredients") or [])
+    max_rows = min(len(ingredients), 12)
+    row_h = min(0.66, (panel_h - 0.35) / max(1, max_rows))
+    start_y = panel_y + 0.32
+
+    for i in range(max_rows):
+        ing = ingredients[i]
+        y = start_y + i * row_h
+        img = ing.get("image_path") or ing.get("imagePath")
+        add_circle_image(
+            slide, img, 0.61, y + row_h * 0.39, min(0.42, row_h * 0.70), clean(ing.get("item"), "?")
+        )
+        add_text(
+            slide,
+            ing.get("quantity", ""),
+            1.02,
+            y + 0.08,
+            0.58,
+            0.32,
+            font_size=8.5 if row_h < 0.58 else 10.2,
+            color=C["ink"],
+            align="right",
+        )
+        add_vrule(slide, 1.72, y + 0.08, 0.31, C["muted"], 0.7)
+        label = clean(ing.get("item")) + (f"\n{clean(ing.get('note'))}" if ing.get("note") else "")
+        add_text(
+            slide,
+            label,
+            1.82,
+            y + 0.04,
+            1.20,
+            row_h * 0.72,
+            font_size=8.4 if row_h < 0.58 else 10.0,
+            color=C["ink"],
+            margin=0.01,
+        )
+
+    if len(ingredients) > max_rows:
+        add_text(
+            slide,
+            f"+ {len(ingredients) - max_rows} more",
+            0.50,
+            panel_y + panel_h - 0.26,
+            2.30,
+            0.18,
+            font_size=8.5,
+            color=C["muted"],
+            align="center",
+        )
+
+
+def add_overview_right(slide, recipe):
+    add_image(
+        slide,
+        recipe.get("hero_image_path") or recipe.get("heroImagePath"),
+        RIGHT_X,
+        0.0,
+        RIGHT_W,
+        7.22,
+        crop=True,
+        placeholder="HERO IMAGE",
+    )
+
+    add_box(
+        slide, RIGHT_X + 0.15, 7.48, RIGHT_W - 0.26, 1.02, C["yellow2"], C["yellow2"], radius=True
+    )
+    callout = (
+        recipe.get("callout_title")
+        or recipe.get("card_title")
+        or f"A Classic {clean(recipe.get('region'))} Comfort Dish"
+    )
+    add_text(
+        slide,
+        callout,
+        RIGHT_X + 0.36,
+        7.70,
+        RIGHT_W - 0.74,
+        0.31,
+        font_face=HEAD_FONT,
+        font_size=20,
+        color=C["dark_blue"],
+        bold=True,
+    )
+    add_text(
+        slide,
+        limit_text(recipe.get("description"), 165),
+        RIGHT_X + 0.36,
+        8.08,
+        RIGHT_W - 0.74,
+        0.22,
+        font_size=11.5,
+    )
+
+    add_text(
+        slide,
+        "Getting Started",
+        RIGHT_X + 0.02,
+        8.78,
+        2.68,
+        0.34,
+        font_face=HEAD_FONT,
+        font_size=22,
+        color=C["dark_blue"],
+        bold=True,
+    )
+    add_text(
+        slide,
+        "COOKING TOOLS",
+        RIGHT_X + 0.04,
+        9.24,
+        2.30,
+        0.16,
+        font_size=8.5,
+        color=C["dark_blue"],
+        bold=True,
+    )
+    add_text(
+        slide,
+        "\n".join(recipe.get("tools") or []),
+        RIGHT_X + 0.04,
+        9.45,
+        2.45,
+        0.76,
+        font_size=10.2,
+        valign="top",
+    )
+    add_text(
+        slide,
+        "FROM YOUR PANTRY",
+        RIGHT_X + 0.04,
+        10.35,
+        2.30,
+        0.16,
+        font_size=8.5,
+        color=C["dark_blue"],
+        bold=True,
+    )
+    add_text(
+        slide,
+        "\n".join(recipe.get("pantry") or []),
+        RIGHT_X + 0.04,
+        10.56,
+        2.45,
+        0.88,
+        font_size=10.2,
+        valign="top",
+    )
+
+    add_vrule(slide, RIGHT_X + 2.84, 8.75, 3.25, C["line"], 1.1)
+    chef = recipe.get("chef_note") or {}
+    add_text(
+        slide,
+        "Chef's Note",
+        RIGHT_X + 3.12,
+        8.78,
+        2.80,
+        0.34,
+        font_face=HEAD_FONT,
+        font_size=22,
+        color=C["dark_blue"],
+        bold=True,
+    )
+    add_text(
+        slide,
+        clean(chef.get("title"), "FEATURED INGREDIENT").upper(),
+        RIGHT_X + 3.12,
+        9.24,
+        2.80,
+        0.16,
+        font_size=8.4,
+        color=C["dark_blue"],
+        bold=True,
+    )
+    add_text(
+        slide,
+        limit_text(chef.get("text"), 260),
+        RIGHT_X + 3.12,
+        9.48,
+        2.55,
+        1.55,
+        font_size=11.5,
+        valign="top",
+        margin=0.01,
+    )
+    add_image(
+        slide,
+        recipe.get("decorative_image_path") or recipe.get("decorativeImagePath"),
+        RIGHT_X + 5.38,
+        10.85,
+        0.66,
+        0.55,
+        crop=False,
+        placeholder="SKETCH",
+    )
+
+    banner_y = 11.62
+    add_box(
+        slide, RIGHT_X + 0.02, banner_y, RIGHT_W - 0.24, 0.84, C["cream"], C["cream"], radius=True
+    )
+    add_box(slide, RIGHT_X + 0.02, banner_y, 0.88, 0.84, C["yellow2"], C["yellow2"], radius=True)
+    add_text(
+        slide,
+        clean(recipe.get("season"), "SEASON").upper(),
+        RIGHT_X + 0.08,
+        banner_y + 0.31,
+        0.75,
+        0.18,
+        font_size=8,
+        color=C["dark_blue"],
+        bold=True,
+        align="center",
+    )
+    add_text(
+        slide,
+        "Seasonal Menu",
+        RIGHT_X + 1.15,
+        banner_y + 0.22,
+        1.70,
+        0.16,
+        font_size=8.7,
+        color=C["dark_blue"],
+        bold=True,
+    )
+    add_text(
+        slide,
+        limit_text(recipe.get("seasonal_blurb") or recipe.get("description"), 120),
+        RIGHT_X + 1.15,
+        banner_y + 0.44,
+        2.50,
+        0.24,
+        font_size=7.7,
+        color=C["dark_blue"],
+        valign="top",
+    )
+    add_image(
+        slide,
+        recipe.get("footer_image_path") or recipe.get("hero_image_path"),
+        RIGHT_X + 3.95,
+        banner_y + 0.06,
+        2.20,
+        0.72,
+        crop=True,
+        placeholder="FOOD",
+    )
+
+
+def add_footer(slide, recipe):
+    add_rule(slide, 0.30, 12.74, 9.38, C["line"], 0.75)
+    add_text(
+        slide,
+        clean(recipe.get("region"))
+        + (f"  |  {clean(recipe.get('season'))}" if recipe.get("season") else ""),
+        0.30,
+        12.58,
+        2.70,
+        0.12,
+        font_size=6.2,
+        color=C["muted"],
+    )
+    allergens = ", ".join(recipe.get("allergens") or []) or "See ingredient packaging"
+    cross = recipe.get("possible_cross_contact") or []
+    cross_text = f"\nPossible cross-contact: {', '.join(cross)}" if cross else ""
+    add_text(
+        slide,
+        f"Food safety: cook ingredients thoroughly and refrigerate leftovers promptly.\nALLERGENS: {allergens}.{cross_text}",
+        0.52,
+        12.92,
+        5.90,
+        0.30,
+        font_size=6.8,
+        color=C["ink"],
+        valign="top",
+    )
+    add_text(
+        slide,
+        clean(recipe.get("brand_line"), "Good Food\nBrings People Together"),
+        7.35,
+        12.84,
+        1.85,
+        0.42,
+        font_face=HEAD_FONT,
+        font_size=11,
+        color=C["line"],
+        italic=True,
+        align="center",
+    )
+
+
+def add_overview_slide(prs, recipe):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_header_page1(slide, recipe)
+    add_ingredient_rail(slide, recipe)
+    add_overview_right(slide, recipe)
+    add_footer(slide, recipe)
+    return slide
+
+
+# -----------------------------------------------------------------------------
+# COOKING STEP PAGES
+# -----------------------------------------------------------------------------
+
+
+def add_top_tip(slide, text):
+    add_box(slide, 0.34, 0.30, 9.22, 0.52, C["yellow2"], C["yellow2"], radius=True)
+    add_text(
+        slide,
+        f"Cooking Tip: {limit_text(text, 130)}",
+        0.53,
+        0.39,
+        8.85,
+        0.22,
+        font_face=HEAD_FONT,
+        font_size=15.5,
+        color=C["dark_blue"],
+        bold=True,
+    )
+    add_rule(slide, 0.34, 0.92, 4.55, C["line"], 0.8)
+    add_rule(slide, 5.12, 0.92, 4.44, C["line"], 0.8)
+
+
+def add_step_block(slide, step, idx, x, y, w, h):
+    title = f"{idx + 1}. {clean(step.get('title'), 'Step')}"
+    add_text(
+        slide,
+        title,
+        x,
+        y,
+        w,
+        0.42,
+        font_face=HEAD_FONT,
+        font_size=18 if len(title) > 36 else 21,
+        color=C["dark_blue"],
+        bold=True,
+        valign="top",
+    )
+
+    # Always reserve a standardized image area for every step, even when an image
+    # has not yet been generated. This is deliberate: the image agent can fill the
+    # placeholder later without changing layout geometry.
+    img_w = min(1.95, w * 0.42)
+    img_x = x + w - img_w
+    img_y = y + 0.72
+    img_h = h - 0.95
+    text_w = w - img_w - 0.16
+    add_image(
+        slide,
+        step.get("image_path") or step.get("imagePath"),
+        img_x,
+        img_y,
+        img_w,
+        img_h,
+        crop=True,
+        placeholder="STEP IMAGE",
+    )
+
+    bullets = split_instructions(step)
+    max_bullets = min(5, len(bullets))
+    line_h = 0.44 if len(bullets) > 4 else 0.50
+    by = y + 0.58
+
+    for b in range(max_bullets):
+        add_checkbox(slide, x, by + 0.035, 0.12)
+        add_text(
+            slide,
+            limit_text(bullets[b], 120),
+            x + 0.26,
+            by - 0.02,
+            text_w - 0.30,
+            line_h,
+            font_size=10.0,
+            valign="top",
+            margin=0.01,
+        )
+        by += line_h
+
+    if len(bullets) > max_bullets:
+        add_text(
+            slide,
+            f"+ {len(bullets) - max_bullets} more instruction(s).",
+            x + 0.26,
+            by,
+            text_w - 0.30,
+            0.18,
+            font_size=7.7,
+            color=C["muted"],
+            italic=True,
+        )
+
+    add_rule(slide, x, y + h - 0.05, w, C["line"], 0.55)
+
+
+def add_variations_panel(slide, recipe, y):
+    add_box(slide, 0.34, y, 9.22, 1.50, C["pale"], C["pale"], radius=True)
+    add_text(
+        slide,
+        clean(recipe.get("variations_title"), "Simple Variations"),
+        0.58,
+        y + 0.15,
+        4.0,
+        0.32,
+        font_face=HEAD_FONT,
+        font_size=22,
+        color=C["dark_blue"],
+        bold=True,
+    )
+    variations = list(recipe.get("variations") or [])[:3]
+    for i, variation in enumerate(variations):
+        by = y + 0.63 + i * 0.29
+        add_checkbox(slide, 0.63, by + 0.035, 0.12)
+        add_text(
+            slide, limit_text(variation, 118), 0.88, by, 6.30, 0.20, font_size=10.7, valign="top"
+        )
+    add_image(
+        slide,
+        recipe.get("variations_image_path") or recipe.get("decorative_image_path"),
+        8.10,
+        y + 0.24,
+        1.05,
+        0.88,
+        crop=False,
+        placeholder="SKETCH",
+    )
+
+
+def add_bottom_banner(slide, recipe, y):
+    add_box(slide, 0.34, y, 9.22, 1.08, C["yellow2"], C["yellow2"], radius=True)
+    add_text(
+        slide,
+        clean(
+            recipe.get("bottom_banner_text"), f"{clean(recipe.get('title'))}\nfor a cozy evening."
+        ),
+        0.60,
+        y + 0.25,
+        3.35,
+        0.54,
+        font_face=HEAD_FONT,
+        font_size=22,
+        color=C["dark_blue"],
+        bold=True,
+        valign="top",
+    )
+    add_image(
+        slide,
+        recipe.get("footer_image_path") or recipe.get("hero_image_path"),
+        4.02,
+        y,
+        5.54,
+        1.08,
+        crop=True,
+        placeholder="FOOD BANNER",
+    )
+
+
+def add_steps_slide(prs, recipe, page_index, step_start, steps_on_page, total_step_pages):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_top_tip(
+        slide,
+        recipe.get("cooking_tip")
+        or "Reserve a little cooking liquid before draining. It helps the sauce coat evenly.",
+    )
+
+    blocks = [
+        (0.34, 1.10, 4.45, 3.60),
+        (5.18, 1.10, 4.38, 3.60),
+        (0.34, 4.94, 4.45, 3.60),
+        (5.18, 4.94, 4.38, 3.60),
+    ]
+    add_vrule(slide, 4.98, 1.00, 7.65, C["line"], 0.75)
+
+    for i, step in enumerate(steps_on_page):
+        add_step_block(slide, step, step_start + i, *blocks[i])
+
+    is_last = page_index == total_step_pages - 1
+    if is_last:
+        add_variations_panel(slide, recipe, 9.02)
+        add_bottom_banner(slide, recipe, 10.86)
+        add_footer(slide, recipe)
+    else:
+        add_text(
+            slide,
+            f"{clean(recipe.get('title'))} — continued",
+            0.35,
+            12.80,
+            3.80,
+            0.14,
+            font_size=7,
+            color=C["muted"],
+        )
+        add_text(
+            slide,
+            f"Page {page_index + 2}",
+            8.95,
+            12.80,
+            0.65,
+            0.14,
+            font_size=7,
+            color=C["muted"],
+            align="right",
+        )
+    return slide
+
+
+# -----------------------------------------------------------------------------
+# GENERATION
+# -----------------------------------------------------------------------------
+
+
+def add_recipe(prs, recipe):
+    add_overview_slide(prs, recipe)
+    steps = list(recipe.get("steps") or [])
+    step_pages = list(chunks(steps, 4)) or [[]]
+    for page_index, group in enumerate(step_pages):
+        add_steps_slide(prs, recipe, page_index, page_index * 4, group, len(step_pages))
+
+
+def build_pptx(data: dict[str, Any], output: str) -> None:
+    """Write the deck for every recipe in ``data`` to ``output``."""
+    prs = Presentation()
+    prs.slide_width = Inches(PAGE_W)
+    prs.slide_height = Inches(PAGE_H)
+
+    # Remove the default first slide if present (normally Presentation() has none).
+    while len(prs.slides) > 0:
+        r_id = prs.slides._sldIdLst[0].rId
+        prs.part.drop_rel(r_id)
+        del prs.slides._sldIdLst[0]
+
+    recipes = data.get("recipes") or []
+    if not recipes:
+        raise ValueError("Input contains no recipes.")
+
+    for recipe in recipes:
+        add_recipe(prs, recipe)
+
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
+    prs.save(output)
+
+
+def render_deck(data: dict[str, Any], project_id: str) -> bytes:
+    """Return the finished deck as bytes, fetching any gs:// images first.
+
+    Bytes rather than a path, because the caller uploads the result to Cloud
+    Storage and never needs the file to outlive the call.
+    """
+    with tempfile.TemporaryDirectory(prefix="recipe-card-") as work_dir:
+        prefetch_images(data, project_id, work_dir)
+        output = Path(work_dir) / "recipe_cards.pptx"
+        build_pptx(data, str(output))
+        return output.read_bytes()
+
+
+def load_recipes(payload: str | dict[str, Any]) -> dict[str, Any]:
+    """Accept the recipe payload as a JSON string or an already-parsed object.
+
+    A model emits JSON as text, so accepting both keeps the tool from failing
+    on a well-formed request that arrives in the other shape.
+    """
+    data = json.loads(payload) if isinstance(payload, str) else payload
+    if not isinstance(data, dict):
+        raise ValueError("Recipe payload must be an object.")
+    # A single recipe passed on its own is still a valid request.
+    if "recipes" not in data:
+        data = {"recipes": [data]}
+    return data
