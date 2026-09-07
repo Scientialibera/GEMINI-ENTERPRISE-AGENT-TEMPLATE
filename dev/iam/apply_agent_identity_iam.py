@@ -106,9 +106,7 @@ def requested_storage_bucket_roles(spec: AgentSpec) -> dict[str, tuple[str, ...]
             )
         roles = tuple(
             dict.fromkeys(
-                _validate_role(value.strip())
-                for value in roles_raw.split("|")
-                if value.strip()
+                _validate_role(value.strip()) for value in roles_raw.split("|") if value.strip()
             )
         )
         if not roles:
@@ -179,6 +177,9 @@ def agent_identity_principal(project_id: str, resource_name: str) -> str:
     organization_id = _organization_id(project_id)
     location, engine_id = _runtime_coordinates(resource_name)
 
+    # Orgless trust domains use "proj-". Documentation shows "project-", which
+    # IAM rejects as an unknown member type. Terraform's principal set for the
+    # same project uses the same prefix, so the two must stay in step.
     trust_domain = (
         f"agents.global.org-{organization_id}.system.id.goog"
         if organization_id
