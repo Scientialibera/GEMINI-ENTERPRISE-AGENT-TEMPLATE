@@ -20,6 +20,7 @@ from common import (
     load_resource_name,
     require_dev_environment,
 )
+from config.environment import env_bool
 
 GCLOUD = shutil.which("gcloud")
 
@@ -33,6 +34,20 @@ ROLE_PATTERN = re.compile(
     r"organizations/[0-9]+/roles/[A-Za-z0-9_.]+)$"
 )
 DISALLOWED_BASIC_ROLES = frozenset({"roles/owner", "roles/editor"})
+
+# What every Agent Identity in a project needs before any agent can serve a
+# request: reach the model, consume quota, and read its own configuration. The
+# storage role is what the Cloud Storage example reads with. Terraform grants
+# these in a managed environment; this list exists so a sandbox without the
+# platform stack can be brought up by these scripts alone, and it must stay in
+# step with agent_identity_project_roles in the Terraform branch.
+BASELINE_AGENT_IDENTITY_ROLES = (
+    "roles/aiplatform.expressUser",
+    "roles/serviceusage.serviceUsageConsumer",
+    "roles/parametermanager.parameterAccessor",
+    "roles/storage.objectViewer",
+)
+BASELINE_ROLES_ENV = "DEV_GRANT_AGENT_IDENTITY_BASELINE"
 REASONING_ENGINE_PATTERN = re.compile(
     r"(?:^|/)locations/(?P<location>[^/]+)/reasoningEngines/(?P<engine_id>[^/]+)$"
 )
@@ -192,24 +207,72 @@ def _runtime_coordinates(resource_name: str) -> tuple[str, str]:
     return match.group("location"), match.group("engine_id")
 
 
+def _trust_domain(project_id: str, project_number: str) -> str:
+    """Trust domain the project's Agent Identities belong to.
+
+    Orgless trust domains use "proj-". Documentation shows "project-", which
+    IAM rejects as an unknown member type. Terraform's principal set for the
+    same project uses the same prefix, so the two must stay in step.
+    """
+    organization_id = _organization_id(project_id)
+    if organization_id:
+        return f"agents.global.org-{organization_id}.system.id.goog"
+    return f"agents.global.proj-{project_number}.system.id.goog"
+
+
 def agent_identity_principal(project_id: str, resource_name: str) -> str:
     """Construct the exact Google-managed Agent Identity principal."""
     project_number = _project_number(project_id)
-    organization_id = _organization_id(project_id)
     location, engine_id = _runtime_coordinates(resource_name)
-
-    # Orgless trust domains use "proj-". Documentation shows "project-", which
-    # IAM rejects as an unknown member type. Terraform's principal set for the
-    # same project uses the same prefix, so the two must stay in step.
-    trust_domain = (
-        f"agents.global.org-{organization_id}.system.id.goog"
-        if organization_id
-        else f"agents.global.proj-{project_number}.system.id.goog"
-    )
     return (
-        f"principal://{trust_domain}/resources/aiplatform/projects/{project_number}"
+        f"principal://{_trust_domain(project_id, project_number)}"
+        f"/resources/aiplatform/projects/{project_number}"
         f"/locations/{location}/reasoningEngines/{engine_id}"
     )
+
+
+def agent_identity_principal_set(project_id: str) -> str:
+    """Principal set covering every Agent Identity in the project.
+
+    Roles granted here reach runtimes that do not exist yet, which is what lets
+    an agent be deployed without an infrastructure change.
+    """
+    project_number = _project_number(project_id)
+    return (
+        f"principalSet://{_trust_domain(project_id, project_number)}"
+        f"/attribute.platformContainer/aiplatform/projects/{project_number}"
+    )
+
+
+def ensure_baseline_roles(project_id: str) -> tuple[str, ...]:
+    """Grant every Agent Identity in the project the roles a runtime needs.
+
+    Terraform owns this in a managed environment. A sandbox with no platform
+    stack would otherwise deploy an agent that starts and then fails on its
+    first request, because it reads its own configuration under an identity
+    permitted to read nothing. Granting is idempotent, so running it where
+    Terraform already applied the same bindings changes nothing.
+
+    Returns the roles granted, empty when the caller opted out.
+    """
+    if not env_bool(BASELINE_ROLES_ENV, False):
+        return ()
+
+    principal_set = agent_identity_principal_set(project_id)
+    for role in BASELINE_AGENT_IDENTITY_ROLES:
+        _run_gcloud(
+            (
+                "projects",
+                "add-iam-policy-binding",
+                project_id,
+                f"--member={principal_set}",
+                f"--role={role}",
+                "--condition=None",
+                "--quiet",
+            )
+        )
+        print(f"BASELINE_AGENT_IDENTITY_ROLE={role}")
+    return BASELINE_AGENT_IDENTITY_ROLES
 
 
 def apply_agent_identity_iam(

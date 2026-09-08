@@ -44,6 +44,16 @@ def main() -> None:
     # Per-agent parameters are resolved during deployment.
     if configured_value("CONFIG_PARAMETER"):
         ensure_runtime_parameter(project_id)
+    # A sandbox with no platform stack needs the roles every Agent Identity
+    # reads its own configuration with, or its agents deploy and then fail on
+    # the first request. Off unless asked for, so a managed project is never
+    # granted IAM behind Terraform's back.
+    from iam.apply_agent_identity_iam import ensure_baseline_roles
+
+    granted = ensure_baseline_roles(project_id)
+    if granted:
+        print(f"AGENT_IDENTITY_BASELINE_GRANTED={len(granted)}")
+
     print("DEV_PREREQUISITES=ready")
     print("NEXT_STEP=Run deploy/deploy_dev.py --agent <name>; it creates that agent's parameter.")
 

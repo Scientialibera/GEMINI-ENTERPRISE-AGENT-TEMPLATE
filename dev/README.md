@@ -67,7 +67,8 @@ subfolder puts that directory on sys.path before importing common.
 
 Terraform first, then these scripts. The platform stack grants the roles every
 Agent Identity needs, and a runtime deployed before it exists will start but fail
-when it reads its own configuration.
+when it reads its own configuration. For a sandbox with no platform stack, the
+scripts can grant that baseline themselves; see below.
 
 | # | What | Where | When |
 |---|---|---|---|
@@ -90,22 +91,37 @@ uv run --group dev python dev/release_dev.py --agent recipe_card_agent
 
 ### Running without the Terraform stack
 
-These scripts can stand up a sandbox on their own. `config/bootstrap_dev.py` can
-create the project, enable the APIs it needs and create the staging bucket, under
-the controls below. What it cannot do is grant the roles a *runtime* needs, because
-those are granted to a trust-domain principal set covering every Agent Identity in
-the project, which is infrastructure rather than developer state.
+These scripts can stand up a sandbox end to end. `config/bootstrap_dev.py` can create
+the project, enable the APIs and create the staging bucket, and it can also grant the
+roles every Agent Identity in the project needs:
 
-Without that baseline an agent deploys and starts, then fails on its first request:
-it reads its model and instruction from Parameter Manager under its own identity, and
-that identity has no permission to read anything. `roles/aiplatform.expressUser`,
-`roles/serviceusage.serviceUsageConsumer` and `roles/parametermanager.parameterAccessor`
-are the minimum, and `roles/storage.objectViewer` is what the Cloud Storage example
-needs.
+~~~text
+DEV_CREATE_PROJECT_IF_MISSING=true
+DEV_BILLING_ACCOUNT_ID=<billing-account>
+DEV_ENABLE_REQUIRED_APIS=true
+DEV_CREATE_STAGING_BUCKET_IF_MISSING=true
+DEV_GRANT_AGENT_IDENTITY_BASELINE=true
+~~~
 
-So a project with no Terraform needs those four roles granted once, to the principal
-set, by someone with project IAM admin. Applying the platform stack is the supported
-way to do that. After that the scripts here handle everything else.
+~~~bash
+uv run --group dev python dev/config/bootstrap_dev.py
+uv run --group dev python dev/release_dev.py --agent basic_assistant
+~~~
+
+That baseline matters more than it looks. Every agent reads its model and instruction
+from Parameter Manager under its own identity, so without it an agent deploys, starts,
+and then fails on its first request with no permission to read anything. The roles
+granted are the four the platform stack grants: `aiplatform.expressUser`,
+`serviceusage.serviceUsageConsumer`, `parametermanager.parameterAccessor` and
+`storage.objectViewer`. They go to the trust-domain principal set covering every Agent
+Identity in the project, so an agent deployed later inherits them, and granting is
+idempotent.
+
+`DEV_GRANT_AGENT_IDENTITY_BASELINE` is false by default and the caller needs project
+IAM admin to use it. Leave it false wherever the platform stack is applied: IAM there
+belongs to Terraform, and granting the same bindings from two places makes it unclear
+which one owns them. Use it for a sandbox, a demo project or a first look at the
+template, and apply the platform stack for anything shared.
 
 ## Sandbox controls
 

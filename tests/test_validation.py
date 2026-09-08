@@ -730,3 +730,61 @@ def test_every_environment_variable_is_documented():
 
     missing = used - documented - supplied_by_platform - derived
     assert not missing, f"environment variables the code reads but no example documents: {missing}"
+
+
+def test_baseline_roles_match_the_platform_stack():
+    """The scripts can grant what Terraform grants, so a sandbox needs neither.
+
+    The two lists are maintained separately, so they are asserted equal here:
+    a role added to one and not the other would leave a project deployed by the
+    scripts subtly different from one deployed by the platform stack.
+    """
+    import sys
+
+    sys.path.insert(0, str(DEV))
+    from iam.apply_agent_identity_iam import BASELINE_AGENT_IDENTITY_ROLES
+
+    # These are the roles the companion Terraform branch grants to the same
+    # principal set, in agent_identity_project_roles.
+    terraform_roles = {
+        "roles/aiplatform.expressUser",
+        "roles/serviceusage.serviceUsageConsumer",
+        "roles/parametermanager.parameterAccessor",
+        "roles/storage.objectViewer",
+    }
+    assert set(BASELINE_AGENT_IDENTITY_ROLES) == terraform_roles
+
+
+def test_baseline_grant_is_off_unless_requested(monkeypatch):
+    """A managed project must never be granted IAM behind Terraform's back."""
+    import sys
+
+    sys.path.insert(0, str(DEV))
+    import iam.apply_agent_identity_iam as agent_iam
+
+    monkeypatch.delenv(agent_iam.BASELINE_ROLES_ENV, raising=False)
+    calls = Mock()
+    monkeypatch.setattr(agent_iam, "_run_gcloud", calls)
+    assert agent_iam.ensure_baseline_roles("test-project") == ()
+    calls.assert_not_called()
+
+
+def test_baseline_grant_targets_every_agent_identity(monkeypatch):
+    """The grant must reach runtimes that do not exist yet.
+
+    Granting to one runtime's identity would mean every new agent needed an IAM
+    change, which is the coupling the principal set exists to avoid.
+    """
+    import sys
+
+    sys.path.insert(0, str(DEV))
+    import iam.apply_agent_identity_iam as agent_iam
+
+    monkeypatch.setattr(agent_iam, "_project_number", lambda project: "123456789")
+    monkeypatch.setattr(agent_iam, "_organization_id", lambda project: None)
+    principal_set = agent_iam.agent_identity_principal_set("test-project")
+
+    assert principal_set.startswith("principalSet://")
+    # Orgless uses "proj-": IAM rejects the documented "project-" spelling.
+    assert "agents.global.proj-123456789.system.id.goog" in principal_set
+    assert "attribute.platformContainer" in principal_set
