@@ -1128,9 +1128,9 @@ INGREDIENT_PANEL_TOP = 4.45
 INGREDIENT_PANEL_MAX_BOTTOM = 12.42
 # The step photograph is portrait and fills the column beside the text, as on
 # the reference cards, rather than sitting in a fixed square.
+# The photograph is a share of its block rather than a fixed size, so it grows
+# with the block on a page that has room to spare.
 STEP_IMAGE_WIDTH_FRACTION = 0.46
-STEP_IMAGE_MAX_WIDTH = 2.10
-STEP_IMAGE_ASPECT = 1.32
 # Steps are measured, not given a share of a fixed grid, so a short step does
 # not reserve the same block as a long one.
 CHEF_NOTE_FONT_SIZE = 11.5
@@ -1142,7 +1142,9 @@ VARIATIONS_MIN_TOP_SHORT_PAGE = 6.40
 VARIATIONS_TO_BANNER = 1.84
 STEP_BLOCK_GAP = 0.24
 STEP_BLOCK_MIN_HEIGHT = 2.60
-STEP_BLOCK_MAX_HEIGHT = 4.30
+# How far a block may be stretched to use a page that few steps would leave
+# empty. Beyond this the photograph starts to dominate its own instructions.
+STEP_BLOCK_MAX_SCALE = 1.85
 # Where the step columns must stop: higher on the last page, which also carries
 # the variations panel and the bottom banner.
 STEPS_PAGE_BOTTOM = 12.60
@@ -1200,7 +1202,7 @@ def step_block_height(step: dict[str, Any], width: float) -> float:
     shorter than its own image would crop it.
     """
     bullets = split_instructions(step)
-    image_w = min(STEP_IMAGE_MAX_WIDTH, width * STEP_IMAGE_WIDTH_FRACTION)
+    image_w = width * STEP_IMAGE_WIDTH_FRACTION
     text_w = width - image_w - 0.16 - 0.30
 
     lines = sum(
@@ -1214,7 +1216,7 @@ def step_block_height(step: dict[str, Any], width: float) -> float:
     text_h = max(len(bullets), lines) * BULLET_LINE_HEIGHT * 0.62 + len(bullets) * 0.12
 
     content_h = STEP_TITLE_BOX_HEIGHT + 0.12 + text_h
-    return min(STEP_BLOCK_MAX_HEIGHT, max(STEP_BLOCK_MIN_HEIGHT, content_h + 0.22))
+    return max(STEP_BLOCK_MIN_HEIGHT, content_h + 0.22)
 
 
 def add_step_block(slide, step, idx, x, y, w, h):
@@ -1240,7 +1242,7 @@ def add_step_block(slide, step, idx, x, y, w, h):
     # The reference cards set the step photograph in portrait, filling the
     # column beside the text rather than sitting in a fixed square. Deriving
     # the height from the width keeps that proportion whatever the panel size.
-    img_w = min(STEP_IMAGE_MAX_WIDTH, w * STEP_IMAGE_WIDTH_FRACTION)
+    img_w = w * STEP_IMAGE_WIDTH_FRACTION
     img_x = x + w - img_w
     bullet_top = y + STEP_TITLE_BOX_HEIGHT + 0.06
     img_y = bullet_top + 0.06
@@ -1388,13 +1390,31 @@ def add_steps_slide(prs, recipe, page_index, step_start, steps_on_page, total_st
     # One step alone on a page uses the full width rather than leaving an empty
     # second column beside it, which reads as a rendering fault.
     columns = ((0.34, 9.22),) if len(steps_on_page) == 1 else ((0.34, 4.45), (5.18, 4.38))
+
+    # Blocks are measured from their own text, then scaled together to use the
+    # page. A page carrying fewer steps than a full one therefore gives each of
+    # them more room, and the photograph grows with its block, rather than the
+    # page ending early with a band of white under the last step. Four steps
+    # already fill the page, so they scale by one and match the other pages.
+    natural = [
+        step_block_height(step, columns[index % len(columns)][1])
+        for index, step in enumerate(steps_on_page)
+    ]
+    per_column: list[float] = [0.0] * len(columns)
+    for index, height in enumerate(natural):
+        per_column[index % len(columns)] += height + STEP_BLOCK_GAP
+    tallest = max(per_column) - STEP_BLOCK_GAP if per_column else 0.0
+    room = bottom - top
+    scale = min(STEP_BLOCK_MAX_SCALE, room / tallest) if tallest > 0 else 1.0
+    scale = max(1.0, scale)
+
     placed: list[tuple[float, float, float, float]] = []
     column_y = [top] * len(columns)
-    for index, step in enumerate(steps_on_page):
+    for index in range(len(steps_on_page)):
         column = index % len(columns)
         x, width = columns[column]
         # Never run past the space this page has for steps.
-        height = min(step_block_height(step, width), bottom - column_y[column])
+        height = min(natural[index] * scale, bottom - column_y[column])
         placed.append((x, column_y[column], width, height))
         column_y[column] += height + STEP_BLOCK_GAP
 
