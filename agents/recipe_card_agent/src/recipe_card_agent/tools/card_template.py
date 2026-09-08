@@ -945,10 +945,10 @@ def add_overview_right(slide, recipe):
     add_ink_image(
         slide,
         recipe.get("decorative_image_path") or recipe.get("decorativeImagePath"),
-        RIGHT_X + 4.92,
-        10.62,
-        1.24,
-        0.92,
+        RIGHT_X + 4.42,
+        10.38,
+        1.80,
+        1.28,
     )
 
     banner_y = 11.62
@@ -1207,10 +1207,10 @@ def add_variations_panel(slide, recipe, y):
     add_ink_image(
         slide,
         recipe.get("variations_image_path") or recipe.get("decorative_image_path"),
-        7.86,
-        y + 0.16,
-        1.52,
-        1.14,
+        7.52,
+        y + 0.08,
+        2.00,
+        1.34,
     )
 
 
