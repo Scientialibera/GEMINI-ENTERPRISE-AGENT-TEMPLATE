@@ -384,17 +384,11 @@ mistaken for a required one.
 
 ### Iterate on the layout without spending quota
 
-`experiments/render_local.py` renders a full card from images already in Cloud Storage,
-in seconds and with no image generation:
-
-~~~bash
-uv run --with pymupdf --group dev python experiments/render_local.py --tag check
-uv run --with pymupdf --group dev python experiments/render_local.py --tag wide --ingredients 12
-uv run --with pymupdf --group dev python experiments/render_local.py --tag long --five-steps
-~~~
-
-It writes a .pptx, converts it with LibreOffice when available and exports one PNG per
-page. Use it for any layout change; generate images only when testing the prompts.
+A card needs about sixteen images and the project admits two a minute, so generating
+one to check a layout change is slow and wasteful. Render instead from images a
+previous run already published: point `render_deck` at a recipe payload whose image
+fields are the gs:// URIs of an earlier run, convert the .pptx with LibreOffice and
+look at the pages. Nothing is generated, and the whole loop takes seconds.
 
 ## Manage configuration
 
@@ -496,7 +490,6 @@ packages/gemini_shared/src/gemini_shared/
   mcp/mcp_auth/              authenticated Streamable HTTP toolsets
   mcp/mcp_google_cloud/      managed endpoints and BigQuery tool allowlist
 dev/                         local, packaging, deployment, IAM and registration scripts
-experiments/                 local rendering harness; not deployed
 tests/                       import, validation and behavior tests
 ~~~
 

@@ -49,3 +49,8 @@ crash.log
 crash.*.log
 tfplan
 provider-schema.json
+
+# Local rendering harness and its output. Rendering a card writes PDFs, PPTXs
+# and page images that are reproducible from the agent, so they are scratch
+# rather than source.
+experiments/
