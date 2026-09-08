@@ -185,10 +185,11 @@ def chunks(seq: list[Any], size: int) -> Iterable[list[Any]]:
 # before it is written, so a long title or a wordy step looks the same wherever
 # the deck is opened.
 
-# Width of one character as a fraction of font size, averaged over mixed-case
-# text. Close enough to choose a size, and deliberately conservative.
-_CHAR_WIDTH_RATIO = 0.50
-_HEAD_CHAR_WIDTH_RATIO = 0.46
+# Mean advance width of one character as a fraction of font size, measured over
+# running sentence text in each face (0.434 body, 0.394 headings) and rounded up
+# slightly so an unusually wide line still fits.
+_CHAR_WIDTH_RATIO = 0.45
+_HEAD_CHAR_WIDTH_RATIO = 0.41
 _LINE_HEIGHT_RATIO = 1.22
 _POINTS_PER_INCH = 72.0
 
@@ -217,24 +218,35 @@ def _wrapped_line_count(text: str, width_in: float, font_size: float, ratio: flo
     return max(1, lines)
 
 
-def fitted_font_size(
-    text: str,
+def fit_to_box(
+    text: Any,
     width_in: float,
     height_in: float,
     font_size: float,
     *,
-    minimum: float = 6.0,
     head: bool = False,
-) -> float:
-    """Largest size at or below ``font_size`` whose wrapped text fits the box."""
+) -> str:
+    """Trim text to what the box holds at a fixed size.
+
+    Type sizes are part of the design, so they do not change from card to card.
+    When a value is too long for its panel the value is shortened, which keeps
+    every card's hierarchy identical and legible.
+    """
+    body = clean(text)
+    if not body:
+        return body
+
     ratio = _HEAD_CHAR_WIDTH_RATIO if head else _CHAR_WIDTH_RATIO
-    size = float(font_size)
-    while size > minimum:
-        lines = _wrapped_line_count(clean(text), width_in, size, ratio)
-        if (lines * size * _LINE_HEIGHT_RATIO) / _POINTS_PER_INCH <= height_in:
-            return size
-        size -= 0.5
-    return minimum
+    max_lines = max(1, int((height_in * _POINTS_PER_INCH) / (font_size * _LINE_HEIGHT_RATIO)))
+    if _wrapped_line_count(body, width_in, font_size, ratio) <= max_lines:
+        return body
+
+    char_w = (font_size * ratio) / _POINTS_PER_INCH
+    per_line = max(1, int(width_in / char_w))
+    # One ellipsis replaces the tail, so the sentence ends deliberately rather
+    # than colliding with the edge of the panel.
+    budget = max(1, per_line * max_lines - 1)
+    return limit_text(body, budget)
 
 
 def add_box(slide, x, y, w, h, fill, line=None, radius=False):
@@ -302,10 +314,11 @@ def add_text(
         "bottom": MSO_ANCHOR.BOTTOM,
     }.get(valign, MSO_ANCHOR.MIDDLE)
     if fit:
-        # Kept for PowerPoint, but the size below is what actually makes it fit
-        # in every renderer.
         tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
-        font_size = fitted_font_size(
+        # Type sizes are fixed so every card reads the same. Text that would
+        # overflow is trimmed to what the box holds at this size rather than
+        # shrunk, which would make one card's body copy smaller than another's.
+        text = fit_to_box(
             text,
             max(0.1, w - 2 * margin),
             max(0.1, h),
@@ -489,13 +502,17 @@ def split_instructions(step: dict[str, Any]) -> list[str]:
     return out
 
 
+# The dish name is display type, so it gets two deliberate sizes rather than a
+# sliding scale: the headline size, and one step down for a name too long to
+# set at it. Body copy elsewhere never changes size.
+TITLE_FONT_SIZE = 36.0
+TITLE_FONT_SIZE_LONG = 28.0
+TITLE_LONG_THRESHOLD = 28
+
+
 def title_font(title: str) -> float:
-    n = len(clean(title))
-    if n > 34:
-        return 26
-    if n > 24:
-        return 31
-    return 36
+    """Headline size, stepping down once for a long dish name."""
+    return TITLE_FONT_SIZE_LONG if len(clean(title)) > TITLE_LONG_THRESHOLD else TITLE_FONT_SIZE
 
 
 # -----------------------------------------------------------------------------
@@ -522,9 +539,9 @@ def add_header_page1(slide, recipe):
         slide,
         recipe.get("title", ""),
         0.37,
-        1.58,
+        1.42,
         LEFT_W - 0.74,
-        0.86,
+        1.32,
         font_face=HEAD_FONT,
         font_size=title_font(clean(recipe.get("title"))),
         color=C["white"],
@@ -535,9 +552,9 @@ def add_header_page1(slide, recipe):
         slide,
         recipe.get("subtitle", ""),
         0.36,
-        2.62,
+        2.80,
         LEFT_W - 0.72,
-        0.44,
+        0.62,
         font_size=17,
         color=C["white"],
         bold=True,
@@ -875,7 +892,12 @@ TIP_LINE_HEIGHT = 0.26
 TIP_VERTICAL_PADDING = 0.30
 
 # Floor for a step bullet line, below which the text stops being readable.
-MIN_BULLET_LINE_HEIGHT = 0.30
+# Body copy is a fixed size across every card, so the design stays consistent.
+STEP_TITLE_FONT_SIZE = 20.0
+# Room for a two-line step name at that size.
+STEP_TITLE_BOX_HEIGHT = 0.62
+BULLET_FONT_SIZE = 10.0
+BULLET_LINE_HEIGHT = 0.56
 
 
 def add_top_tip(slide, text):
@@ -906,15 +928,16 @@ def add_top_tip(slide, text):
 
 def add_step_block(slide, step, idx, x, y, w, h):
     title = f"{idx + 1}. {clean(step.get('title'), 'Step')}"
+    # Two lines, so a longer step name sets at the same size as a short one.
     add_text(
         slide,
         title,
         x,
         y,
         w,
-        0.42,
+        STEP_TITLE_BOX_HEIGHT,
         font_face=HEAD_FONT,
-        font_size=17 if len(title) > 30 else 21,
+        font_size=STEP_TITLE_FONT_SIZE,
         color=C["dark_blue"],
         bold=True,
         valign="top",
@@ -925,7 +948,8 @@ def add_step_block(slide, step, idx, x, y, w, h):
     # placeholder later without changing layout geometry.
     img_w = min(1.95, w * 0.42)
     img_x = x + w - img_w
-    img_y = y + 0.72
+    bullet_top = y + STEP_TITLE_BOX_HEIGHT + 0.06
+    img_y = bullet_top + 0.06
     img_h = h - 0.95
     text_w = w - img_w - 0.16
     add_image(
@@ -942,12 +966,20 @@ def add_step_block(slide, step, idx, x, y, w, h):
     # A dropped bullet is a lost cooking instruction, so every one is drawn and
     # the type shrinks to fit instead. The floor keeps a step with an unusual
     # number of instructions legible rather than merely present.
+    # Body copy is one fixed size on every card. The number of bullets a panel
+    # shows is what varies, and the prompt asks for a step count that fits, so
+    # trimming here is a guard rather than the normal path.
     bullets = split_instructions(step)
-    available_h = h - 0.78
-    line_h = min(0.50, available_h / max(1, len(bullets)))
-    line_h = max(line_h, MIN_BULLET_LINE_HEIGHT)
-    font_size = 10.0 if line_h >= 0.44 else max(8.0, 10.0 * (line_h / 0.44))
-    by = y + 0.58
+    available_h = h - (bullet_top - y) - 0.16
+    line_h = BULLET_LINE_HEIGHT
+    font_size = BULLET_FONT_SIZE
+    max_bullets = max(1, int(available_h / line_h))
+    if len(bullets) > max_bullets:
+        # Merge the overflow into the last visible bullet instead of dropping
+        # instructions, which would leave the cook a step short.
+        head, tail = bullets[: max_bullets - 1], bullets[max_bullets - 1 :]
+        bullets = [*head, " ".join(tail)]
+    by = bullet_top
 
     for bullet in bullets:
         add_checkbox(slide, x, by + 0.035, 0.12)
@@ -1008,9 +1040,9 @@ def add_bottom_banner(slide, recipe, y):
             recipe.get("bottom_banner_text"), f"{clean(recipe.get('title'))}\nfor a cozy evening."
         ),
         0.60,
-        y + 0.25,
+        y + 0.14,
         3.35,
-        0.54,
+        0.82,
         font_face=HEAD_FONT,
         font_size=22,
         color=C["dark_blue"],

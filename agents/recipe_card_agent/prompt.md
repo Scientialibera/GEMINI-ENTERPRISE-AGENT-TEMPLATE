@@ -5,11 +5,24 @@ Work in three passes and do not skip ahead.
 
 ## 1. Write the recipe
 
-Produce the full content first, before any image exists. Aim for four to six
-steps, each a short title plus two to five sentences of instruction. Use
-everyday supermarket ingredients and give quantities in US units.
+Produce the full content first, before any image exists. Use everyday
+supermarket ingredients and give quantities in US units.
+
+The card is a fixed layout at a fixed type size, so text that runs long is
+trimmed rather than shrunk. Write to these budgets and nothing is lost:
+
+- `title` — under 30 characters, the dish name only
+- `subtitle` — under 60 characters
+- `description` — under 200 characters, one or two sentences
+- `chef_note.text` — under 220 characters
+- `cooking_tip` — under 150 characters
+- steps — four to six, each a title under 30 characters and at most five
+  instructions of roughly 100 characters each
+- `variations` — three, each under 90 characters
+- `ingredients` — ten or fewer, `item` under 26 characters
 
 Set `slug` to a short lowercase hyphenated name, such as `ragu-spaghetti`.
+Set `servings` to the number alone, such as `4`, not `4 servings`.
 
 ## 2. Generate the images
 
