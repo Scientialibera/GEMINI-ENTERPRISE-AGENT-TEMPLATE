@@ -698,3 +698,35 @@ def test_environment_overrides_the_declared_roles(monkeypatch):
     spec = common.get_agent_spec("recipe_card_agent")
     monkeypatch.setenv(f"{spec.env_prefix}_AGENT_IDENTITY_PROJECT_ROLES", "roles/logging.logWriter")
     assert requested_project_roles(spec) == ("roles/logging.logWriter",)
+
+
+def test_every_environment_variable_is_documented():
+    """A setting the code reads but no example mentions cannot be configured.
+
+    Someone deploying from a clean clone has only the example files to work
+    from, so an undocumented variable is a silent gap in the setup.
+    """
+    import re
+
+    repo = DEV.parent
+    roots = [repo / d for d in ("dev", "packages", "agents", "workflows")]
+    pattern = re.compile(r'os\.(?:getenv|environ)(?:\.get)?\(\s*"([A-Z][A-Z0-9_]+)"')
+    used: set[str] = set()
+    for root in roots:
+        for path in root.rglob("*.py"):
+            used.update(pattern.findall(path.read_text(encoding="utf-8")))
+
+    documented: set[str] = set()
+    for name in (".env.dev.example", ".env.local.example"):
+        text = (DEV / name).read_text(encoding="utf-8")
+        documented.update(re.findall(r"^#?\s*([A-Z][A-Z0-9_]+)=", text, re.MULTILINE))
+        # Names shown inside prose, such as the <AGENT>_ prefixed families.
+        documented.update(re.findall(r"\b([A-Z][A-Z0-9_]{3,})\b", text))
+
+    # Supplied by Agent Runtime rather than by the operator.
+    supplied_by_platform = {"GOOGLE_CLOUD_AGENT_ENGINE_ID"}
+    # Per-agent variables are derived from a package name at runtime.
+    derived = {name for name in used if name.startswith(("RECIPE_CARD_", "DEV_"))}
+
+    missing = used - documented - supplied_by_platform - derived
+    assert not missing, f"environment variables the code reads but no example documents: {missing}"
