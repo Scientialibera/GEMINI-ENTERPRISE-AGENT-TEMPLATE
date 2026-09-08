@@ -1138,6 +1138,9 @@ INGREDIENT_PANEL_MAX_BOTTOM = 12.42
 # The photograph is a share of its block rather than a fixed size, so it grows
 # with the block on a page that has room to spare.
 STEP_IMAGE_WIDTH_FRACTION = 0.46
+# Shortest portrait proportion a step photograph is allowed to be. This sets the
+# floor on a block whose text alone would not justify one.
+STEP_IMAGE_MIN_ASPECT = 1.05
 # Steps are measured, not given a share of a fixed grid, so a short step does
 # not reserve the same block as a long one.
 CHEF_NOTE_FONT_SIZE = 11.5
@@ -1152,6 +1155,8 @@ STEP_BLOCK_MIN_HEIGHT = 2.60
 # How far a block may be stretched to use a page that few steps would leave
 # empty. Beyond this the photograph starts to dominate its own instructions.
 STEP_BLOCK_MAX_SCALE = 1.85
+# Most of a column one step may claim when another must fit beneath it.
+STEP_BLOCK_COLUMN_SHARE = 0.58
 # Where the step columns must stop: higher on the last page, which also carries
 # the variations panel and the bottom banner.
 STEPS_PAGE_BOTTOM = 12.60
@@ -1224,7 +1229,12 @@ def step_block_height(step: dict[str, Any], width: float) -> float:
     # content, which is the fixed grid this replaced.
     text_h = max(len(bullets), lines) * BULLET_LINE_HEIGHT * 0.62 + len(bullets) * 0.12
 
-    content_h = STEP_TITLE_BOX_HEIGHT + 0.12 + text_h
+    # The photograph keeps a portrait proportion of its own. A step with one or
+    # two instructions would otherwise get a block barely taller than its text,
+    # and a noticeably smaller picture than the steps beside it, which reads as
+    # a mistake rather than as a short step.
+    image_h = image_w * STEP_IMAGE_MIN_ASPECT
+    content_h = STEP_TITLE_BOX_HEIGHT + 0.12 + max(text_h, image_h)
     return max(STEP_BLOCK_MIN_HEIGHT, content_h + 0.22)
 
 
@@ -1430,23 +1440,49 @@ def add_steps_slide(prs, recipe, page_index, step_start, steps_on_page, total_st
         step_block_height(step, columns[index % len(columns)][1])
         for index, step in enumerate(steps_on_page)
     ]
+
+    # No single step may take so much of its column that the one under it is
+    # squeezed against the bottom of the page. Two steps share a column, so a
+    # block is capped at a little over half the height available and the long
+    # step gives up the excess rather than its neighbour's photograph.
+    room = bottom - top
+    if len(columns) > 1 and len(steps_on_page) > len(columns):
+        cap = (room - STEP_BLOCK_GAP) * STEP_BLOCK_COLUMN_SHARE
+        natural = [min(height, cap) for height in natural]
     per_column: list[float] = [0.0] * len(columns)
     for index, height in enumerate(natural):
         per_column[index % len(columns)] += height + STEP_BLOCK_GAP
     tallest = max(per_column) - STEP_BLOCK_GAP if per_column else 0.0
-    room = bottom - top
     scale = min(STEP_BLOCK_MAX_SCALE, room / tallest) if tallest > 0 else 1.0
     scale = max(1.0, scale)
 
     placed: list[tuple[float, float, float, float]] = []
     column_y = [top] * len(columns)
+    last_in_column: dict[int, int] = {}
     for index in range(len(steps_on_page)):
+        # Strict reading order: a card is followed left to right, top to bottom,
+        # so a step never appears before the one numbered above it. The height
+        # cap above is what keeps a long step from squeezing its neighbour.
         column = index % len(columns)
         x, width = columns[column]
         # Never run past the space this page has for steps.
         height = min(natural[index] * scale, bottom - column_y[column])
         placed.append((x, column_y[column], width, height))
         column_y[column] += height + STEP_BLOCK_GAP
+        last_in_column[column] = index
+
+    # A column of short steps still ends level with the longest column, and the
+    # room left over goes to its final block. Otherwise a step with one
+    # instruction keeps a small photograph beside a column of tall ones, which
+    # reads as a mistake rather than as a short step.
+    tallest_column_end = max(column_y)
+    for column, index in last_in_column.items():
+        spare = tallest_column_end - column_y[column]
+        if spare <= 0:
+            continue
+        x, y, width, height = placed[index]
+        placed[index] = (x, y, width, height + spare)
+        column_y[column] += spare
 
     if len(columns) > 1:
         add_vrule(
