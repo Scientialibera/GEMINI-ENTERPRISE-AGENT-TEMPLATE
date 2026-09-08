@@ -494,3 +494,35 @@ def test_config_status_tool_is_shared(agent):
 
     module = importlib.import_module(f"{agent}.tools.runtime_config_status")
     assert module.report_runtime_config is report_runtime_config
+
+
+def test_ensure_bucket_tolerates_a_writer_only_identity(monkeypatch):
+    """A least-privilege runtime holds object access on one bucket and nothing
+    at the project level, so it cannot call storage.buckets.get. Treating that
+    refusal as "missing" would send it on to create a bucket it cannot create,
+    which is what failed the first deployed run."""
+    from gemini_shared.connectors import cloud_storage
+    from google.api_core import exceptions
+
+    client = Mock()
+    bucket = Mock()
+    bucket.exists.side_effect = exceptions.Forbidden("storage.buckets.get denied")
+    client.bucket.return_value = bucket
+    monkeypatch.setattr(cloud_storage.storage, "Client", lambda **kwargs: client)
+
+    assert cloud_storage.ensure_bucket("test-project", "test-bucket", "us-central1") is False
+    client.create_bucket.assert_not_called()
+
+
+def test_ensure_bucket_creates_a_missing_bucket(monkeypatch):
+    from gemini_shared.connectors import cloud_storage
+
+    client = Mock()
+    bucket = Mock()
+    bucket.exists.return_value = False
+    client.bucket.return_value = bucket
+    monkeypatch.setattr(cloud_storage.storage, "Client", lambda **kwargs: client)
+
+    assert cloud_storage.ensure_bucket("test-project", "test-bucket", "us-central1") is True
+    assert bucket.iam_configuration.uniform_bucket_level_access_enabled is True
+    client.create_bucket.assert_called_once()

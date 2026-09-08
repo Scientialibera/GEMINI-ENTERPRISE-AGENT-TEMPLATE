@@ -18,6 +18,7 @@ from __future__ import annotations
 import concurrent.futures
 import os
 import random
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -35,17 +36,29 @@ DEFAULT_IMAGE_MODEL_LOCATION = "global"
 DEFAULT_MIME_TYPE = "image/png"
 MODE_PARALLEL = "parallel"
 MODE_SEQUENTIAL_REFERENCE = "sequential_reference"
-MAX_PARALLEL_WORKERS = 8
+# The service admits roughly five image requests a minute on a default project
+# and rejects the rest immediately, so throughput is set by that limit and not
+# by how many requests are in flight. A wide fan-out only converts into
+# throttling; two workers keep the pipe busy while a slow call is outstanding.
+MAX_PARALLEL_WORKERS = 2
+
+# Minimum spacing between requests, applied across the whole process. Pacing to
+# the known limit is what keeps a large batch from spending its attempts on
+# rejections it could have avoided.
+MIN_REQUEST_INTERVAL_SECONDS = 12.0
 
 # Image generation is quota-limited per minute, and a batch is precisely the
 # thing that exhausts it. Retrying with an exponential, jittered backoff is what
 # keeps a large card from failing halfway through and wasting the images that
 # already succeeded.
-MAX_ATTEMPTS = 6
-INITIAL_BACKOFF_SECONDS = 10.0
+MAX_ATTEMPTS = 8
+INITIAL_BACKOFF_SECONDS = 15.0
 BACKOFF_MULTIPLIER = 2.0
-MAX_BACKOFF_SECONDS = 120.0
-RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+MAX_BACKOFF_SECONDS = 90.0
+# 401 is included deliberately: under concurrent load the service returns it
+# for a request whose credential is momentarily unusable, not for one that is
+# genuinely unauthorised, and a retry with a fresh client succeeds.
+RETRYABLE_STATUS_CODES = frozenset({401, 429, 500, 502, 503, 504})
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,8 +88,36 @@ class GeneratedImage:
     prompt: str
 
 
+_rate_lock = threading.Lock()
+_last_request_at = 0.0
+
+
+def _wait_for_slot() -> None:
+    """Space requests out to the service's rate limit.
+
+    Held across threads, so the parallel mode is paced by the same limit the
+    sequential mode is.
+    """
+    global _last_request_at
+    with _rate_lock:
+        wait = MIN_REQUEST_INTERVAL_SECONDS - (time.monotonic() - _last_request_at)
+        if wait > 0:
+            time.sleep(wait)
+        _last_request_at = time.monotonic()
+
+
 def _client(location: str) -> genai.Client:
-    """Vertex-backed client, so generation runs under the runtime's identity."""
+    """Vertex-backed client, so generation runs under the runtime's identity.
+
+    Credentials are left to the client rather than resolved here. On Agent
+    Runtime the Agent Identity is supplied through a mechanism that
+    ``google.auth.default`` does not reproduce: re-resolving it yields a
+    credential the API rejects as unauthenticated, while the ambient one works.
+
+    The location is passed explicitly because the image models are served from
+    ``global`` and the runtime's own GOOGLE_CLOUD_LOCATION is the region the
+    agent is deployed to, where they do not exist.
+    """
     return genai.Client(
         vertexai=True,
         project=os.environ["GOOGLE_CLOUD_PROJECT"],
@@ -90,6 +131,15 @@ def _model_name() -> str:
 
 def _model_location() -> str:
     return os.getenv(IMAGE_MODEL_LOCATION_ENV, "").strip() or DEFAULT_IMAGE_MODEL_LOCATION
+
+
+class NoImageReturned(RuntimeError):
+    """The call succeeded but carried no image.
+
+    Distinct from an API error because it is retried: the model intermittently
+    answers a perfectly acceptable prompt with text or an empty candidate, and
+    the same prompt succeeds on a second attempt.
+    """
 
 
 def _extract_image(response: object, name: str) -> tuple[bytes, str]:
@@ -108,7 +158,13 @@ def _extract_image(response: object, name: str) -> tuple[bytes, str]:
 
     text = getattr(response, "text", None)
     detail = f" The model returned text instead: {text.strip()[:300]}" if text else ""
-    raise RuntimeError(f"No image was returned for '{name}'.{detail}")
+    finish = ""
+    for candidate in candidates:
+        reason = getattr(candidate, "finish_reason", None)
+        if reason:
+            finish = f" finish_reason={reason}."
+            break
+    raise NoImageReturned(f"No image was returned for '{name}'.{finish}{detail}")
 
 
 def _sniff_mime(data: bytes) -> str:
@@ -125,7 +181,9 @@ def _sniff_mime(data: bytes) -> str:
 
 
 def _is_retryable(error: Exception) -> bool:
-    """Whether the failure is a transient quota or server error."""
+    """Whether the failure is a transient quota, server or empty-response error."""
+    if isinstance(error, NoImageReturned):
+        return True
     code = getattr(error, "code", None) or getattr(error, "status_code", None)
     if code in RETRYABLE_STATUS_CODES:
         return True
@@ -146,17 +204,24 @@ def _with_retries(call, name: str):
                 raise
             # Full jitter, so a parallel batch that hit the limit together does
             # not retry in lockstep and exhaust it again.
-            time.sleep(random.uniform(0, min(delay, MAX_BACKOFF_SECONDS)))  # noqa: S311
+            capped = min(delay, MAX_BACKOFF_SECONDS)
+            # Decorrelated jitter: still spreads retries out, but never sleeps
+            # for almost no time and burns an attempt.
+            time.sleep(random.uniform(capped / 2, capped))  # noqa: S311
             delay *= BACKOFF_MULTIPLIER
     raise RuntimeError(f"Exhausted retries generating '{name}'.")
 
 
 def _generate_one(
-    client: genai.Client,
+    location: str,
     model: str,
     request: ImageRequest,
     extra_references: tuple[bytes, ...],
 ) -> GeneratedImage:
+    # A client per call rather than one shared across the batch. Sharing one
+    # lets several threads refresh the same credential at once, and the
+    # half-written token that results is rejected as unauthenticated.
+    client = _client(location)
     parts: list[types.Part] = [types.Part(text=request.prompt)]
     references = (*request.reference_images, *extra_references)
     # Keep the most recent references when a long sequence exceeds the limit:
@@ -166,15 +231,18 @@ def _generate_one(
             types.Part(inline_data=types.Blob(mime_type=_sniff_mime(reference), data=reference))
         )
 
-    response = _with_retries(
-        lambda: client.models.generate_content(
+    def call():
+        _wait_for_slot()
+        response = client.models.generate_content(
             model=model,
             contents=[types.Content(role="user", parts=parts)],
             config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
-        ),
-        request.name,
-    )
-    data, mime_type = _extract_image(response, request.name)
+        )
+        # Extracted inside the retried call, so a response that carries no
+        # image is retried rather than ending the batch.
+        return _extract_image(response, request.name)
+
+    data, mime_type = _with_retries(call, request.name)
     return GeneratedImage(
         name=request.name,
         data=data,
@@ -207,13 +275,13 @@ def generate_images(
     if not requests:
         return []
 
-    client = _client(_model_location())
+    location = _model_location()
     model = _model_name()
 
     if mode == MODE_SEQUENTIAL_REFERENCE:
         produced: list[GeneratedImage] = []
         for request in requests:
-            image = _generate_one(client, model, request, tuple(item.data for item in produced))
+            image = _generate_one(location, model, request, tuple(item.data for item in produced))
             produced.append(image)
         return produced
 
@@ -222,7 +290,7 @@ def generate_images(
     workers = min(len(requests), MAX_PARALLEL_WORKERS)
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(_generate_one, client, model, request, ()): index
+            pool.submit(_generate_one, location, model, request, ()): index
             for index, request in enumerate(requests)
         }
         results: list[GeneratedImage | None] = [None] * len(requests)

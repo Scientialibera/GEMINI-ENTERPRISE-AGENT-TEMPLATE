@@ -91,6 +91,8 @@ RECIPE_CARD_REQUIREMENTS = (
     "google-cloud-storage==3.13.1",
     "python-pptx>=1.0.2,<2.0.0",
     "pillow>=11.0.0",
+    # Resolves the runtime's credentials explicitly for the image model.
+    "google-auth>=2.35.0,<3.0.0",
 )
 
 BIGQUERY_MCP_REQUIREMENTS = (

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+from google.api_core import exceptions
 from google.cloud import storage
 
 from ..config.runtime_config import get_runtime_config
@@ -51,26 +52,38 @@ def list_bucket_objects(project_id: str) -> dict[str, object]:
 
 
 def ensure_bucket(project_id: str, bucket_name: str, location: str) -> bool:
-    """Return the bucket, creating it when it does not exist.
+    """Create the bucket when it is missing, tolerating a writer-only identity.
 
     An output bucket is the agent's own working store rather than shared
     infrastructure, so creating it on first use keeps a new deployment from
-    needing a manual step. Creating it requires storage.buckets.create on the
-    project; without that the caller sees the IAM error rather than a
-    surprise.
+    needing a manual step.
+
+    A least-privilege runtime is granted object access on one bucket and
+    nothing at the project level, so it can write objects while lacking both
+    storage.buckets.get and storage.buckets.create. Existence is therefore
+    treated as unknown rather than false when the check is refused: the bucket
+    is almost certainly there, and the upload that follows is the real test.
 
     Returns:
         True when this call created the bucket.
     """
     client = storage.Client(project=project_id)
     bucket = client.bucket(bucket_name)
-    if bucket.exists():
+    try:
+        if bucket.exists():
+            return False
+    except exceptions.Forbidden:
+        # Cannot inspect it, so assume it exists and let the upload decide.
         return False
 
     # Uniform access keeps object ACLs from drifting away from the bucket
     # policy, which is what the platform's IAM assumes.
     bucket.iam_configuration.uniform_bucket_level_access_enabled = True
-    client.create_bucket(bucket, location=location)
+    try:
+        client.create_bucket(bucket, location=location)
+    except exceptions.Conflict:
+        # Created concurrently, or owned by someone this identity cannot see.
+        return False
     return True
 
 

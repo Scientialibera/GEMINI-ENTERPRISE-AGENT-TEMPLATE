@@ -3434,6 +3434,7 @@ source = { editable = "agents/recipe_card_agent" }
 dependencies = [
     { name = "gemini-shared" },
     { name = "google-adk", extra = ["extensions"] },
+    { name = "google-auth" },
     { name = "google-cloud-storage" },
     { name = "google-genai" },
     { name = "pillow" },
@@ -3444,6 +3445,7 @@ dependencies = [
 requires-dist = [
     { name = "gemini-shared", editable = "packages/gemini_shared" },
     { name = "google-adk", extras = ["extensions"], specifier = "==2.7.1" },
+    { name = "google-auth", specifier = ">=2.35.0,<3.0.0" },
     { name = "google-cloud-storage", specifier = "==3.13.1" },
     { name = "google-genai", specifier = ">=2.22.0,<3.0.0" },
     { name = "pillow", specifier = ">=11.0.0" },
