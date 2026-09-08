@@ -28,6 +28,11 @@ Set `servings` to the number alone, such as `4`, not `4 servings`.
 
 Call `generate_recipe_images` exactly twice.
 
+Your first call creates a `run_id` and returns it. Pass that same `run_id` to
+the second image call and to `render_recipe_card`, so everything for this card
+is stored together and a card someone else is making at the same time cannot
+overwrite it.
+
 **First, the ingredients, with `mode="parallel"`.** One image per ingredient,
 named `ingredient-<item>`. These do not depend on each other, so they are
 produced at the same time. Every ingredient prompt must end with:

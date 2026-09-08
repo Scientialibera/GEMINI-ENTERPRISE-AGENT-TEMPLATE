@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import functools
 import re
+import secrets
+import time
 from pathlib import Path
 
 from gemini_shared.connectors.cloud_storage import ensure_bucket, upload_bytes
@@ -35,11 +37,28 @@ def _style_plates() -> tuple[bytes, ...]:
     return tuple(path.read_bytes() for path in sorted(STYLE_DIR.glob("*.jpg")))
 
 
-def _object_name(recipe_slug: str, image_name: str) -> str:
-    """Group a recipe's images under its own prefix."""
-    slug = UNSAFE_NAME.sub("-", recipe_slug.strip().lower()).strip("-") or "recipe"
-    name = UNSAFE_NAME.sub("-", image_name.strip().lower()).strip("-") or "image"
-    return f"{slug}/images/{name}.png"
+def safe_slug(value: str, fallback: str = "recipe") -> str:
+    """Lowercase hyphenated form of a name, safe as a storage path segment."""
+    return UNSAFE_NAME.sub("-", (value or "").strip().lower()).strip("-") or fallback
+
+
+def new_run_id() -> str:
+    """Identifier for one card, unique across concurrent requests.
+
+    Two people asking for the same dish would otherwise write to the same
+    prefix and overwrite each other's images and deck part-way through. The
+    timestamp keeps a listing readable; the random suffix is what makes it
+    collision-proof.
+    """
+    return f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
+
+
+def _object_name(recipe_slug: str, run_id: str, image_name: str) -> str:
+    """Group one run's images under their own prefix."""
+    return (
+        f"{safe_slug(recipe_slug)}/{safe_slug(run_id, 'run')}"
+        f"/images/{safe_slug(image_name, 'image')}.png"
+    )
 
 
 def generate_recipe_images(
@@ -47,6 +66,7 @@ def generate_recipe_images(
     prompts: list[str],
     names: list[str],
     mode: str = MODE_PARALLEL,
+    run_id: str = "",
 ) -> dict[str, object]:
     """Generate recipe photographs and store them, returning their gs:// URIs.
 
@@ -64,6 +84,9 @@ def generate_recipe_images(
         names: One short name per image, positionally matching `prompts`.
             Used as the stored file name, for example `hero` or `step-1`.
         mode: `parallel` or `sequential_reference`.
+        run_id: Pass the `run_id` returned by your first call so every image
+            for one card is stored together. Omit it on the first call and one
+            is created for you.
     """
     if not OUTPUT_BUCKET:
         raise RuntimeError(
@@ -82,6 +105,7 @@ def generate_recipe_images(
             f"or '{MODE_SEQUENTIAL_REFERENCE}' for a consistent series."
         )
 
+    run_id = run_id.strip() or new_run_id()
     created = ensure_bucket(PROJECT_ID, OUTPUT_BUCKET, OUTPUT_BUCKET_LOCATION)
     # Every image carries the house style plates. In sequential mode the batch's
     # own earlier images are appended to these by the shared helper.
@@ -98,7 +122,7 @@ def generate_recipe_images(
         image.name: upload_bytes(
             PROJECT_ID,
             OUTPUT_BUCKET,
-            _object_name(recipe_slug, image.name),
+            _object_name(recipe_slug, run_id, image.name),
             image.data,
             IMAGE_CONTENT_TYPE,
         )
@@ -108,6 +132,9 @@ def generate_recipe_images(
         "bucket": OUTPUT_BUCKET,
         "bucket_created": created,
         "mode": mode,
+        # Pass this back on the next call and to render_recipe_card, so one
+        # card's images and deck stay together.
+        "run_id": run_id,
         "image_count": len(uris),
         "images": uris,
     }

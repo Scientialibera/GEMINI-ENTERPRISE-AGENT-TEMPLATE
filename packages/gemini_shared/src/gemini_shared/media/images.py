@@ -36,16 +36,17 @@ DEFAULT_IMAGE_MODEL_LOCATION = "global"
 DEFAULT_MIME_TYPE = "image/png"
 MODE_PARALLEL = "parallel"
 MODE_SEQUENTIAL_REFERENCE = "sequential_reference"
-# The service admits roughly five image requests a minute on a default project
-# and rejects the rest immediately, so throughput is set by that limit and not
-# by how many requests are in flight. A wide fan-out only converts into
-# throttling; two workers keep the pipe busy while a slow call is outstanding.
-MAX_PARALLEL_WORKERS = 2
+# The default project quota is two image requests a minute
+# ("Generate content with image generation requests quota", 1/min/project/model),
+# so throughput is fixed by that and not by how many requests are in flight.
+# Concurrency cannot beat it, and a wide fan-out only converts into throttling.
+MAX_PARALLEL_WORKERS = 1
 
-# Minimum spacing between requests, applied across the whole process. Pacing to
-# the known limit is what keeps a large batch from spending its attempts on
-# rejections it could have avoided.
-MIN_REQUEST_INTERVAL_SECONDS = 12.0
+# Spacing between requests, applied across the whole process, matched to the
+# quota with a little headroom. Pacing to the real limit is what keeps a batch
+# from spending its retries on rejections it could have avoided.
+IMAGE_REQUESTS_PER_MINUTE = 2
+MIN_REQUEST_INTERVAL_SECONDS = 60.0 / IMAGE_REQUESTS_PER_MINUTE + 2.0
 
 # Image generation is quota-limited per minute, and a batch is precisely the
 # thing that exhausts it. Retrying with an exponential, jittered backoff is what

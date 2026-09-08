@@ -526,3 +526,30 @@ def test_ensure_bucket_creates_a_missing_bucket(monkeypatch):
     assert cloud_storage.ensure_bucket("test-project", "test-bucket", "us-central1") is True
     assert bucket.iam_configuration.uniform_bucket_level_access_enabled is True
     client.create_bucket.assert_called_once()
+
+
+def test_concurrent_cards_for_one_dish_do_not_overwrite_each_other():
+    """Two people asking for the same dish must not share a storage prefix.
+
+    Without a per-run segment both requests write to <slug>/images/hero.png and
+    the second silently replaces the first part-way through the card.
+    """
+    from recipe_card_agent.tools.recipe_images import _object_name, new_run_id
+
+    first, second = new_run_id(), new_run_id()
+    assert first != second
+    assert _object_name("beef-chili", first, "hero") != _object_name("beef-chili", second, "hero")
+    # The dish still groups its runs together.
+    assert _object_name("beef-chili", first, "hero").startswith("beef-chili/")
+
+
+def test_run_id_is_reused_so_one_card_stays_together():
+    """Every image in a card shares the prefix its first call created."""
+    from recipe_card_agent.tools.recipe_images import _object_name, new_run_id
+
+    run = new_run_id()
+    prefixes = {
+        _object_name("beef-chili", run, name).rsplit("/", 1)[0]
+        for name in ("hero", "step-1", "ingredient-garlic")
+    }
+    assert len(prefixes) == 1
