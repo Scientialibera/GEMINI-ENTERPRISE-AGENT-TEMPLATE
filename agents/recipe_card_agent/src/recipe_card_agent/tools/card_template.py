@@ -1001,10 +1001,17 @@ def add_overview_right(slide, recipe):
     )
 
     banner_y = 11.62
-    add_box(
-        slide, RIGHT_X + 0.02, banner_y, RIGHT_W - 0.24, 0.84, C["cream"], C["cream"], radius=True
-    )
-    add_box(slide, RIGHT_X + 0.02, banner_y, 0.88, 0.84, C["yellow2"], C["yellow2"], radius=True)
+    # Derived from the band rather than repeated as literals, so the picture
+    # cannot drift outside it: it used to overhang the right edge by a third of
+    # an inch because the two were positioned independently.
+    band_x = RIGHT_X + 0.02
+    band_w = RIGHT_W - 0.24
+    band_h = 0.84
+    band_pad = 0.05
+    picture_w = 2.20
+    picture_x = band_x + band_w - band_pad - picture_w
+    add_box(slide, band_x, banner_y, band_w, band_h, C["cream"], C["cream"], radius=True)
+    add_box(slide, band_x, banner_y, 0.88, band_h, C["yellow2"], C["yellow2"], radius=True)
     add_text(
         slide,
         clean(recipe.get("season")).upper() or "MENU",
@@ -1033,7 +1040,7 @@ def add_overview_right(slide, recipe):
         limit_text(recipe.get("seasonal_blurb") or recipe.get("description"), 120),
         RIGHT_X + 1.15,
         banner_y + 0.44,
-        2.50,
+        picture_x - (RIGHT_X + 1.15) - 0.12,
         0.24,
         font_size=7.7,
         color=C["dark_blue"],
@@ -1042,10 +1049,10 @@ def add_overview_right(slide, recipe):
     add_image(
         slide,
         recipe.get("footer_image_path") or recipe.get("hero_image_path"),
-        RIGHT_X + 3.95,
-        banner_y + 0.06,
-        2.20,
-        0.72,
+        picture_x,
+        banner_y + band_pad,
+        picture_w,
+        band_h - 2 * band_pad,
         crop=True,
         placeholder="FOOD",
     )
