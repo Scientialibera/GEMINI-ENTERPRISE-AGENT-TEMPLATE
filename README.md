@@ -71,10 +71,35 @@ your workstation credentials.
 
 ## Deploy and register
 
-Apply the companion platform stack first: it grants the roles every Agent Identity
-needs, and a runtime deployed before it exists starts but fails when it reads its own
-configuration. See [order of operations](dev/README.md#order-of-operations) for the full
-sequence and for what the scripts can do without it.
+There are two ways to stand a project up, and they differ only in who grants the roles
+every Agent Identity needs.
+
+**With the platform stack**, the normal path for anything shared. Apply
+`template/terraform-iac-only` first: it owns the APIs, the baseline IAM, Secret Manager
+and observability, and it grants those roles to a trust-domain principal set covering
+every Agent Identity in the project, so an agent added later inherits them with no
+infrastructure change. Then use the scripts here for everything per-agent.
+
+**Without it**, for a sandbox, a demo project or a first look at the template. The dev
+scripts can do the whole thing: `config/bootstrap_dev.py` creates the project, enables
+the APIs, creates the staging bucket and — with `DEV_GRANT_AGENT_IDENTITY_BASELINE=true`
+— grants that same baseline itself, to the same principal set. Nothing but this
+repository is needed.
+
+~~~bash
+uv run --group dev python dev/config/bootstrap_dev.py
+uv run --group dev python dev/release_dev.py --agent basic_assistant
+~~~
+
+The baseline is what lets an agent read its own model and instruction from Parameter
+Manager. Without it a runtime deploys and starts, then fails on its first request. The
+flag is off by default and needs project IAM admin: leave it off wherever Terraform is
+applied, because granting the same bindings from two places makes it unclear which one
+owns them.
+
+Either way, the OAuth client, its consent screen and the Gemini Enterprise app are
+created by hand, because no API exists for them. See
+[order of operations](dev/README.md#order-of-operations) for the full sequence.
 
 Create or select a Gemini Enterprise app and copy dev/.env.dev.example to
 dev/.env.dev. Set:
