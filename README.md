@@ -156,6 +156,29 @@ and roles/editor.
 Every remote runtime is created with Agent Identity, including agents with no additional
 resource permissions. The identity is therefore independent of the optional IAM config.
 
+An agent declares the access its own tools need, in its AgentSpec, beside the OAuth
+scopes it asks the user for:
+
+~~~python
+"recipe_card_agent": AgentSpec(
+    delegated_oauth_scopes=(),            # nothing runs as the signed-in user
+    agent_identity_project_roles=(),      # nothing project-wide
+    agent_identity_bucket_roles=(         # writes to its own output bucket
+        BucketRoles("${RECIPE_CARD_BUCKET}", (STORAGE_OBJECT_ADMIN, STORAGE_BUCKET_READER)),
+    ),
+)
+~~~
+
+Both lists are versioned, so adding or removing a permission is a reviewable one-line
+change and a fresh clone deploys with the access its tools require. A bucket is named
+through a `${VARIABLE}` placeholder, so the repository says which bucket an agent writes
+to without committing any project's bucket name; a placeholder that resolves to nothing
+is skipped rather than guessed at.
+
+Roles are only ever added by these lists. The baseline every Agent Identity already has
+comes from Terraform and is not repeated here, and the helper still refuses roles/owner
+and roles/editor.
+
 Environment variable names are derived from the agent package name:
 
 ~~~text

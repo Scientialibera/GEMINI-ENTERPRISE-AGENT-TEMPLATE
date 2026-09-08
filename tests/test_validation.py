@@ -651,3 +651,50 @@ def test_single_cooking_tip_appears_once():
     assert cooking_tip_for_page(recipe, 0) == "Reserve some pasta water."
     assert cooking_tip_for_page(recipe, 1) == ""
     assert cooking_tip_for_page({}, 0) == ""
+
+
+@pytest.mark.parametrize("agent", ALL_ENTRIES)
+def test_identity_roles_are_declared_in_the_spec(agent, monkeypatch):
+    """IAM an agent needs is versioned, so a fresh clone deploys with it.
+
+    Kept only in the environment, the grants that make an agent work would not
+    survive a clone, and a deployment would come up unable to reach its own
+    resources.
+    """
+    import sys
+
+    sys.path.insert(0, str(DEV))
+    from iam.apply_agent_identity_iam import requested_storage_bucket_roles
+
+    monkeypatch.setenv("RECIPE_CARD_BUCKET", "unit-test-bucket")
+    spec = common.get_agent_spec(agent)
+    for binding in spec.agent_identity_bucket_roles:
+        assert binding.roles, f"{agent} names a bucket with no roles"
+        assert binding.resolved_bucket().startswith("gs://")
+
+    # An agent that publishes to a bucket must say so.
+    if "recipe_card" in agent:
+        assert requested_storage_bucket_roles(spec), f"{agent} publishes but declares no access"
+
+
+def test_bucket_placeholder_resolves_from_the_environment(monkeypatch):
+    """A spec names its bucket by variable, so no project's bucket is committed."""
+    monkeypatch.setenv("RECIPE_CARD_BUCKET", "some-bucket")
+    binding = common.BucketRoles("${RECIPE_CARD_BUCKET}", (common.STORAGE_OBJECT_ADMIN,))
+    assert binding.resolved_bucket() == "gs://some-bucket"
+
+    # Unset resolves to nothing rather than to a guessed name.
+    monkeypatch.delenv("RECIPE_CARD_BUCKET", raising=False)
+    assert binding.resolved_bucket() == ""
+
+
+def test_environment_overrides_the_declared_roles(monkeypatch):
+    """An environment can still grant something the repository should not name."""
+    import sys
+
+    sys.path.insert(0, str(DEV))
+    from iam.apply_agent_identity_iam import requested_project_roles
+
+    spec = common.get_agent_spec("recipe_card_agent")
+    monkeypatch.setenv(f"{spec.env_prefix}_AGENT_IDENTITY_PROJECT_ROLES", "roles/logging.logWriter")
+    assert requested_project_roles(spec) == ("roles/logging.logWriter",)

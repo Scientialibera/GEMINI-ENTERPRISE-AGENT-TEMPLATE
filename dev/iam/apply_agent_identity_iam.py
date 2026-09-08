@@ -72,15 +72,36 @@ def _roles_from_csv(raw: str) -> tuple[str, ...]:
 
 
 def requested_project_roles(spec: AgentSpec) -> tuple[str, ...]:
-    """Read optional project-level roles for this exact Agent Identity."""
-    return _roles_from_csv(os.getenv(agent_identity_project_roles_env(spec), "").strip())
+    """Project roles for this exact Agent Identity.
+
+    The spec is the source, so a fresh clone deploys with the access an agent's
+    tools require. The environment variable overrides it for a single run,
+    which is how an environment grants something the repository should not
+    describe.
+    """
+    override = os.getenv(agent_identity_project_roles_env(spec), "").strip()
+    if override:
+        return _roles_from_csv(override)
+    return tuple(_validate_role(role) for role in spec.agent_identity_project_roles)
 
 
 def requested_storage_bucket_roles(spec: AgentSpec) -> dict[str, tuple[str, ...]]:
-    """Parse gs://bucket=role|role;gs://other=role bindings."""
+    """Bucket bindings for this exact Agent Identity.
+
+    Read from the spec unless the environment overrides them. A spec names its
+    bucket through a ${VARIABLE} placeholder, so the repository says which
+    bucket an agent writes to without committing any project's bucket name; a
+    placeholder that resolves to nothing is skipped rather than guessed at.
+    """
     raw = os.getenv(agent_identity_storage_bucket_roles_env(spec), "").strip()
     if not raw:
-        return {}
+        declared: dict[str, tuple[str, ...]] = {}
+        for binding in spec.agent_identity_bucket_roles:
+            bucket = binding.resolved_bucket()
+            if not bucket:
+                continue
+            declared[bucket] = tuple(_validate_role(role) for role in binding.roles)
+        return declared
 
     bindings: dict[str, tuple[str, ...]] = {}
     for entry in raw.split(";"):

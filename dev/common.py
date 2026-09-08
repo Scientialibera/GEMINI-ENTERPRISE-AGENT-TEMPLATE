@@ -47,6 +47,18 @@ BIGQUERY_SCOPE = "https://www.googleapis.com/auth/bigquery"
 CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 CLOUD_STORAGE_READONLY_SCOPE = "https://www.googleapis.com/auth/devstorage.read_only"
 
+# IAM roles an agent's own runtime identity can be granted. Named here so a spec
+# declares a capability rather than repeating a role string, and so the set an
+# agent may ask for stays visible in one place.
+STORAGE_OBJECT_VIEWER = "roles/storage.objectViewer"
+STORAGE_OBJECT_ADMIN = "roles/storage.objectAdmin"
+# Reading bucket metadata is separate from reading objects: a runtime that can
+# write objects still cannot check whether its bucket exists without this.
+STORAGE_BUCKET_READER = "roles/storage.legacyBucketReader"
+LOGGING_LOG_WRITER = "roles/logging.logWriter"
+BIGQUERY_JOB_USER = "roles/bigquery.jobUser"
+BIGQUERY_DATA_VIEWER = "roles/bigquery.dataViewer"
+
 COMMON_REQUIRED_REMOTE_ENV = (
     PROJECT_ENV,
     LOCATION_ENV,
@@ -102,6 +114,27 @@ BIGQUERY_MCP_REQUIREMENTS = (
 
 
 @dataclass(frozen=True, slots=True)
+class BucketRoles:
+    """Roles this agent's identity needs on one bucket.
+
+    ``bucket`` may name an environment variable as ``${NAME}``, so a spec can
+    say which bucket without committing a project's actual bucket name.
+    """
+
+    bucket: str
+    roles: tuple[str, ...]
+
+    def resolved_bucket(self) -> str:
+        """Return the bucket URI, substituting a ${NAME} placeholder."""
+        name = self.bucket
+        if name.startswith("${") and name.endswith("}"):
+            name = os.getenv(name[2:-1], "").strip()
+        if not name:
+            return ""
+        return name if name.startswith(GCS_URI_PREFIX) else f"{GCS_URI_PREFIX}{name}"
+
+
+@dataclass(frozen=True, slots=True)
 class AgentSpec:
     package_name: str
     module: str
@@ -110,7 +143,15 @@ class AgentSpec:
     requirements: tuple[str, ...]
     required_remote_bootstrap_env: tuple[str, ...] = ()
     # Service scopes beyond the identity scopes; exclude Agent Identity tools.
+    # These are what the signed-in user consents to, so add a service here only
+    # when a tool calls it with the user's own token.
     delegated_oauth_scopes: tuple[str, ...] = ()
+    # Roles this agent's own runtime identity needs, beyond the baseline every
+    # Agent Identity in the project already has from Terraform. Declared here
+    # rather than in the environment so a fresh clone deploys with the access
+    # its tools require. The per-agent environment variables still override.
+    agent_identity_project_roles: tuple[str, ...] = ()
+    agent_identity_bucket_roles: tuple[BucketRoles, ...] = ()
     # Gemini Enterprise registration metadata, used by register_agent.py.
     registration_description: str = ""
     invocation_description: str = ""
@@ -235,6 +276,14 @@ AGENTS: dict[str, AgentSpec] = {
             "agents/recipe_card_agent/src/recipe_card_agent",
             "packages/gemini_shared/src/gemini_shared",
         ),
+        # Writes generated images and the finished deck to its own bucket, and
+        # reads bucket metadata to check the bucket exists before writing.
+        agent_identity_bucket_roles=(
+            BucketRoles(
+                "${RECIPE_CARD_BUCKET}",
+                (STORAGE_OBJECT_ADMIN, STORAGE_BUCKET_READER),
+            ),
+        ),
         requirements=COMMON_REQUIREMENTS + RECIPE_CARD_REQUIREMENTS,
         registration_description=(
             "Produces print-ready recipe cards for a pantry business. Writes the recipe, "
@@ -261,6 +310,14 @@ AGENTS: dict[str, AgentSpec] = {
             # The workflow calls the agent's tools rather than copying them.
             "agents/recipe_card_agent/src/recipe_card_agent",
             "packages/gemini_shared/src/gemini_shared",
+        ),
+        # Writes generated images and the finished deck to its own bucket, and
+        # reads bucket metadata to check the bucket exists before writing.
+        agent_identity_bucket_roles=(
+            BucketRoles(
+                "${RECIPE_CARD_BUCKET}",
+                (STORAGE_OBJECT_ADMIN, STORAGE_BUCKET_READER),
+            ),
         ),
         requirements=COMMON_REQUIREMENTS + RECIPE_CARD_REQUIREMENTS,
         registration_description=(
