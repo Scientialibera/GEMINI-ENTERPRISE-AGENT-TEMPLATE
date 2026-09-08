@@ -1,0 +1,5 @@
+variable "project_id" { type = string }
+variable "region" { type = string }
+variable "log_bucket_id" { type = string }
+variable "log_retention_days" { type = number }
+variable "notification_channels" { type = list(string) }

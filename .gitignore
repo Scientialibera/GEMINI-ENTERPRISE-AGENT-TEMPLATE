@@ -37,3 +37,15 @@ client_secret*.json
 credentials.json
 application_default_credentials.json
 deployment_result*.json
+
+# Terraform state and plans. State can contain resource detail and must never
+# be committed; tfvars can carry environment specifics.
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+*.tfplan
+crash.log
+crash.*.log
+tfplan
+provider-schema.json

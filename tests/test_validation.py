@@ -7,6 +7,7 @@ import importlib
 import json
 import logging
 import os
+import re
 import secrets
 import sys
 import tarfile
@@ -744,14 +745,15 @@ def test_baseline_roles_match_the_platform_stack():
     sys.path.insert(0, str(DEV))
     from iam.apply_agent_identity_iam import BASELINE_AGENT_IDENTITY_ROLES
 
-    # These are the roles the companion Terraform branch grants to the same
-    # principal set, in agent_identity_project_roles.
-    terraform_roles = {
-        "roles/aiplatform.expressUser",
-        "roles/serviceusage.serviceUsageConsumer",
-        "roles/parametermanager.parameterAccessor",
-        "roles/storage.objectViewer",
-    }
+    # Read from the stack itself rather than restated here, so the two cannot
+    # drift: a role added to one and not the other would leave a project built
+    # by the scripts subtly different from one built by Terraform.
+    variables = (DEV.parent / "infrastructure" / "variables.tf").read_text(encoding="utf-8")
+    block = variables[variables.index('variable "agent_identity_project_roles"') :]
+    block = block[: block.index("\n}")]
+    terraform_roles = set(re.findall(r'"(roles/[^"]+)"', block))
+
+    assert terraform_roles, "could not read agent_identity_project_roles from infrastructure/"
     assert set(BASELINE_AGENT_IDENTITY_ROLES) == terraform_roles
 
 

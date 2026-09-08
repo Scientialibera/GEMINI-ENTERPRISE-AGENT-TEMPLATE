@@ -21,8 +21,8 @@ recipe card exists in both forms so the two can be compared directly.
 | recipe_card_workflow | The same card as a fixed pipeline: write the recipe, generate the images, render the deck. Takes a dish name and returns a link. |
 
 The dev/ scripts target development projects and require ENVIRONMENT=dev for remote
-operations. The companion template/terraform-iac-only branch contains shared platform
-setup and baseline IAM, and is unchanged by adding an agent or a workflow. Deployment
+operations. infrastructure/ contains the shared platform setup and baseline IAM, and is
+unchanged by adding an agent or a workflow. Deployment
 never grants IAM to the caller itself. An optional per-agent IAM helper can apply
 explicitly configured roles to the exact Agent Identity after its runtime exists, but
 only when the caller already has permission to change IAM.
@@ -75,7 +75,7 @@ There are two ways to stand a project up, and they differ only in who grants the
 every Agent Identity needs.
 
 **With the platform stack**, the normal path for anything shared. Apply
-`template/terraform-iac-only` first: it owns the APIs, the baseline IAM, Secret Manager
+`infrastructure/` first: it owns the APIs, the baseline IAM, Secret Manager
 and observability, and it grants those roles to a trust-domain principal set covering
 every Agent Identity in the project, so an agent added later inherits them with no
 infrastructure change. Then use the scripts here for everything per-agent.
@@ -156,7 +156,7 @@ UI-only means the current Google/Gemini Enterprise workflow requires a console a
 
 | Requirement / permission | Needed by | Owner / grantor | How it is supplied | UI-only? |
 |---|---|---|---|---|
-| Access to the target GCP project | Developer / deployment identity | Cloud or platform admin | IAM, normally through the companion Terraform platform stack | No |
+| Access to the target GCP project | Developer / deployment identity | Cloud or platform admin | IAM, normally through the platform stack in infrastructure/ | No |
 | Create/update Agent Engine resources | Developer / deployment identity | Cloud or platform admin | IAM grant; `dev/deploy/deploy_dev.py` and `dev/deploy/update_dev.py` consume it | No |
 | Create the Agent Identity for a runtime | Agent Engine deployment | Google Agent Engine | `identity_type=AGENT_IDENTITY` in `dev/deploy/deploy_dev.py`; Google provisions the identity | No |
 | Baseline IAM shared by every Agent Identity | All deployed runtimes | Cloud/platform admin | Terraform principal-set bindings in the companion platform branch | No |

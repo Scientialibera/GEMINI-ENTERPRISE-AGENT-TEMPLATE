@@ -72,7 +72,7 @@ scripts can grant that baseline themselves; see below.
 
 | # | What | Where | When |
 |---|---|---|---|
-| 1 | APIs, baseline IAM, Secret Manager, observability | `template/terraform-iac-only` | Once per project |
+| 1 | APIs, baseline IAM, Secret Manager, observability | `infrastructure/` | Once per project |
 | 2 | Gemini Enterprise app | Console | Once per project; copy its engine ID |
 | 3 | OAuth client and consent screen | Console | Once per delegated agent |
 | 4 | Project, staging bucket, optional fixture | `config/bootstrap_dev.py` | Once per developer sandbox |
@@ -146,7 +146,7 @@ The CLI account needs permission for enabled setup operations. Python clients us
 for Parameter Manager and the fixture. Bootstrap reuses existing resources without
 assigning IAM or changing billing on an existing project.
 
-Use the companion Terraform stack for shared platform resources and baseline IAM.
+Use the platform stack in infrastructure/ for shared platform resources and baseline IAM.
 Review its grants before deploying an agent with new resource-access requirements.
 
 ## Agent Identity IAM

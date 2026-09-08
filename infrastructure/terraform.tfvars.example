@@ -1,0 +1,51 @@
+# Copy to terraform.tfvars for the target environment.
+# Replace every applicable REPLACE_... value.
+# Do not put secret payloads in this file.
+#
+# This stack owns shared platform state only: APIs, IAM, Secret Manager and
+# observability. It does not create Agent Engines or their runtime
+# configuration. Agents are built, deployed and registered from the agent
+# repository's dev helpers, and each agent reads its own Parameter Manager
+# parameter. Adding an agent therefore needs no change here.
+
+# EXISTING TARGET PROJECT
+project_id = "REPLACE_WITH_GCP_PROJECT_ID"
+region     = "us-central1"
+
+# SECRETS
+# Keep payloads out of terraform.tfvars. Populate managed_secrets only when this
+# stack owns the Secret Manager object. Supply matching TF_VAR_secret_values at apply.
+managed_secrets = {}
+
+# DEVELOPER DEPLOYMENT ACCESS
+# Prefer a Google Group. Leave empty when developer deployment helpers are not used.
+developer_deployer_members = [
+  "group:REPLACE_WITH_DEV_GROUP@example.com",
+]
+developer_parameter_access    = true
+developer_staging_bucket_name = "REPLACE_WITH_EXISTING_DEV_STAGING_BUCKET_NAME"
+
+# Required when developer_deployer_members is non-empty.
+# Organization project:
+developer_agent_identity_organization_id = "REPLACE_WITH_ORGANIZATION_ID"
+developer_agent_identity_orgless         = false
+# Orgless project instead:
+# developer_agent_identity_organization_id = null
+# developer_agent_identity_orgless         = true
+
+# BASELINE ROLES FOR EVERY AGENT IDENTITY IN THE PROJECT
+# Granted through a trust-domain principal set, so agents added later inherit
+# them without a Terraform change. Every role here reaches every current and
+# future runtime in the project. Access to a specific bucket, dataset or secret
+# belongs on the exact Agent Identity after deploy instead.
+agent_identity_project_roles = [
+  "roles/aiplatform.expressUser",
+  "roles/serviceusage.serviceUsageConsumer",
+  "roles/parametermanager.parameterAccessor",
+  "roles/storage.objectViewer",
+]
+
+# OBSERVABILITY
+# Covers every Agent Engine runtime in the project, grouped by runtime id.
+log_bucket_id      = null
+log_retention_days = 90
