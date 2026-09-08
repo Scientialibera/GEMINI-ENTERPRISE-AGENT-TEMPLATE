@@ -1161,6 +1161,8 @@ STEP_TITLE_FONT_SIZE = 20.0
 STEP_TITLE_BOX_HEIGHT = 0.62
 BULLET_FONT_SIZE = 10.0
 BULLET_LINE_HEIGHT = 0.56
+# Breathing room under a bullet, so consecutive rows do not touch.
+BULLET_ROW_PADDING = 0.10
 
 
 def add_top_tip(slide, text):
@@ -1278,28 +1280,49 @@ def add_step_block(slide, step, idx, x, y, w, h):
     available_h = h - (bullet_top - y) - 0.16
     line_h = BULLET_LINE_HEIGHT
     font_size = BULLET_FONT_SIZE
-    max_bullets = max(1, int(available_h / line_h))
-    if len(bullets) > max_bullets:
-        # Merge the overflow into the last visible bullet instead of dropping
-        # instructions, which would leave the cook a step short.
-        head, tail = bullets[: max_bullets - 1], bullets[max_bullets - 1 :]
-        bullets = [*head, " ".join(tail)]
-    by = bullet_top
+    # Each bullet is given the height its own wrapped text needs, so a long
+    # instruction is not clipped to the two lines a uniform row would allow.
+    bullet_w = text_w - 0.30
+    heights = [
+        max(
+            line_h,
+            _wrapped_line_count(limit_text(b, 160), bullet_w, font_size, _CHAR_WIDTH_RATIO)
+            * font_size
+            * _LINE_HEIGHT_RATIO
+            / _POINTS_PER_INCH
+            + BULLET_ROW_PADDING,
+        )
+        for b in bullets
+    ]
 
-    for bullet in bullets:
+    # Drop only what genuinely will not fit, merging the remainder into the last
+    # visible bullet so the cook is never left a step short.
+    used, shown = 0.0, 0
+    for height in heights:
+        if used + height > available_h and shown:
+            break
+        used += height
+        shown += 1
+    if shown < len(bullets):
+        merged = " ".join(bullets[max(0, shown - 1) :])
+        bullets = [*bullets[: max(0, shown - 1)], merged]
+        heights = heights[: len(bullets)]
+
+    by = bullet_top
+    for bullet, height in zip(bullets, heights, strict=False):
         add_checkbox(slide, x, by + 0.035, 0.12)
         add_text(
             slide,
             limit_text(bullet, 160),
             x + 0.26,
             by - 0.02,
-            text_w - 0.30,
-            line_h,
+            bullet_w,
+            height,
             font_size=font_size,
             valign="top",
             margin=0.01,
         )
-        by += line_h
+        by += height
 
     add_rule(slide, x, y + h - 0.05, w, C["line"], 0.55)
 
