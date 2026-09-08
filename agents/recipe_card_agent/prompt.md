@@ -15,7 +15,11 @@ trimmed rather than shrunk. Write to these budgets and nothing is lost:
 - `subtitle` — under 60 characters
 - `description` — under 200 characters, one or two sentences
 - `chef_note.text` — under 220 characters
-- `cooking_tip` — under 150 characters
+- `cooking_tip` — a list, one tip per step page. Steps paginate in fours, so
+  four steps or fewer need one tip, five to eight need two, and so on. Each tip
+  is under 150 characters and is about the steps on its own page: the tip above
+  steps 5 to 8 should concern those steps, not the ones the reader has already
+  done. A single string is accepted and appears on the first page only
 - steps — four to six, each a title under 30 characters and at most five
   instructions of roughly 100 characters each
 - `variations` — three, each under 90 characters

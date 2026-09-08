@@ -697,7 +697,7 @@ def add_header_page1(slide, recipe):
         color=C["white"],
         bold=True,
     )
-    add_pot_icon(slide, LEFT_W / 2, 1.22, 0.34, C["dark_blue"])
+    add_pot_icon(slide, LEFT_W / 2, 1.16, 0.58, C["dark_blue"])
     add_text(
         slide,
         recipe.get("title", ""),
@@ -1138,6 +1138,7 @@ CHEF_NOTE_FONT_SIZE = 11.5
 VARIATIONS_GAP = 0.30
 VARIATIONS_MIN_TOP = 8.30
 VARIATIONS_MAX_TOP = 10.30
+VARIATIONS_MIN_TOP_SHORT_PAGE = 6.40
 VARIATIONS_TO_BANNER = 1.84
 STEP_BLOCK_GAP = 0.24
 STEP_BLOCK_MIN_HEIGHT = 2.60
@@ -1154,7 +1155,19 @@ BULLET_LINE_HEIGHT = 0.56
 
 
 def add_top_tip(slide, text):
-    tip = f"Cooking Tip: {limit_text(text, 200)}"
+    """Draw the tip banner, or nothing when this page has no tip.
+
+    A page without a tip returns the line the steps would start under anyway,
+    so a missing tip closes the gap rather than leaving an empty yellow bar.
+    """
+    body = clean(text).strip()
+    if not body:
+        rule_y = 0.30 + TIP_VERTICAL_PADDING
+        add_rule(slide, 0.34, rule_y, 4.55, C["line"], 0.8)
+        add_rule(slide, 5.12, rule_y, 4.44, C["line"], 0.8)
+        return rule_y
+
+    tip = f"Cooking Tip: {limit_text(body, 200)}"
     lines = max(1, math.ceil(len(tip) / TIP_CHARS_PER_LINE))
     box_h = lines * TIP_LINE_HEIGHT + TIP_VERTICAL_PADDING
 
@@ -1342,13 +1355,25 @@ def add_bottom_banner(slide, recipe, y):
     )
 
 
+def cooking_tip_for_page(recipe: dict[str, Any], page_index: int) -> str:
+    """The tip banner for one step page.
+
+    Steps paginate in fours, so a long recipe has more than one step page and
+    repeating a single tip across them reads as a fault. ``cooking_tip`` may
+    therefore be a list, one entry per page, each about the steps that page
+    shows. A plain string still works and is used on the first page only,
+    because a tip about boiling pasta is noise above the steps for the sauce.
+    """
+    tips = recipe.get("cooking_tip")
+    if isinstance(tips, list):
+        entries = [clean(tip) for tip in tips if clean(tip)]
+        return entries[page_index] if page_index < len(entries) else ""
+    return clean(tips) if page_index == 0 else ""
+
+
 def add_steps_slide(prs, recipe, page_index, step_start, steps_on_page, total_step_pages):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    rule_y = add_top_tip(
-        slide,
-        recipe.get("cooking_tip")
-        or "Reserve a little cooking liquid before draining. It helps the sauce coat evenly.",
-    )
+    rule_y = add_top_tip(slide, cooking_tip_for_page(recipe, page_index))
 
     # The grid starts below the banner, which grows when the tip wraps.
     top = rule_y + 0.18
@@ -1386,7 +1411,10 @@ def add_steps_slide(prs, recipe, page_index, step_start, steps_on_page, total_st
         # line, so short steps do not leave a band of empty page above the
         # variations. They are held within the space the footer leaves.
         steps_end = max(column_y) - STEP_BLOCK_GAP
-        variations_y = min(VARIATIONS_MAX_TOP, max(VARIATIONS_MIN_TOP, steps_end + VARIATIONS_GAP))
+        # A trailing page with one or two steps ends high, so the panels are
+        # allowed to rise with it rather than leaving a band of empty page.
+        floor = VARIATIONS_MIN_TOP_SHORT_PAGE if len(steps_on_page) <= 2 else VARIATIONS_MIN_TOP
+        variations_y = min(VARIATIONS_MAX_TOP, max(floor, steps_end + VARIATIONS_GAP))
         add_variations_panel(slide, recipe, variations_y)
         add_bottom_banner(slide, recipe, variations_y + VARIATIONS_TO_BANNER)
         add_footer(slide, recipe)

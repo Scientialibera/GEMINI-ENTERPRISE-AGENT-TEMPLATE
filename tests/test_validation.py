@@ -626,3 +626,28 @@ def test_workflow_reuses_agent_tools(workflow):
     }
     assert used, "no stage calls a tool"
     assert used <= shared, "a workflow stage defines its own copy of a tool"
+
+
+def test_cooking_tip_is_per_step_page():
+    """Steps paginate in fours, so a long recipe carries one tip per page.
+
+    Repeating a single tip above every page reads as a rendering fault, and a
+    tip about the opening steps is noise above the closing ones.
+    """
+    from recipe_card_agent.tools.card_template import cooking_tip_for_page
+
+    recipe = {"cooking_tip": ["Tip for steps 1-4.", "Tip for steps 5-8."]}
+    assert cooking_tip_for_page(recipe, 0) == "Tip for steps 1-4."
+    assert cooking_tip_for_page(recipe, 1) == "Tip for steps 5-8."
+    # A page beyond the supplied tips shows none rather than repeating one.
+    assert cooking_tip_for_page(recipe, 2) == ""
+
+
+def test_single_cooking_tip_appears_once():
+    """A plain string stays supported, but only on the first page."""
+    from recipe_card_agent.tools.card_template import cooking_tip_for_page
+
+    recipe = {"cooking_tip": "Reserve some pasta water."}
+    assert cooking_tip_for_page(recipe, 0) == "Reserve some pasta water."
+    assert cooking_tip_for_page(recipe, 1) == ""
+    assert cooking_tip_for_page({}, 0) == ""

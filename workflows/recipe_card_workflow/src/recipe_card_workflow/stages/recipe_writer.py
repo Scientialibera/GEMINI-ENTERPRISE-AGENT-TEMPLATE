@@ -25,7 +25,9 @@ trimmed rather than shrunk. Write to these budgets:
 - subtitle: under 60 characters
 - description: under 200 characters
 - chef_note.text: under 220 characters
-- cooking_tip: under 150 characters
+- cooking_tip: a list, one tip per step page. Steps paginate in fours, so four
+  steps or fewer need one tip, five to eight need two, and so on. Each tip is
+  under 150 characters and concerns the steps on its own page
 - steps: four to six, each title under 30 characters, each with 2 to 5
   instructions of roughly 100 characters
 - variations: three, each under 90 characters
@@ -56,7 +58,7 @@ Shape:
   "tools": ["Large Pot"],
   "pantry": ["Olive Oil", "Salt"],
   "ingredients": [{"quantity": "12 oz", "item": "Spaghetti"}],
-  "cooking_tip": "One tip.",
+  "cooking_tip": ["One tip per step page."],
   "steps": [{"title": "Boil the pasta", "body": "One instruction.\\nAnother."}],
   "variations": ["One variation."],
   "variation_ingredients": [{"quantity": "1/2 cup", "item": "Manchego"}],
