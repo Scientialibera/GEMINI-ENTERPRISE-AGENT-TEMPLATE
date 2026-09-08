@@ -47,6 +47,13 @@ GAP = 0.28
 RIGHT_X = LEFT_W + GAP
 RIGHT_W = PAGE_W - RIGHT_X - 0.22
 
+# The hero photograph runs to the top and right edges of the sheet, with the
+# blue panel butting against it. Insetting it leaves a white margin the
+# reference cards do not have.
+HERO_X = LEFT_W
+HERO_W = PAGE_W - LEFT_W
+HERO_H = 7.42
+
 C = {
     "blue": "6F97C5",
     "dark_blue": "07347A",
@@ -113,6 +120,9 @@ GS_URI_PREFIX = "gs://"
 # same image is referenced several times in a card, so it is fetched once.
 _RESOLVED_IMAGES: dict[str, str] = {}
 
+# Scratch directory for the current render, used for keyed line drawings.
+_INK_DIRECTORY = ""
+
 
 def _resolve(path: Any) -> str:
     """Return a local path for a local path or an already-downloaded URI."""
@@ -131,6 +141,9 @@ def prefetch_images(data: dict[str, Any], project_id: str, directory: str) -> No
     """
     from gemini_shared.connectors.cloud_storage import download_bytes
 
+    global _INK_DIRECTORY
+    _INK_DIRECTORY = directory
+    _TRANSPARENT_CACHE.clear()
     _RESOLVED_IMAGES.clear()
     for uri in sorted(_image_uris(data)):
         target = Path(directory) / f"{hashlib.sha256(uri.encode()).hexdigest()[:16]}.png"
@@ -387,6 +400,63 @@ def add_picture_crop(slide, path: str, x, y, w, h):
     return pic
 
 
+# A line drawing arrives as ink on a solid white field, and dropped onto the
+# cream variations panel that field reads as a white patch stuck to the page.
+# Keying the white out lets the ink sit directly on the panel, the way the
+# reference cards set their sketches.
+_INK_WHITE_CUTOFF = 232
+_INK_SOFT_EDGE = 30
+_TRANSPARENT_CACHE: dict[str, str] = {}
+
+
+def _transparent_ink(path: str, directory: str) -> str:
+    """Return a copy of a line drawing with its white background removed.
+
+    Pixels at or above the cutoff become fully transparent and the band just
+    below it fades, so the strokes keep a soft edge instead of an aliased one.
+    """
+    resolved = _resolve(path)
+    if not resolved or not os.path.exists(resolved):
+        return resolved
+    if resolved in _TRANSPARENT_CACHE:
+        return _TRANSPARENT_CACHE[resolved]
+
+    try:
+        with Image.open(resolved) as source:
+            image = source.convert("RGBA")
+        alpha = []
+        for pixel in image.getdata():
+            lightness = min(pixel[0], pixel[1], pixel[2])
+            if lightness >= _INK_WHITE_CUTOFF:
+                alpha.append(0)
+            elif lightness >= _INK_WHITE_CUTOFF - _INK_SOFT_EDGE:
+                fade = (_INK_WHITE_CUTOFF - lightness) / _INK_SOFT_EDGE
+                alpha.append(int(255 * fade))
+            else:
+                alpha.append(255)
+        image.putalpha(Image.new("L", image.size).point(lambda _: 0))
+        image.putdata([(p[0], p[1], p[2], a) for p, a in zip(image.getdata(), alpha, strict=True)])
+        target = Path(directory) / f"ink-{hashlib.sha256(resolved.encode()).hexdigest()[:12]}.png"
+        image.save(target)
+        _TRANSPARENT_CACHE[resolved] = str(target)
+        return str(target)
+    except Exception:
+        # A drawing that cannot be keyed is still better placed than dropped.
+        return resolved
+
+
+def add_ink_image(slide, path, x, y, w, h, *, placeholder="SKETCH"):
+    """Place a line drawing with its white background keyed out."""
+    if exists(path) and _INK_DIRECTORY:
+        keyed = _transparent_ink(path, _INK_DIRECTORY)
+        if keyed and os.path.exists(keyed):
+            try:
+                return add_picture_contain(slide, keyed, x, y, w, h)
+            except Exception:
+                pass
+    return add_image(slide, path, x, y, w, h, crop=False, placeholder=placeholder, quiet=True)
+
+
 def add_picture_contain(slide, path: str, x, y, w, h):
     """Add image fully contained in target box, preserving aspect ratio."""
     if not exists(path):
@@ -409,7 +479,14 @@ def add_picture_contain(slide, path: str, x, y, w, h):
     )
 
 
-def add_image(slide, path, x, y, w, h, *, crop=True, placeholder="IMAGE"):
+def add_image(slide, path, x, y, w, h, *, crop=True, placeholder="IMAGE", quiet=False):
+    """Place an image, or a placeholder when it is missing or unreadable.
+
+    ``quiet`` draws nothing but the label. A boxed placeholder is right for a
+    large area such as a step photograph, where the gap should be obvious, but
+    wrong for a small inline cutout, where the box is more distracting than the
+    absence it marks.
+    """
     if exists(path):
         try:
             return (
@@ -420,7 +497,8 @@ def add_image(slide, path, x, y, w, h, *, crop=True, placeholder="IMAGE"):
         except Exception:
             pass
 
-    add_box(slide, x, y, w, h, C["grey"], C["line"], radius=True)
+    if not quiet:
+        add_box(slide, x, y, w, h, C["grey"], C["line"], radius=True)
     add_text(
         slide,
         placeholder,
@@ -598,7 +676,7 @@ def add_pot_icon(slide, cx, cy, w, color):
 
 
 def add_header_page1(slide, recipe):
-    add_box(slide, 0, 0, LEFT_W, 3.70, C["blue"])
+    add_box(slide, 0, 0, LEFT_W, 4.30, C["blue"])
     add_rule(slide, 0, 0.72, LEFT_W, C["white"], 0.8)
     add_clock_icon(slide, 0.52, 0.36, 0.24, C["white"])
     add_text(
@@ -659,41 +737,60 @@ def add_ingredient_rail(slide, recipe):
 
     panel_y = 4.45
     panel_h = 7.94
-    add_box(slide, 0.27, panel_y, LEFT_W - 0.54, panel_h, C["white"], C["line"], radius=True)
+    add_box(slide, 0.27, panel_y, LEFT_W - 0.54, panel_h, C["white"], C["border"], radius=True)
 
     ingredients = list(recipe.get("ingredients") or [])
     max_rows = min(len(ingredients), 12)
-    row_h = min(0.66, (panel_h - 0.35) / max(1, max_rows))
-    start_y = panel_y + 0.32
+    # Rows sit at a constant pitch from the top of the panel, as on the
+    # reference cards, and only tighten when a long list would overflow.
+    # Spreading them to fill the panel instead leaves distracting gaps between
+    # a short list's rows.
+    usable_h = panel_h - 2 * INGREDIENT_PANEL_PADDING
+    row_h = min(INGREDIENT_ROW_MAX_HEIGHT, usable_h / max(1, max_rows))
+    start_y = panel_y + INGREDIENT_PANEL_PADDING
 
     for i in range(max_rows):
         ing = ingredients[i]
         y = start_y + i * row_h
         img = ing.get("image_path") or ing.get("imagePath")
-        add_circle_image(
-            slide, img, 0.61, y + row_h * 0.39, min(0.42, row_h * 0.70), clean(ing.get("item"), "?")
+        # The reference cards set the ingredient as a cutout on the panel with
+        # no ring around it, so the photograph reads as the ingredient itself
+        # rather than as an avatar of one.
+        add_image(
+            slide,
+            img,
+            0.40,
+            y + row_h * 0.10,
+            0.62,
+            row_h * 0.80,
+            crop=False,
+            placeholder=clean(ing.get("item"), "?")[:1].upper(),
+            quiet=True,
         )
         add_text(
             slide,
             ing.get("quantity", ""),
-            1.02,
-            y + 0.08,
-            0.58,
-            0.32,
-            font_size=8.5 if row_h < 0.58 else 10.2,
+            1.06,
+            y + row_h * 0.20,
+            0.56,
+            row_h * 0.60,
+            font_size=INGREDIENT_FONT_SIZE,
             color=C["ink"],
             align="right",
         )
-        add_vrule(slide, 1.72, y + 0.08, 0.31, C["muted"], 0.7)
-        label = clean(ing.get("item")) + (f"\n{clean(ing.get('note'))}" if ing.get("note") else "")
+        add_vrule(slide, 1.72, y + row_h * 0.22, row_h * 0.56, C["border"], 0.7)
+        note = clean(ing.get("note"))
+        label = clean(ing.get("item"))
+        if note:
+            label = f"{label}\n{note}"
         add_text(
             slide,
             label,
             1.82,
-            y + 0.04,
-            1.20,
+            y + row_h * 0.14,
+            1.22,
             row_h * 0.72,
-            font_size=8.4 if row_h < 0.58 else 10.0,
+            font_size=INGREDIENT_FONT_SIZE,
             color=C["ink"],
             margin=0.01,
         )
@@ -716,10 +813,10 @@ def add_overview_right(slide, recipe):
     add_image(
         slide,
         recipe.get("hero_image_path") or recipe.get("heroImagePath"),
-        RIGHT_X,
+        HERO_X,
         0.0,
-        RIGHT_W,
-        7.22,
+        HERO_W,
+        HERO_H,
         crop=True,
         placeholder="HERO IMAGE",
     )
@@ -845,15 +942,13 @@ def add_overview_right(slide, recipe):
         valign="top",
         margin=0.01,
     )
-    add_image(
+    add_ink_image(
         slide,
         recipe.get("decorative_image_path") or recipe.get("decorativeImagePath"),
-        RIGHT_X + 5.38,
-        10.85,
-        0.66,
-        0.55,
-        crop=False,
-        placeholder="SKETCH",
+        RIGHT_X + 4.92,
+        10.62,
+        1.24,
+        0.92,
     )
 
     banner_y = 11.62
@@ -971,6 +1066,14 @@ TIP_VERTICAL_PADDING = 0.30
 
 # Floor for a step bullet line, below which the text stops being readable.
 # Body copy is a fixed size across every card, so the design stays consistent.
+INGREDIENT_FONT_SIZE = 10.0
+INGREDIENT_ROW_MAX_HEIGHT = 0.72
+INGREDIENT_PANEL_PADDING = 0.22
+# The step photograph is portrait and fills the column beside the text, as on
+# the reference cards, rather than sitting in a fixed square.
+STEP_IMAGE_WIDTH_FRACTION = 0.46
+STEP_IMAGE_MAX_WIDTH = 2.10
+STEP_IMAGE_ASPECT = 1.32
 STEP_TITLE_FONT_SIZE = 20.0
 # Room for a two-line step name at that size.
 STEP_TITLE_BOX_HEIGHT = 0.62
@@ -1024,11 +1127,14 @@ def add_step_block(slide, step, idx, x, y, w, h):
     # Always reserve a standardized image area for every step, even when an image
     # has not yet been generated. This is deliberate: the image agent can fill the
     # placeholder later without changing layout geometry.
-    img_w = min(1.95, w * 0.42)
+    # The reference cards set the step photograph in portrait, filling the
+    # column beside the text rather than sitting in a fixed square. Deriving
+    # the height from the width keeps that proportion whatever the panel size.
+    img_w = min(STEP_IMAGE_MAX_WIDTH, w * STEP_IMAGE_WIDTH_FRACTION)
     img_x = x + w - img_w
     bullet_top = y + STEP_TITLE_BOX_HEIGHT + 0.06
     img_y = bullet_top + 0.06
-    img_h = h - 0.95
+    img_h = min(h - (img_y - y) - 0.12, img_w * STEP_IMAGE_ASPECT)
     text_w = w - img_w - 0.16
     add_image(
         slide,
@@ -1098,15 +1204,13 @@ def add_variations_panel(slide, recipe, y):
         add_text(
             slide, limit_text(variation, 118), 0.88, by, 6.30, 0.20, font_size=10.7, valign="top"
         )
-    add_image(
+    add_ink_image(
         slide,
         recipe.get("variations_image_path") or recipe.get("decorative_image_path"),
-        8.10,
-        y + 0.24,
-        1.05,
-        0.88,
-        crop=False,
-        placeholder="SKETCH",
+        7.86,
+        y + 0.16,
+        1.52,
+        1.14,
     )
 
 
