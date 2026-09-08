@@ -941,7 +941,7 @@ def add_overview_right(slide, recipe):
         9.48,
         2.55,
         1.55,
-        font_size=11.5,
+        font_size=CHEF_NOTE_FONT_SIZE,
         valign="top",
         margin=0.01,
     )
@@ -1085,6 +1085,21 @@ INGREDIENT_PANEL_MAX_BOTTOM = 12.42
 STEP_IMAGE_WIDTH_FRACTION = 0.46
 STEP_IMAGE_MAX_WIDTH = 2.10
 STEP_IMAGE_ASPECT = 1.32
+# Steps are measured, not given a share of a fixed grid, so a short step does
+# not reserve the same block as a long one.
+CHEF_NOTE_FONT_SIZE = 11.5
+# The variations panel and bottom banner follow the steps, within these bounds.
+VARIATIONS_GAP = 0.30
+VARIATIONS_MIN_TOP = 8.30
+VARIATIONS_MAX_TOP = 10.30
+VARIATIONS_TO_BANNER = 1.84
+STEP_BLOCK_GAP = 0.24
+STEP_BLOCK_MIN_HEIGHT = 2.60
+STEP_BLOCK_MAX_HEIGHT = 4.30
+# Where the step columns must stop: higher on the last page, which also carries
+# the variations panel and the bottom banner.
+STEPS_PAGE_BOTTOM = 12.60
+STEPS_LAST_PAGE_BOTTOM = 8.90
 STEP_TITLE_FONT_SIZE = 20.0
 # Room for a two-line step name at that size.
 STEP_TITLE_BOX_HEIGHT = 0.62
@@ -1118,6 +1133,31 @@ def add_top_tip(slide, text):
     return rule_y
 
 
+def step_block_height(step: dict[str, Any], width: float) -> float:
+    """Height this step needs: its title, its bullets and its photograph.
+
+    Steps differ in length, so each block is measured rather than given a
+    share of a fixed grid. The photograph sets a floor, because a block
+    shorter than its own image would crop it.
+    """
+    bullets = split_instructions(step)
+    image_w = min(STEP_IMAGE_MAX_WIDTH, width * STEP_IMAGE_WIDTH_FRACTION)
+    text_w = width - image_w - 0.16 - 0.30
+
+    lines = sum(
+        _wrapped_line_count(limit_text(bullet, 160), text_w, BULLET_FONT_SIZE, _CHAR_WIDTH_RATIO)
+        for bullet in bullets
+    )
+    # The text sets the height. The photograph then fills whatever the text
+    # asked for, rather than imposing a floor of its own: letting the image
+    # dictate the minimum made every block the same height whatever its
+    # content, which is the fixed grid this replaced.
+    text_h = max(len(bullets), lines) * BULLET_LINE_HEIGHT * 0.62 + len(bullets) * 0.12
+
+    content_h = STEP_TITLE_BOX_HEIGHT + 0.12 + text_h
+    return min(STEP_BLOCK_MAX_HEIGHT, max(STEP_BLOCK_MIN_HEIGHT, content_h + 0.22))
+
+
 def add_step_block(slide, step, idx, x, y, w, h):
     title = f"{idx + 1}. {clean(step.get('title'), 'Step')}"
     # Two lines, so a longer step name sets at the same size as a short one.
@@ -1145,7 +1185,9 @@ def add_step_block(slide, step, idx, x, y, w, h):
     img_x = x + w - img_w
     bullet_top = y + STEP_TITLE_BOX_HEIGHT + 0.06
     img_y = bullet_top + 0.06
-    img_h = min(h - (img_y - y) - 0.12, img_w * STEP_IMAGE_ASPECT)
+    # The photograph fills the block beside the text, so a taller step gets a
+    # taller image and the two always end together.
+    img_h = h - (img_y - y) - 0.12
     text_w = w - img_w - 0.16
     add_image(
         slide,
@@ -1264,22 +1306,38 @@ def add_steps_slide(prs, recipe, page_index, step_start, steps_on_page, total_st
 
     # The grid starts below the banner, which grows when the tip wraps.
     top = rule_y + 0.18
-    row_two = top + 3.84
-    blocks = [
-        (0.34, top, 4.45, 3.60),
-        (5.18, top, 4.38, 3.60),
-        (0.34, row_two, 4.45, 3.60),
-        (5.18, row_two, 4.38, 3.60),
-    ]
-    add_vrule(slide, 4.98, top - 0.10, 7.65, C["line"], 0.75)
+    is_last = page_index == total_step_pages - 1
+    bottom = STEPS_LAST_PAGE_BOTTOM if is_last else STEPS_PAGE_BOTTOM
+
+    # Two independent columns rather than a fixed grid. Each step is given the
+    # height its own text and photograph need, so a three-bullet step does not
+    # reserve the same block as a six-bullet one and leave a gap under it. This
+    # is what the reference cards do: the second step in a column starts where
+    # the first one ended, not at a shared row line.
+    columns = ((0.34, 4.45), (5.18, 4.38))
+    placed: list[tuple[float, float, float, float]] = []
+    column_y = [top, top]
+    for index, step in enumerate(steps_on_page):
+        column = index % 2
+        x, width = columns[column]
+        # Never run past the space this page has for steps.
+        height = min(step_block_height(step, width), bottom - column_y[column])
+        placed.append((x, column_y[column], width, height))
+        column_y[column] += height + STEP_BLOCK_GAP
+
+    add_vrule(slide, 4.98, top - 0.10, max(column_y) - top - STEP_BLOCK_GAP + 0.10, C["line"], 0.75)
 
     for i, step in enumerate(steps_on_page):
-        add_step_block(slide, step, step_start + i, *blocks[i])
+        add_step_block(slide, step, step_start + i, *placed[i])
 
-    is_last = page_index == total_step_pages - 1
     if is_last:
-        add_variations_panel(slide, recipe, 9.02)
-        add_bottom_banner(slide, recipe, 10.86)
+        # The closing panels follow the steps rather than sitting at a fixed
+        # line, so short steps do not leave a band of empty page above the
+        # variations. They are held within the space the footer leaves.
+        steps_end = max(column_y) - STEP_BLOCK_GAP
+        variations_y = min(VARIATIONS_MAX_TOP, max(VARIATIONS_MIN_TOP, steps_end + VARIATIONS_GAP))
+        add_variations_panel(slide, recipe, variations_y)
+        add_bottom_banner(slide, recipe, variations_y + VARIATIONS_TO_BANNER)
         add_footer(slide, recipe)
     else:
         add_text(
