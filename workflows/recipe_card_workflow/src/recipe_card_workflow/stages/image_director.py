@@ -26,8 +26,9 @@ Recipe:
 
 Call `generate_recipe_images` exactly twice.
 
-**First the ingredients, with mode="parallel"**, one per ingredient in the
-recipe, named `ingredient-<item>`. Every ingredient prompt ends with:
+**First the ingredients, with mode="parallel"**, one per entry in both
+`ingredients` and `variation_ingredients`, named `ingredient-<item>`. Every
+ingredient prompt ends with:
 
 > Single ingredient, isolated and centred on a pure white background, soft even
 > studio lighting, sharp focus, photorealistic product photography. Plain
@@ -46,12 +47,21 @@ Open each prompt with a named camera angle, then the action, then this scene:
 
 > Editorial food photography for a premium cooking magazine, shot on a 50mm
 > lens at f/2.8 with shallow depth of field. A bright, characterful kitchen:
-> honed white Carrara marble countertop with grey veining, warm brass fixtures,
-> pale oak cutting boards, a navy linen napkin, and unbranded stainless, copper
-> and cream stoneware cookware. Soft directional window light from the left
+> honed white Carrara marble countertop with grey veining, pale oak cutting
+> boards, a navy linen napkin, and unbranded stainless, copper and cream
+> stoneware cookware. Soft directional window light from the left
 > with gentle falloff and warm highlights. Rich saturated colour, crisp texture
 > on the food, shallow shadows, styled with a few loose herbs or scattered salt
 > for life. Appetising and tactile, photorealistic, no text or watermark.
+
+The kitchen has to make sense. Show the surface the action actually happens on
+and nothing that contradicts it: a pan on a hob needs the hob visible under it,
+grilling needs a grill, knife work needs a board. Never place a tap or sink
+beside a cooking surface, and never show a fixture with nothing it belongs to.
+Anything not used in that step stays out of frame or sits softly out of focus
+behind it. The room is the same room in every shot, seen from a different
+angle, so the counter, cookware and light stay consistent while what is on the
+counter changes with the step.
 
 Vary the angle down the series: hero an overhead flat lay, then a 45-degree
 three-quarter view, an overhead macro, a close three-quarter view. Show the

@@ -726,6 +726,56 @@ def add_header_page1(slide, recipe):
     )
 
 
+def add_ingredient_row(slide, ing, y: float, row_h: float, *, muted: bool = False) -> None:
+    """Draw one ingredient: cutout, quantity, rule, label.
+
+    ``muted`` sets the row in the secondary colour, which is how an ingredient
+    that belongs to a variation is distinguished from one the recipe requires.
+    """
+    colour = C["muted"] if muted else C["ink"]
+    # The reference cards set the ingredient as a cutout on the panel with no
+    # ring around it, so the photograph reads as the ingredient itself rather
+    # than as an avatar of one.
+    add_image(
+        slide,
+        ing.get("image_path") or ing.get("imagePath"),
+        0.40,
+        y + row_h * 0.10,
+        0.62,
+        row_h * 0.80,
+        crop=False,
+        placeholder=clean(ing.get("item"), "?")[:1].upper(),
+        quiet=True,
+    )
+    add_text(
+        slide,
+        ing.get("quantity", ""),
+        1.06,
+        y + row_h * 0.20,
+        0.56,
+        row_h * 0.60,
+        font_size=INGREDIENT_FONT_SIZE,
+        color=colour,
+        align="right",
+    )
+    add_vrule(slide, 1.72, y + row_h * 0.22, row_h * 0.56, C["border"], 0.7)
+    note = clean(ing.get("note"))
+    label = clean(ing.get("item"))
+    if note:
+        label = label + "\n" + note
+    add_text(
+        slide,
+        label,
+        1.82,
+        y + row_h * 0.14,
+        1.22,
+        row_h * 0.72,
+        font_size=INGREDIENT_FONT_SIZE,
+        color=colour,
+        margin=0.01,
+    )
+
+
 def add_ingredient_rail(slide, recipe):
     y0 = 3.86
     add_box(slide, 0.68, y0, 2.10, 0.38, C["yellow"], C["yellow"], radius=True)
@@ -742,8 +792,19 @@ def add_ingredient_rail(slide, recipe):
         align="center",
     )
 
-    ingredients = list(recipe.get("ingredients") or [])
-    max_rows = min(len(ingredients), INGREDIENT_MAX_ROWS)
+    core = list(recipe.get("ingredients") or [])
+    # Ingredients a variation needs are listed too, under their own heading, so
+    # a cook can shop for one without reading the whole method. They are kept
+    # apart from the core list because they are optional: mixed in, an optional
+    # item reads as required.
+    extras = list(recipe.get("variation_ingredients") or [])
+
+    max_rows = min(len(core), INGREDIENT_MAX_ROWS)
+    remaining = max(0, INGREDIENT_MAX_ROWS - max_rows)
+    extra_rows = min(len(extras), remaining)
+    total_rows = max_rows + extra_rows
+    # The heading costs the height of one row.
+    heading_rows = 1 if extra_rows else 0
 
     # Rows keep a constant pitch and the panel is drawn to fit them, so a short
     # list gives a shorter panel rather than one with an empty lower half.
@@ -752,58 +813,36 @@ def add_ingredient_rail(slide, recipe):
     panel_y = INGREDIENT_PANEL_TOP
     available_h = INGREDIENT_PANEL_MAX_BOTTOM - panel_y
     usable_h = available_h - 2 * INGREDIENT_PANEL_PADDING
-    row_h = min(INGREDIENT_ROW_MAX_HEIGHT, usable_h / max(1, max_rows))
+    row_h = min(INGREDIENT_ROW_MAX_HEIGHT, usable_h / max(1, total_rows + heading_rows))
     row_h = max(row_h, INGREDIENT_ROW_MIN_HEIGHT)
-    panel_h = min(available_h, row_h * max_rows + 2 * INGREDIENT_PANEL_PADDING)
+    panel_h = min(
+        available_h,
+        row_h * (total_rows + heading_rows) + 2 * INGREDIENT_PANEL_PADDING,
+    )
 
     add_box(slide, 0.27, panel_y, LEFT_W - 0.54, panel_h, C["white"], C["border"], radius=True)
+    ingredients = core
     start_y = panel_y + INGREDIENT_PANEL_PADDING
 
     for i in range(max_rows):
-        ing = ingredients[i]
-        y = start_y + i * row_h
-        img = ing.get("image_path") or ing.get("imagePath")
-        # The reference cards set the ingredient as a cutout on the panel with
-        # no ring around it, so the photograph reads as the ingredient itself
-        # rather than as an avatar of one.
-        add_image(
-            slide,
-            img,
-            0.40,
-            y + row_h * 0.10,
-            0.62,
-            row_h * 0.80,
-            crop=False,
-            placeholder=clean(ing.get("item"), "?")[:1].upper(),
-            quiet=True,
-        )
+        add_ingredient_row(slide, ingredients[i], start_y + i * row_h, row_h)
+
+    if extra_rows:
+        heading_y = start_y + max_rows * row_h
+        add_rule(slide, 0.42, heading_y + row_h * 0.30, LEFT_W - 0.84, C["border"], 0.7)
         add_text(
             slide,
-            ing.get("quantity", ""),
-            1.06,
-            y + row_h * 0.20,
-            0.56,
-            row_h * 0.60,
-            font_size=INGREDIENT_FONT_SIZE,
-            color=C["ink"],
-            align="right",
+            "FOR THE VARIATIONS",
+            0.42,
+            heading_y + row_h * 0.42,
+            LEFT_W - 0.84,
+            row_h * 0.40,
+            font_size=8.4,
+            color=C["dark_blue"],
+            bold=True,
         )
-        add_vrule(slide, 1.72, y + row_h * 0.22, row_h * 0.56, C["border"], 0.7)
-        note = clean(ing.get("note"))
-        label = clean(ing.get("item"))
-        if note:
-            label = f"{label}\n{note}"
-        add_text(
-            slide,
-            label,
-            1.82,
-            y + row_h * 0.14,
-            1.22,
-            row_h * 0.72,
-            font_size=INGREDIENT_FONT_SIZE,
-            color=C["ink"],
-            margin=0.01,
-        )
+        for i in range(extra_rows):
+            add_ingredient_row(slide, extras[i], heading_y + (i + 1) * row_h, row_h, muted=True)
 
     if len(ingredients) > max_rows:
         add_text(
@@ -1321,18 +1360,23 @@ def add_steps_slide(prs, recipe, page_index, step_start, steps_on_page, total_st
     # reserve the same block as a six-bullet one and leave a gap under it. This
     # is what the reference cards do: the second step in a column starts where
     # the first one ended, not at a shared row line.
-    columns = ((0.34, 4.45), (5.18, 4.38))
+    # One step alone on a page uses the full width rather than leaving an empty
+    # second column beside it, which reads as a rendering fault.
+    columns = ((0.34, 9.22),) if len(steps_on_page) == 1 else ((0.34, 4.45), (5.18, 4.38))
     placed: list[tuple[float, float, float, float]] = []
-    column_y = [top, top]
+    column_y = [top] * len(columns)
     for index, step in enumerate(steps_on_page):
-        column = index % 2
+        column = index % len(columns)
         x, width = columns[column]
         # Never run past the space this page has for steps.
         height = min(step_block_height(step, width), bottom - column_y[column])
         placed.append((x, column_y[column], width, height))
         column_y[column] += height + STEP_BLOCK_GAP
 
-    add_vrule(slide, 4.98, top - 0.10, max(column_y) - top - STEP_BLOCK_GAP + 0.10, C["line"], 0.75)
+    if len(columns) > 1:
+        add_vrule(
+            slide, 4.98, top - 0.10, max(column_y) - top - STEP_BLOCK_GAP + 0.10, C["line"], 0.75
+        )
 
     for i, step in enumerate(steps_on_page):
         add_step_block(slide, step, step_start + i, *placed[i])

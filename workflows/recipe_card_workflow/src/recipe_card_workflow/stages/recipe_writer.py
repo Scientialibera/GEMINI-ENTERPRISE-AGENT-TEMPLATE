@@ -29,6 +29,9 @@ trimmed rather than shrunk. Write to these budgets:
 - steps: four to six, each title under 30 characters, each with 2 to 5
   instructions of roughly 100 characters
 - variations: three, each under 90 characters
+- bottom_banner_text: exactly two short lines, under 26 characters each
+- variation_ingredients: anything a variation needs that the core list does
+  not already carry, same shape as ingredients; omit when there is none
 - ingredients: eight to twelve, each item under 26 characters
 
 The ingredient list and the method must agree. Every ingredient listed has to
@@ -56,6 +59,7 @@ Shape:
   "cooking_tip": "One tip.",
   "steps": [{"title": "Boil the pasta", "body": "One instruction.\\nAnother."}],
   "variations": ["One variation."],
+  "variation_ingredients": [{"quantity": "1/2 cup", "item": "Manchego"}],
   "allergens": ["wheat/gluten"],
   "possible_cross_contact": ["depends on the pasta"],
   "bottom_banner_text": "Two short lines.",

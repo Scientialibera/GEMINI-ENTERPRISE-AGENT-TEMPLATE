@@ -19,6 +19,9 @@ trimmed rather than shrunk. Write to these budgets and nothing is lost:
 - steps — four to six, each a title under 30 characters and at most five
   instructions of roughly 100 characters each
 - `variations` — three, each under 90 characters
+- `bottom_banner_text` — exactly two short lines, under 26 characters each
+- `variation_ingredients` — anything a variation needs that the core list does
+  not already carry, same shape as `ingredients`; omit when there is none
 - `ingredients` — eight to twelve, `item` under 26 characters
 
 The ingredient list and the method must agree. Every ingredient you list has
@@ -44,8 +47,8 @@ the second image call and to `render_recipe_card`, so everything for this card
 is stored together and a card someone else is making at the same time cannot
 overwrite it.
 
-**First, the ingredients, with `mode="parallel"`.** One image per ingredient,
-named `ingredient-<item>`. These do not depend on each other, so they are
+**First, the ingredients, with `mode="parallel"`.** One image per entry in both
+`ingredients` and `variation_ingredients`, named `ingredient-<item>`. These do not depend on each other, so they are
 produced at the same time. Every ingredient prompt must end with:
 
 > Single ingredient, isolated and centred on a pure white background, soft even
@@ -75,6 +78,15 @@ prompt in this batch must carry the same scene description:
 > texture on the food, shallow shadows, styled with a few loose herbs or
 > scattered salt for life. Appetising and tactile, photorealistic, no text or
 > watermark anywhere.
+
+The kitchen has to make sense. Show the surface the action actually happens on
+and nothing that contradicts it: a pan on a hob needs the hob visible under it,
+grilling needs a grill, knife work needs a board. Never place a tap or sink
+beside a cooking surface, and never show a fixture with nothing it belongs to.
+Anything not used in that step stays out of frame or sits softly out of focus
+behind it. The room is the same room in every shot, seen from a different
+angle, so the counter, cookware and light stay consistent while what is on the
+counter changes with the step.
 
 Open every prompt with a named camera angle, then the action, then the scene
 description. Vary the angle down the series so the steps do not read as one
@@ -117,7 +129,8 @@ Fill the recipe JSON with the returned `gs://` URIs and call
 - `hero_image_path` is the hero image.
 - Each step's `image_path` is its own `step-N` image. Every step gets a
   different one; never point two steps at the same image.
-- Each ingredient's `image_path` is its `ingredient-<item>` image.
+- Each ingredient's `image_path` is its `ingredient-<item>` image, in both
+  `ingredients` and `variation_ingredients`.
 - `decorative_image_path` and `variations_image_path` are both the `sketch`
   image.
 - `footer_image_path` may reuse the hero.

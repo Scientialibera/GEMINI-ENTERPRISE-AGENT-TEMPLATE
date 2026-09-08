@@ -29,7 +29,8 @@ photographs it uses.
 - `hero_image_path` is the hero image.
 - Each step's `image_path` is its own `step-N` image, in order. Every step gets
   a different one; never point two steps at the same image.
-- Each ingredient's `image_path` is its `ingredient-<item>` image.
+- Each ingredient's `image_path` is its `ingredient-<item>` image, in both
+  `ingredients` and `variation_ingredients`.
 - `decorative_image_path` and `variations_image_path` are both `sketch`.
 - `footer_image_path` may reuse the hero.
 
