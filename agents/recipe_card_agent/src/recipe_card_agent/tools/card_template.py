@@ -79,10 +79,31 @@ def clean(value: Any, fallback: str = "") -> str:
 
 
 def limit_text(value: Any, n: int) -> str:
+    """Trim to a length, breaking on a word so the tail stays readable."""
     s = clean(value)
     if len(s) <= n:
         return s
-    return s[: max(0, n - 1)].rstrip() + "…"
+    cut = s[: max(0, n - 1)]
+    # Prefer the last space, unless that throws away most of the text.
+    space = cut.rfind(" ")
+    if space > n * 0.6:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:") + "…"
+
+
+def servings_label(value: Any) -> str:
+    """Return "4 SERVINGS" whether the value is "4" or "4 servings".
+
+    A model writes the unit as often as it omits it, and the template supplies
+    one of its own, so the word is stripped before it is added back.
+    """
+    text = clean(value, "4").strip()
+    lowered = text.lower()
+    for suffix in ("servings", "serving", "portions", "portion"):
+        if lowered.endswith(suffix):
+            text = text[: -len(suffix)].strip().strip("-")
+            break
+    return f"{text or '4'} SERVINGS"
 
 
 GS_URI_PREFIX = "gs://"
@@ -464,7 +485,7 @@ def add_ingredient_rail(slide, recipe):
     add_box(slide, 0.68, y0, 2.10, 0.38, C["yellow"], C["yellow"], radius=True)
     add_text(
         slide,
-        f"{clean(recipe.get('servings'), '4')} SERVINGS",
+        servings_label(recipe.get("servings")),
         0.78,
         y0 + 0.04,
         1.90,
@@ -564,7 +585,7 @@ def add_overview_right(slide, recipe):
     )
     add_text(
         slide,
-        limit_text(recipe.get("description"), 165),
+        limit_text(recipe.get("description"), 210),
         RIGHT_X + 0.36,
         8.08,
         RIGHT_W - 0.74,
@@ -681,7 +702,7 @@ def add_overview_right(slide, recipe):
     add_box(slide, RIGHT_X + 0.02, banner_y, 0.88, 0.84, C["yellow2"], C["yellow2"], radius=True)
     add_text(
         slide,
-        clean(recipe.get("season"), "SEASON").upper(),
+        clean(recipe.get("season")).upper() or "MENU",
         RIGHT_X + 0.08,
         banner_y + 0.31,
         0.75,
