@@ -15,6 +15,7 @@ members = [
     "gemini-enterprise-agent-template",
     "gemini-shared",
     "recipe-card-agent",
+    "recipe-card-workflow",
 ]
 
 [[package]]
@@ -3450,6 +3451,23 @@ requires-dist = [
     { name = "google-genai", specifier = ">=2.22.0,<3.0.0" },
     { name = "pillow", specifier = ">=11.0.0" },
     { name = "python-pptx", specifier = ">=1.0.2,<2.0.0" },
+]
+
+[[package]]
+name = "recipe-card-workflow"
+version = "0.1.0"
+source = { editable = "workflows/recipe_card_workflow" }
+dependencies = [
+    { name = "gemini-shared" },
+    { name = "google-adk", extra = ["extensions"] },
+    { name = "recipe-card-agent" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "gemini-shared", editable = "packages/gemini_shared" },
+    { name = "google-adk", extras = ["extensions"], specifier = "==2.7.1" },
+    { name = "recipe-card-agent", editable = "agents/recipe_card_agent" },
 ]
 
 [[package]]

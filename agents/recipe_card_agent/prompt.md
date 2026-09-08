@@ -96,14 +96,15 @@ surface and lighting as the reference images, but change the camera angle and
 composition."
 
 The last image in this batch, named `sketch`, is different: a small decorative
-line drawing, not a photograph. It is placed on a coloured panel, so it must
-carry no background of its own. Prompt it as:
+line drawing, not a photograph. Its background is removed before it is placed
+on the card, so ask for plain white and never for transparency: a model asked
+for a transparent background draws the grey checkerboard that represents one.
 
 > A delicate single-colour navy blue ink line drawing of [the dish's signature
 > ingredients], in the style of a vintage botanical engraving. Fine hatching,
-> no shading, no colour fill. Transparent background with nothing behind the
-> subject: no backdrop, no paper texture, no border, no frame, no shadow and
-> no text. The strokes sit alone on empty space.
+> no shading, no colour fill. Pure solid white background, nothing behind the
+> subject: no backdrop, no paper texture, no border, no frame, no shadow, no
+> checkerboard and no text. The strokes sit alone on plain white.
 
 Name two or three ingredients at most. A crowded drawing becomes a smudge at
 the size it is placed.

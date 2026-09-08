@@ -115,6 +115,10 @@ class AgentSpec:
     registration_description: str = ""
     invocation_description: str = ""
     starter_prompts: tuple[str, ...] = ()
+    # Directory holding this entry's source. A workflow is deployed exactly like
+    # an agent — same runtime, same identity, same parameter — so it differs
+    # only in where its package lives and in what it composes internally.
+    source_root: str = "agents"
 
     @property
     def config_parameter_id(self) -> str:
@@ -169,7 +173,7 @@ class AgentSpec:
     @property
     def prompt_path(self) -> Path:
         """Source prompt published to Parameter Manager during deployment."""
-        return ROOT / "agents" / self.module.split(".")[0] / "prompt.md"
+        return ROOT / self.source_root / self.module.split(".")[0] / "prompt.md"
 
     def read_prompt(self) -> str:
         """Return the agent's instruction, or empty when it has no prompt file."""
@@ -247,6 +251,33 @@ AGENTS: dict[str, AgentSpec] = {
             "Build a recipe card for classic beef chili.",
         ),
     ),
+    "recipe_card_workflow": AgentSpec(
+        package_name="recipe-card-workflow",
+        module="recipe_card_workflow.workflow",
+        display_name="Recipe Card Workflow",
+        source_root="workflows",
+        extra_packages=(
+            "workflows/recipe_card_workflow/src/recipe_card_workflow",
+            # The workflow calls the agent's tools rather than copying them.
+            "agents/recipe_card_agent/src/recipe_card_agent",
+            "packages/gemini_shared/src/gemini_shared",
+        ),
+        requirements=COMMON_REQUIREMENTS + RECIPE_CARD_REQUIREMENTS,
+        registration_description=(
+            "Produces a recipe card deck as a fixed pipeline: writes the recipe, "
+            "generates the photography, then renders and publishes the card. The same "
+            "job as the Recipe Card Agent, with the order fixed rather than chosen."
+        ),
+        invocation_description=(
+            "Use this when a recipe card is wanted end to end from a dish name, with no "
+            "conversation: it returns a link to the finished deck."
+        ),
+        starter_prompts=(
+            "Spanish Iberico croquetas",
+            "Chicken tikka masala",
+            "Classic beef chili",
+        ),
+    ),
     "bigquery_mcp_agent": AgentSpec(
         package_name="bigquery-mcp-agent",
         module="bigquery_mcp_agent.agent",
@@ -317,7 +348,7 @@ def detect_delegated_auth(spec: AgentSpec) -> bool:
     """Check source for the authorization marker without importing the agent."""
     return any(
         DELEGATED_AUTH_MARKER in path.read_text(encoding="utf-8")
-        for path in ROOT.glob(f"agents/{_package_dir(spec)}/**/*.py")
+        for path in ROOT.glob(f"{spec.source_root}/{_package_dir(spec)}/**/*.py")
     )
 
 

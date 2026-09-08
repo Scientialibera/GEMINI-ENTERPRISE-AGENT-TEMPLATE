@@ -34,7 +34,13 @@ packaging = importlib.import_module("deploy.package_agent")
 sys.path.remove(str(DEV))
 
 # Cover newly registered agents automatically.
-ALL_AGENTS = sorted(common.AGENTS)
+ALL_ENTRIES = sorted(common.AGENTS)
+# A workflow is deployed exactly like an agent but is composed rather than
+# conversational: it has stages instead of tools, and each stage carries its own
+# instruction rather than reading one from Parameter Manager. The checks that
+# describe a conversational agent therefore run over the agents only.
+ALL_AGENTS = [name for name in ALL_ENTRIES if common.AGENTS[name].source_root == "agents"]
+ALL_WORKFLOWS = [name for name in ALL_ENTRIES if common.AGENTS[name].source_root == "workflows"]
 
 
 @pytest.fixture(autouse=True)
@@ -117,7 +123,7 @@ def test_only_missing_services_enabled(monkeypatch):
         bootstrap.ensure_required_services("test-project", (fixture.BIGQUERY_API_SERVICE,))
 
 
-@pytest.mark.parametrize("agent", ALL_AGENTS)
+@pytest.mark.parametrize("agent", ALL_ENTRIES)
 def test_packaging_excludes_cache_and_other_agent(tmp_path, monkeypatch, agent):
     source = tmp_path / agent
     source.mkdir()
@@ -324,14 +330,14 @@ def test_mcp_toolset_is_wired_to_a_remote_server():
     assert "execute_sql" not in BIGQUERY_READONLY_TOOLS
 
 
-@pytest.mark.parametrize("agent", ALL_AGENTS)
+@pytest.mark.parametrize("agent", ALL_ENTRIES)
 def test_delegated_auth_detection_matches_the_spec(agent):
     """The source marker and declared auth requirements must agree."""
     spec = common.get_agent_spec(agent)
     assert common.detect_delegated_auth(spec) == spec.uses_delegated_auth
 
 
-@pytest.mark.parametrize("agent", ALL_AGENTS)
+@pytest.mark.parametrize("agent", ALL_ENTRIES)
 def test_delegated_agents_name_their_own_oauth_client(agent):
     """Delegated agents have distinct client, secret and authorization names."""
     spec = common.get_agent_spec(agent)
@@ -344,7 +350,7 @@ def test_delegated_agents_name_their_own_oauth_client(agent):
         assert spec.authorization_id != other.authorization_id
 
 
-@pytest.mark.parametrize("agent", ALL_AGENTS)
+@pytest.mark.parametrize("agent", ALL_ENTRIES)
 def test_oauth_scopes_cover_only_delegated_services(agent):
     """Each agent requests scopes only for its delegated tools."""
     spec = common.get_agent_spec(agent)
@@ -367,7 +373,7 @@ def test_every_agent_has_a_prompt(agent):
     assert len(prompt) > 40, f"{agent} prompt is too short to be a real instruction"
 
 
-@pytest.mark.parametrize("agent", ALL_AGENTS)
+@pytest.mark.parametrize("agent", ALL_ENTRIES)
 @pytest.mark.parametrize("already_deployed", [False, True])
 def test_release_resolves_agent_defaults(monkeypatch, tmp_path, agent, already_deployed):
     monkeypatch.syspath_prepend(str(DEV))
@@ -579,3 +585,44 @@ def test_ingredient_panel_fits_its_rows(count):
     if rows * ct.INGREDIENT_ROW_MAX_HEIGHT + 2 * ct.INGREDIENT_PANEL_PADDING <= available:
         assert row_h == ct.INGREDIENT_ROW_MAX_HEIGHT
         assert abs(panel_h - (row_h * rows + 2 * ct.INGREDIENT_PANEL_PADDING)) < 1e-6
+
+
+@pytest.mark.parametrize("workflow", ALL_WORKFLOWS)
+def test_workflow_stages_are_ordered_and_chained(workflow):
+    """A workflow's value is that its order is fixed, so assert the chain.
+
+    Each stage must publish its result under an output_key, because that is how
+    the next stage receives it. A stage without one silently produces nothing
+    for its successor to read.
+    """
+    spec = common.get_agent_spec(workflow)
+    module = importlib.import_module(spec.module)
+    stages = module.root_agent.sub_agents
+
+    assert len(stages) >= 2, "a workflow with one stage is just an agent"
+    keys = [stage.output_key for stage in stages]
+    assert all(keys), f"every stage needs an output_key, got {keys}"
+    assert len(set(keys)) == len(keys), f"stages overwrite each other: {keys}"
+
+
+@pytest.mark.parametrize("workflow", ALL_WORKFLOWS)
+def test_workflow_reuses_agent_tools(workflow):
+    """A workflow changes when tools run, not what they do.
+
+    Duplicating a tool would let the two entry points drift apart, so every
+    tool a stage uses must be the very object the agent exposes.
+    """
+    from recipe_card_agent.tools import generate_recipe_images, render_recipe_card
+
+    spec = common.get_agent_spec(workflow)
+    module = importlib.import_module(spec.module)
+
+    shared = {generate_recipe_images, render_recipe_card}
+    used = {
+        tool
+        for stage in module.root_agent.sub_agents
+        for tool in (stage.tools or [])
+        if callable(tool)
+    }
+    assert used, "no stage calls a tool"
+    assert used <= shared, "a workflow stage defines its own copy of a tool"

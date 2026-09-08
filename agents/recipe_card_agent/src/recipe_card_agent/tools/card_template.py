@@ -404,8 +404,14 @@ def add_picture_crop(slide, path: str, x, y, w, h):
 # cream variations panel that field reads as a white patch stuck to the page.
 # Keying the white out lets the ink sit directly on the panel, the way the
 # reference cards set their sketches.
-_INK_WHITE_CUTOFF = 232
-_INK_SOFT_EDGE = 30
+# Light neutrals are background, not ink. The cutoff is well below white
+# because a model asked for a transparent background sometimes draws the
+# checkerboard that represents one, in greys around 220.
+_INK_WHITE_CUTOFF = 205
+_INK_SOFT_EDGE = 45
+# A pixel is only background if it is also unsaturated: this keeps pale
+# ink from being erased along with the checkerboard.
+_INK_MAX_SATURATION = 26
 _TRANSPARENT_CACHE: dict[str, str] = {}
 
 
@@ -426,11 +432,12 @@ def _transparent_ink(path: str, directory: str) -> str:
             image = source.convert("RGBA")
         alpha = []
         for pixel in image.getdata():
-            lightness = min(pixel[0], pixel[1], pixel[2])
-            if lightness >= _INK_WHITE_CUTOFF:
+            low, high = min(pixel[0], pixel[1], pixel[2]), max(pixel[0], pixel[1], pixel[2])
+            neutral = (high - low) <= _INK_MAX_SATURATION
+            if neutral and low >= _INK_WHITE_CUTOFF:
                 alpha.append(0)
-            elif lightness >= _INK_WHITE_CUTOFF - _INK_SOFT_EDGE:
-                fade = (_INK_WHITE_CUTOFF - lightness) / _INK_SOFT_EDGE
+            elif neutral and low >= _INK_WHITE_CUTOFF - _INK_SOFT_EDGE:
+                fade = (_INK_WHITE_CUTOFF - low) / _INK_SOFT_EDGE
                 alpha.append(int(255 * fade))
             else:
                 alpha.append(255)
