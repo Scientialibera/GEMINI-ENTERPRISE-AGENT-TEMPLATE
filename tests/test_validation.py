@@ -553,3 +553,29 @@ def test_run_id_is_reused_so_one_card_stays_together():
         for name in ("hero", "step-1", "ingredient-garlic")
     }
     assert len(prefixes) == 1
+
+
+@pytest.mark.parametrize("count", [4, 6, 8, 10, 12, 16])
+def test_ingredient_panel_fits_its_rows(count):
+    """The panel is drawn to the list, so a short list gives a short panel.
+
+    Rows keep one pitch until the list would run past the footer; only then do
+    they compress, and never below the readable floor.
+    """
+    from recipe_card_agent.tools import card_template as ct
+
+    rows = min(count, ct.INGREDIENT_MAX_ROWS)
+    available = ct.INGREDIENT_PANEL_MAX_BOTTOM - ct.INGREDIENT_PANEL_TOP
+    usable = available - 2 * ct.INGREDIENT_PANEL_PADDING
+    row_h = max(min(ct.INGREDIENT_ROW_MAX_HEIGHT, usable / rows), ct.INGREDIENT_ROW_MIN_HEIGHT)
+    panel_h = min(available, row_h * rows + 2 * ct.INGREDIENT_PANEL_PADDING)
+
+    assert row_h >= ct.INGREDIENT_ROW_MIN_HEIGHT
+    # The panel never runs past the space reserved for it.
+    assert ct.INGREDIENT_PANEL_TOP + panel_h <= ct.INGREDIENT_PANEL_MAX_BOTTOM + 1e-6
+    # Rows fit inside the panel they are drawn in.
+    assert row_h * rows <= panel_h - 2 * ct.INGREDIENT_PANEL_PADDING + 1e-6
+    # A list short enough to keep full pitch leaves no empty lower half.
+    if rows * ct.INGREDIENT_ROW_MAX_HEIGHT + 2 * ct.INGREDIENT_PANEL_PADDING <= available:
+        assert row_h == ct.INGREDIENT_ROW_MAX_HEIGHT
+        assert abs(panel_h - (row_h * rows + 2 * ct.INGREDIENT_PANEL_PADDING)) < 1e-6

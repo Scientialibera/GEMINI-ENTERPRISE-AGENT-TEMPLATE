@@ -735,18 +735,21 @@ def add_ingredient_rail(slide, recipe):
         align="center",
     )
 
-    panel_y = 4.45
-    panel_h = 7.94
-    add_box(slide, 0.27, panel_y, LEFT_W - 0.54, panel_h, C["white"], C["border"], radius=True)
-
     ingredients = list(recipe.get("ingredients") or [])
-    max_rows = min(len(ingredients), 12)
-    # Rows sit at a constant pitch from the top of the panel, as on the
-    # reference cards, and only tighten when a long list would overflow.
-    # Spreading them to fill the panel instead leaves distracting gaps between
-    # a short list's rows.
-    usable_h = panel_h - 2 * INGREDIENT_PANEL_PADDING
+    max_rows = min(len(ingredients), INGREDIENT_MAX_ROWS)
+
+    # Rows keep a constant pitch and the panel is drawn to fit them, so a short
+    # list gives a shorter panel rather than one with an empty lower half.
+    # Only a list long enough to reach the bottom of the page compresses its
+    # rows, and never below the readable minimum.
+    panel_y = INGREDIENT_PANEL_TOP
+    available_h = INGREDIENT_PANEL_MAX_BOTTOM - panel_y
+    usable_h = available_h - 2 * INGREDIENT_PANEL_PADDING
     row_h = min(INGREDIENT_ROW_MAX_HEIGHT, usable_h / max(1, max_rows))
+    row_h = max(row_h, INGREDIENT_ROW_MIN_HEIGHT)
+    panel_h = min(available_h, row_h * max_rows + 2 * INGREDIENT_PANEL_PADDING)
+
+    add_box(slide, 0.27, panel_y, LEFT_W - 0.54, panel_h, C["white"], C["border"], radius=True)
     start_y = panel_y + INGREDIENT_PANEL_PADDING
 
     for i in range(max_rows):
@@ -1068,7 +1071,15 @@ TIP_VERTICAL_PADDING = 0.30
 # Body copy is a fixed size across every card, so the design stays consistent.
 INGREDIENT_FONT_SIZE = 10.0
 INGREDIENT_ROW_MAX_HEIGHT = 0.72
+# Below this a cutout and its label stop being readable, so a very long list
+# overflows into the "+ N more" line rather than shrinking further.
+INGREDIENT_ROW_MIN_HEIGHT = 0.46
 INGREDIENT_PANEL_PADDING = 0.22
+INGREDIENT_MAX_ROWS = 12
+# The panel starts below the servings chip and may run down to just above the
+# footer rule.
+INGREDIENT_PANEL_TOP = 4.45
+INGREDIENT_PANEL_MAX_BOTTOM = 12.42
 # The step photograph is portrait and fills the column beside the text, as on
 # the reference cards, rather than sitting in a fixed square.
 STEP_IMAGE_WIDTH_FRACTION = 0.46

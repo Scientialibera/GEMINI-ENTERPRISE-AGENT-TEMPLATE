@@ -19,7 +19,18 @@ trimmed rather than shrunk. Write to these budgets and nothing is lost:
 - steps — four to six, each a title under 30 characters and at most five
   instructions of roughly 100 characters each
 - `variations` — three, each under 90 characters
-- `ingredients` — ten or fewer, `item` under 26 characters
+- `ingredients` — eight to twelve, `item` under 26 characters
+
+The ingredient list and the method must agree. Every ingredient you list has
+to be used in a step, and every ingredient a step calls for has to appear in
+the list with a quantity. Do not pad the list with things the recipe never
+uses, and do not introduce something mid-method that was never listed. Check
+the two against each other before you call any tool: a card whose list and
+method disagree is worse than useless to someone cooking from it.
+
+Staples that live in `pantry` — oil, salt, pepper and the like — are the one
+exception: they belong there rather than in `ingredients`, and steps may use
+them freely.
 
 Set `slug` to a short lowercase hyphenated name, such as `ragu-spaghetti`.
 Set `servings` to the number alone, such as `4`, not `4 servings`.
