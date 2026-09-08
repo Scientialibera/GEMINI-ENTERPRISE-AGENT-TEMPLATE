@@ -63,6 +63,50 @@ Adding an entry to AGENTS in common.py is what makes it visible to every script 
 whether it is an agent or a workflow. Imports resolve against dev/, so a script in a
 subfolder puts that directory on sys.path before importing common.
 
+## Order of operations
+
+Terraform first, then these scripts. The platform stack grants the roles every
+Agent Identity needs, and a runtime deployed before it exists will start but fail
+when it reads its own configuration.
+
+| # | What | Where | When |
+|---|---|---|---|
+| 1 | APIs, baseline IAM, Secret Manager, observability | `template/terraform-iac-only` | Once per project |
+| 2 | Gemini Enterprise app | Console | Once per project; copy its engine ID |
+| 3 | OAuth client and consent screen | Console | Once per delegated agent |
+| 4 | Project, staging bucket, optional fixture | `config/bootstrap_dev.py` | Once per developer sandbox |
+| 5 | Package, deploy, IAM, register | `release_dev.py --agent <name>` | Every release |
+
+Steps 2 and 3 have no API and must be done by hand; `register/register_agent.py`
+prints exactly what to create when an OAuth client is missing. Everything else is
+automated. Step 4 is optional when the project and bucket already exist, because
+`release_dev.py` runs the same preflight itself.
+
+To ship a change to one agent, only step 5 is needed:
+
+~~~bash
+uv run --group dev python dev/release_dev.py --agent recipe_card_agent
+~~~
+
+### Running without the Terraform stack
+
+These scripts can stand up a sandbox on their own. `config/bootstrap_dev.py` can
+create the project, enable the APIs it needs and create the staging bucket, under
+the controls below. What it cannot do is grant the roles a *runtime* needs, because
+those are granted to a trust-domain principal set covering every Agent Identity in
+the project, which is infrastructure rather than developer state.
+
+Without that baseline an agent deploys and starts, then fails on its first request:
+it reads its model and instruction from Parameter Manager under its own identity, and
+that identity has no permission to read anything. `roles/aiplatform.expressUser`,
+`roles/serviceusage.serviceUsageConsumer` and `roles/parametermanager.parameterAccessor`
+are the minimum, and `roles/storage.objectViewer` is what the Cloud Storage example
+needs.
+
+So a project with no Terraform needs those four roles granted once, to the principal
+set, by someone with project IAM admin. Applying the platform stack is the supported
+way to do that. After that the scripts here handle everything else.
+
 ## Sandbox controls
 
 Bootstrap and the deployment preflight use these controls:

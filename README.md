@@ -71,8 +71,13 @@ your workstation credentials.
 
 ## Deploy and register
 
-Prepare the project with the companion platform stack. Create or select a Gemini
-Enterprise app and copy dev/.env.dev.example to dev/.env.dev. Set:
+Apply the companion platform stack first: it grants the roles every Agent Identity
+needs, and a runtime deployed before it exists starts but fails when it reads its own
+configuration. See [order of operations](dev/README.md#order-of-operations) for the full
+sequence and for what the scripts can do without it.
+
+Create or select a Gemini Enterprise app and copy dev/.env.dev.example to
+dev/.env.dev. Set:
 
 ~~~text
 GOOGLE_CLOUD_PROJECT=<project-id>
