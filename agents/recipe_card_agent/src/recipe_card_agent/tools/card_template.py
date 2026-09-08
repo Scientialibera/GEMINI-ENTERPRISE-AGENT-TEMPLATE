@@ -180,6 +180,63 @@ def chunks(seq: list[Any], size: int) -> Iterable[list[Any]]:
 # -----------------------------------------------------------------------------
 
 
+# Autofit is a hint the renderer may honour: PowerPoint applies it, LibreOffice
+# and PDF export do not. Text is therefore measured here and the size chosen
+# before it is written, so a long title or a wordy step looks the same wherever
+# the deck is opened.
+
+# Width of one character as a fraction of font size, averaged over mixed-case
+# text. Close enough to choose a size, and deliberately conservative.
+_CHAR_WIDTH_RATIO = 0.50
+_HEAD_CHAR_WIDTH_RATIO = 0.46
+_LINE_HEIGHT_RATIO = 1.22
+_POINTS_PER_INCH = 72.0
+
+
+def _wrapped_line_count(text: str, width_in: float, font_size: float, ratio: float) -> int:
+    """Lines this text needs at a size, wrapping on words like the renderer."""
+    char_w = (font_size * ratio) / _POINTS_PER_INCH
+    if char_w <= 0:
+        return 1
+    per_line = max(1, int(width_in / char_w))
+    lines = 0
+    for paragraph in (text or " ").splitlines() or [" "]:
+        words, current = paragraph.split(), 0
+        if not words:
+            lines += 1
+            continue
+        line_len = 0
+        for word in words:
+            need = len(word) if line_len == 0 else line_len + 1 + len(word)
+            if need <= per_line:
+                line_len = need
+            else:
+                current += 1
+                line_len = len(word)
+        lines += current + 1
+    return max(1, lines)
+
+
+def fitted_font_size(
+    text: str,
+    width_in: float,
+    height_in: float,
+    font_size: float,
+    *,
+    minimum: float = 6.0,
+    head: bool = False,
+) -> float:
+    """Largest size at or below ``font_size`` whose wrapped text fits the box."""
+    ratio = _HEAD_CHAR_WIDTH_RATIO if head else _CHAR_WIDTH_RATIO
+    size = float(font_size)
+    while size > minimum:
+        lines = _wrapped_line_count(clean(text), width_in, size, ratio)
+        if (lines * size * _LINE_HEIGHT_RATIO) / _POINTS_PER_INCH <= height_in:
+            return size
+        size -= 0.5
+    return minimum
+
+
 def add_box(slide, x, y, w, h, fill, line=None, radius=False):
     shape_type = MSO_SHAPE.ROUNDED_RECTANGLE if radius else MSO_SHAPE.RECTANGLE
     shp = slide.shapes.add_shape(shape_type, Inches(x), Inches(y), Inches(w), Inches(h))
@@ -245,7 +302,16 @@ def add_text(
         "bottom": MSO_ANCHOR.BOTTOM,
     }.get(valign, MSO_ANCHOR.MIDDLE)
     if fit:
+        # Kept for PowerPoint, but the size below is what actually makes it fit
+        # in every renderer.
         tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+        font_size = fitted_font_size(
+            text,
+            max(0.1, w - 2 * margin),
+            max(0.1, h),
+            font_size,
+            head=font_face == HEAD_FONT,
+        )
 
     p = tf.paragraphs[0]
     p.alignment = {
