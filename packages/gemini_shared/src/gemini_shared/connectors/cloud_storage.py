@@ -93,19 +93,31 @@ def upload_bytes(
     object_name: str,
     data: bytes,
     content_type: str,
+    *,
+    create_only: bool = False,
 ) -> str:
     """Upload one object and return its gs:// URI."""
     client = storage.Client(project=project_id)
     blob = client.bucket(bucket_name).blob(object_name)
-    blob.upload_from_string(data, content_type=content_type)
+    blob.upload_from_string(
+        data, content_type=content_type, if_generation_match=0 if create_only else None
+    )
     return f"gs://{bucket_name}/{object_name}"
 
 
-def download_bytes(project_id: str, uri: str) -> bytes:
-    """Download one gs:// object."""
+def download_bytes(project_id: str, uri: str, *, max_bytes: int | None = None) -> bytes:
+    """Download an object, optionally limiting bytes transferred and retained."""
     bucket_name, object_name = parse_gs_uri(uri)
     client = storage.Client(project=project_id)
-    return client.bucket(bucket_name).blob(object_name).download_as_bytes()
+    blob = client.bucket(bucket_name).blob(object_name)
+    if max_bytes is None:
+        return blob.download_as_bytes()
+    if max_bytes < 1:
+        raise ValueError("max_bytes must be positive.")
+    data = blob.download_as_bytes(start=0, end=max_bytes, raw_download=True)
+    if len(data) > max_bytes:
+        raise ValueError("Cloud Storage object exceeds the download limit.")
+    return data
 
 
 def parse_gs_uri(uri: str) -> tuple[str, str]:

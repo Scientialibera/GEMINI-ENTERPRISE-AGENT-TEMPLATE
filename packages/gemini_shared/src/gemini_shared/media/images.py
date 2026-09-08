@@ -3,7 +3,7 @@
 A card needs a dozen or more images, so the unit of work here is a batch
 rather than a single call. Two modes cover what a document needs:
 
-- ``parallel``             every prompt is independent, so they run at once.
+- ``parallel``             independent prompts use the configured worker limit.
   Ingredient cutouts work this way: an onion does not depend on a carrot.
 - ``sequential_reference`` each image receives the ones already produced in
   this batch as references, so a series holds the same pot, surface and
@@ -36,10 +36,7 @@ DEFAULT_IMAGE_MODEL_LOCATION = "global"
 DEFAULT_MIME_TYPE = "image/png"
 MODE_PARALLEL = "parallel"
 MODE_SEQUENTIAL_REFERENCE = "sequential_reference"
-# The default project quota is two image requests a minute
-# ("Generate content with image generation requests quota", 1/min/project/model),
-# so throughput is fixed by that and not by how many requests are in flight.
-# Concurrency cannot beat it, and a wide fan-out only converts into throttling.
+# Serialize image calls by default; project quotas vary.
 MAX_PARALLEL_WORKERS = 1
 
 # Spacing between requests, applied across the whole process, matched to the
@@ -203,11 +200,8 @@ def _with_retries(call, name: str):
         except Exception as error:
             if attempt == MAX_ATTEMPTS or not _is_retryable(error):
                 raise
-            # Full jitter, so a parallel batch that hit the limit together does
-            # not retry in lockstep and exhaust it again.
             capped = min(delay, MAX_BACKOFF_SECONDS)
-            # Decorrelated jitter: still spreads retries out, but never sleeps
-            # for almost no time and burns an attempt.
+            # Equal jitter avoids both synchronized retries and near-zero waits.
             time.sleep(random.uniform(capped / 2, capped))  # noqa: S311
             delay *= BACKOFF_MULTIPLIER
     raise RuntimeError(f"Exhausted retries generating '{name}'.")
@@ -219,10 +213,6 @@ def _generate_one(
     request: ImageRequest,
     extra_references: tuple[bytes, ...],
 ) -> GeneratedImage:
-    # A client per call rather than one shared across the batch. Sharing one
-    # lets several threads refresh the same credential at once, and the
-    # half-written token that results is rejected as unauthenticated.
-    client = _client(location)
     parts: list[types.Part] = [types.Part(text=request.prompt)]
     references = (*request.reference_images, *extra_references)
     # Keep the most recent references when a long sequence exceeds the limit:
@@ -234,11 +224,13 @@ def _generate_one(
 
     def call():
         _wait_for_slot()
-        response = client.models.generate_content(
-            model=model,
-            contents=[types.Content(role="user", parts=parts)],
-            config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
-        )
+        # Each attempt owns and closes its client.
+        with _client(location) as client:
+            response = client.models.generate_content(
+                model=model,
+                contents=[types.Content(role="user", parts=parts)],
+                config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
+            )
         # Extracted inside the retried call, so a response that carries no
         # image is retried rather than ending the batch.
         return _extract_image(response, request.name)
@@ -286,8 +278,7 @@ def generate_images(
             produced.append(image)
         return produced
 
-    # Independent prompts, so the wall-clock cost is one image rather than all
-    # of them. Results are reordered to match the requests.
+    # Pace independent requests and return results in input order.
     workers = min(len(requests), MAX_PARALLEL_WORKERS)
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {

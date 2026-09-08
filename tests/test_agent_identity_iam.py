@@ -82,7 +82,7 @@ def test_storage_bucket_bindings_are_resource_scoped(monkeypatch):
     monkeypatch.setenv(
         agent_iam.agent_identity_storage_bucket_roles_env(SPEC),
         (
-            "gs://one=roles/storage.objectViewer|roles/storage.legacyBucketReader;"
+            "gs://one=roles/storage.objectViewer|roles/storage.objectCreator;"
             "gs://two=roles/storage.objectViewer"
         ),
     )
@@ -90,7 +90,7 @@ def test_storage_bucket_bindings_are_resource_scoped(monkeypatch):
     assert agent_iam.requested_storage_bucket_roles(SPEC) == {
         "gs://one": (
             "roles/storage.objectViewer",
-            "roles/storage.legacyBucketReader",
+            "roles/storage.objectCreator",
         ),
         "gs://two": ("roles/storage.objectViewer",),
     }
@@ -105,6 +105,11 @@ def test_agent_identity_principal_uses_organization_trust_domain(monkeypatch):
         raise AssertionError(args)
 
     monkeypatch.setattr(agent_iam, "_run_gcloud", run)
+    client = Mock()
+    client.agent_engines.get.return_value.api_resource.spec = SimpleNamespace(
+        identity_type="AGENT_IDENTITY", effective_identity=PRINCIPAL
+    )
+    monkeypatch.setattr(agent_iam.vertexai, "Client", Mock(return_value=client))
 
     assert agent_iam.agent_identity_principal("test-project", RESOURCE_NAME) == PRINCIPAL
 
@@ -118,6 +123,12 @@ def test_agent_identity_principal_uses_orgless_trust_domain(monkeypatch):
         raise AssertionError(args)
 
     monkeypatch.setattr(agent_iam, "_run_gcloud", run)
+    client = Mock()
+    client.agent_engines.get.return_value.api_resource.spec = SimpleNamespace(
+        identity_type="AGENT_IDENTITY",
+        effective_identity=PRINCIPAL.replace("org-999", "proj-123456789"),
+    )
+    monkeypatch.setattr(agent_iam.vertexai, "Client", Mock(return_value=client))
 
     assert agent_iam.agent_identity_principal("test-project", RESOURCE_NAME).startswith(
         "principal://agents.global.proj-123456789.system.id.goog/"
@@ -195,3 +206,37 @@ def test_configured_identity_is_an_assertion_not_an_override(monkeypatch):
             RESOURCE_NAME,
             SPEC,
         )
+
+
+@pytest.mark.parametrize("role", sorted(agent_iam.UNSUPPORTED_BUCKET_ROLES))
+def test_legacy_bucket_roles_are_rejected(role):
+    with pytest.raises(SystemExit, match="does not support"):
+        agent_iam._validate_role(role)
+
+
+def test_identity_lookup_rejects_cross_project_runtime(monkeypatch):
+    monkeypatch.setattr(agent_iam, "_project_number", lambda _: "987654321")
+    client = Mock()
+    monkeypatch.setattr(agent_iam.vertexai, "Client", client)
+    with pytest.raises(SystemExit, match="different project"):
+        agent_iam.agent_identity_principal("other-project", RESOURCE_NAME)
+    client.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "identity_type, principal",
+    [
+        ("SERVICE_ACCOUNT", "runtime@example.iam.gserviceaccount.com"),
+        ("AGENT_IDENTITY", ""),
+        ("AGENT_IDENTITY", PRINCIPAL.replace("engine-123", "another-engine")),
+    ],
+)
+def test_identity_lookup_rejects_wrong_effective_identity(monkeypatch, identity_type, principal):
+    monkeypatch.setattr(agent_iam, "_project_number", lambda _: "123456789")
+    client = Mock()
+    client.agent_engines.get.return_value.api_resource.spec = SimpleNamespace(
+        identity_type=identity_type, effective_identity=principal
+    )
+    monkeypatch.setattr(agent_iam.vertexai, "Client", Mock(return_value=client))
+    with pytest.raises(SystemExit, match="no matching Agent Identity"):
+        agent_iam.agent_identity_principal("test-project", RESOURCE_NAME)

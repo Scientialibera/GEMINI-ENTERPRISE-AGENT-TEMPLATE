@@ -103,7 +103,11 @@ This stack pre-authorizes every Agent Runtime Agent Identity in the project for 
 
 Use an organization ID for organization projects, or `developer_agent_identity_orgless=true` for orgless projects. The default baseline covers Agent Platform use, Service Usage, Parameter Manager reads and project-wide Cloud Storage object reads, so the reference agents work on a fresh project without further configuration. Every role in that list reaches every current and future runtime, so add one only when that is intended; access to a particular bucket, dataset or secret belongs on the exact Agent Identity instead.
 
-After a runtime exists, the agent repository can derive its exact Agent Identity principal from the project, location and Reasoning Engine ID. Explicitly configured per-agent roles can then be granted at the narrowest practical resource scope without a second platform Terraform apply. If no per-agent IAM is configured, the runtime still has its unique Agent Identity and only receives the baseline principal-set grants.
+After a runtime exists, the agent helper reads its effective identity and verifies its project before adding resource-scoped roles. The helper is additive: removing a role from its configuration does not revoke existing access. Review and remove obsolete grants separately. Agent Identity does not support legacy bucket roles.
+
+Configure exactly one trust-domain option whenever developer or runtime IAM bindings are enabled, even with an empty developer member list. The Storage Object Viewer baseline deliberately reaches every bucket in the project; remove it from the baseline for a least-privilege deployment and grant each runtime access only to its required buckets.
+
+Run `terraform test` to check trust-domain validation with mocked providers; these tests do not contact Google Cloud.
 
 ## Secret handling
 

@@ -39,10 +39,10 @@ resource "terraform_data" "configuration_validation" {
 
   lifecycle {
     precondition {
-      condition = length(var.developer_deployer_members) == 0 || (
+      condition = (length(var.developer_deployer_members) == 0 && length(var.agent_identity_project_roles) == 0) || (
         (var.developer_agent_identity_organization_id != null) != var.developer_agent_identity_orgless
       )
-      error_message = "When developer_deployer_members is non-empty, set developer_agent_identity_organization_id for an organization project or developer_agent_identity_orgless=true for an orgless project. Set exactly one."
+      error_message = "When developer or runtime IAM bindings are configured, set exactly one of developer_agent_identity_organization_id or developer_agent_identity_orgless=true."
     }
   }
 }

@@ -541,7 +541,7 @@ def test_concurrent_cards_for_one_dish_do_not_overwrite_each_other():
     Without a per-run segment both requests write to <slug>/images/hero.png and
     the second silently replaces the first part-way through the card.
     """
-    from recipe_card_agent.tools.recipe_images import _object_name, new_run_id
+    from recipe_cards.images import _object_name, new_run_id
 
     first, second = new_run_id(), new_run_id()
     assert first != second
@@ -552,7 +552,7 @@ def test_concurrent_cards_for_one_dish_do_not_overwrite_each_other():
 
 def test_run_id_is_reused_so_one_card_stays_together():
     """Every image in a card shares the prefix its first call created."""
-    from recipe_card_agent.tools.recipe_images import _object_name, new_run_id
+    from recipe_cards.images import _object_name, new_run_id
 
     run = new_run_id()
     prefixes = {
@@ -569,7 +569,7 @@ def test_ingredient_panel_fits_its_rows(count):
     Rows keep one pitch until the list would run past the footer; only then do
     they compress, and never below the readable floor.
     """
-    from recipe_card_agent.tools import card_template as ct
+    from recipe_cards.rendering import pages as ct
 
     rows = min(count, ct.INGREDIENT_MAX_ROWS)
     available = ct.INGREDIENT_PANEL_MAX_BOTTOM - ct.INGREDIENT_PANEL_TOP
@@ -635,7 +635,7 @@ def test_cooking_tip_is_per_step_page():
     Repeating a single tip above every page reads as a rendering fault, and a
     tip about the opening steps is noise above the closing ones.
     """
-    from recipe_card_agent.tools.card_template import cooking_tip_for_page
+    from recipe_cards.rendering.pages import cooking_tip_for_page
 
     recipe = {"cooking_tip": ["Tip for steps 1-4.", "Tip for steps 5-8."]}
     assert cooking_tip_for_page(recipe, 0) == "Tip for steps 1-4."
@@ -646,7 +646,7 @@ def test_cooking_tip_is_per_step_page():
 
 def test_single_cooking_tip_appears_once():
     """A plain string stays supported, but only on the first page."""
-    from recipe_card_agent.tools.card_template import cooking_tip_for_page
+    from recipe_cards.rendering.pages import cooking_tip_for_page
 
     recipe = {"cooking_tip": "Reserve some pasta water."}
     assert cooking_tip_for_page(recipe, 0) == "Reserve some pasta water."
@@ -790,3 +790,62 @@ def test_baseline_grant_targets_every_agent_identity(monkeypatch):
     # Orgless uses "proj-": IAM rejects the documented "project-" spelling.
     assert "agents.global.proj-123456789.system.id.goog" in principal_set
     assert "attribute.platformContainer" in principal_set
+
+
+def test_overlong_step_is_returned_for_correction(monkeypatch):
+    """A recipe the model can fix comes back as a result, not an exception.
+
+    Raising reaches the model as a generic tool failure with nothing to act on,
+    so a card that only needs a shorter step would be abandoned instead of
+    corrected.
+    """
+    import sys
+
+    sys.path.insert(0, str(DEV.parent / "packages" / "recipe_cards" / "src"))
+    from recipe_cards import publish
+    from recipe_cards.errors import ContentTooLong
+
+    monkeypatch.setattr(publish, "OUTPUT_BUCKET", "test-bucket")
+    monkeypatch.setattr(
+        publish,
+        "render_deck",
+        Mock(side_effect=ContentTooLong("steps[0].body", "too long", "remove 20 words")),
+    )
+    context = SimpleNamespace(state={})
+    payload = '{"slug": "x", "title": "X", "servings": "4", "steps": [], "ingredients": []}'
+    monkeypatch.setattr(publish, "load_recipes", lambda _: {"recipes": [{"slug": "x"}]})
+
+    result = publish.render_recipe_card(payload, context)
+
+    assert result["status"] == "needs_correction"
+    assert result["field"] == "steps[0].body"
+    assert "remove 20 words" in result["fix"]
+    assert result["attempts_remaining"] >= 1
+    # The model is told what to do next, not merely that something failed.
+    assert "render_recipe_card again" in result["next_step"]
+
+
+def test_correction_attempts_are_bounded(monkeypatch):
+    """A recipe that cannot be shortened enough stops rather than looping."""
+    import sys
+
+    sys.path.insert(0, str(DEV.parent / "packages" / "recipe_cards" / "src"))
+    from recipe_cards import publish
+    from recipe_cards.errors import ContentTooLong
+
+    monkeypatch.setattr(publish, "OUTPUT_BUCKET", "test-bucket")
+    monkeypatch.setattr(
+        publish,
+        "render_deck",
+        Mock(side_effect=ContentTooLong("steps[0].body", "too long", "shorten it")),
+    )
+    monkeypatch.setattr(publish, "load_recipes", lambda _: {"recipes": [{"slug": "x"}]})
+    payload = "{}"
+
+    context = SimpleNamespace(state={})
+    for _ in range(publish.MAX_CORRECTION_ATTEMPTS - 1):
+        assert publish.render_recipe_card(payload, context)["status"] == "needs_correction"
+
+    # The last attempt raises rather than inviting another correction.
+    with pytest.raises(ContentTooLong):
+        publish.render_recipe_card(payload, context)

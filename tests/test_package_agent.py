@@ -58,3 +58,19 @@ def test_package_is_deterministic_and_has_expected_layout(tmp_path: Path, agent:
     expected = {name.replace("basic_assistant", agent) for name in EXPECTED_ARCHIVE_MEMBERS}
     assert expected.issubset(members)
     assert {name.split("/")[0] for name in members} == {"requirements.txt", agent, "gemini_shared"}
+
+
+@pytest.mark.parametrize("agent", ["recipe_card_agent", "recipe_card_workflow"])
+def test_recipe_packages_include_shared_tools_and_style_plates(tmp_path, agent):
+    module = _load_package_module()
+    path = module.package_agent(agent, tmp_path / "recipe.tar.gz")
+    with tarfile.open(path, "r:gz") as archive:
+        members = {member.name for member in archive.getmembers()}
+    assert {
+        "recipe_cards/schema.py",
+        "recipe_cards/rendering/assets.py",
+        "recipe_cards/style/example_card_1.jpg",
+        "recipe_cards/style/example_card_2.jpg",
+    } <= members
+    if agent == "recipe_card_workflow":
+        assert not any(name.startswith("recipe_card_agent/") for name in members)

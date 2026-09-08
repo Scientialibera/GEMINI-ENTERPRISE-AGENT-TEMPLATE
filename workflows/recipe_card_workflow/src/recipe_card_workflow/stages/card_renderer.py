@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from google.adk.agents import LlmAgent
 from google.adk.models import Gemini
-from recipe_card_agent.tools import render_recipe_card
+from recipe_cards.publish import render_recipe_card
 
 from ..config import BOOTSTRAP
 
@@ -35,6 +35,12 @@ photographs it uses.
 - `footer_image_path` may reuse the hero.
 
 The layout is fixed by a template, so supply content and image locations only.
+
+If `render_recipe_card` returns `status: needs_correction`, the recipe is too
+long for the card rather than broken. It names the field and the edit to make:
+shorten that field as described and call the tool again with the corrected
+recipe. It says how many attempts remain; when none do, report the problem
+rather than retrying.
 
 Then reply with a single JSON object and nothing else:
 

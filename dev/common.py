@@ -52,9 +52,6 @@ CLOUD_STORAGE_READONLY_SCOPE = "https://www.googleapis.com/auth/devstorage.read_
 # agent may ask for stays visible in one place.
 STORAGE_OBJECT_VIEWER = "roles/storage.objectViewer"
 STORAGE_OBJECT_ADMIN = "roles/storage.objectAdmin"
-# Reading bucket metadata is separate from reading objects: a runtime that can
-# write objects still cannot check whether its bucket exists without this.
-STORAGE_BUCKET_READER = "roles/storage.legacyBucketReader"
 LOGGING_LOG_WRITER = "roles/logging.logWriter"
 BIGQUERY_JOB_USER = "roles/bigquery.jobUser"
 BIGQUERY_DATA_VIEWER = "roles/bigquery.dataViewer"
@@ -271,17 +268,18 @@ AGENTS: dict[str, AgentSpec] = {
     "recipe_card_agent": AgentSpec(
         package_name="recipe-card-agent",
         module="recipe_card_agent.agent",
+        required_remote_bootstrap_env=("RECIPE_CARD_BUCKET",),
         display_name="Recipe Card Agent",
         extra_packages=(
             "agents/recipe_card_agent/src/recipe_card_agent",
+            "packages/recipe_cards/src/recipe_cards",
             "packages/gemini_shared/src/gemini_shared",
         ),
-        # Writes generated images and the finished deck to its own bucket, and
-        # reads bucket metadata to check the bucket exists before writing.
+        # The output bucket must already exist before granting object access.
         agent_identity_bucket_roles=(
             BucketRoles(
                 "${RECIPE_CARD_BUCKET}",
-                (STORAGE_OBJECT_ADMIN, STORAGE_BUCKET_READER),
+                (STORAGE_OBJECT_ADMIN,),
             ),
         ),
         requirements=COMMON_REQUIREMENTS + RECIPE_CARD_REQUIREMENTS,
@@ -303,20 +301,19 @@ AGENTS: dict[str, AgentSpec] = {
     "recipe_card_workflow": AgentSpec(
         package_name="recipe-card-workflow",
         module="recipe_card_workflow.workflow",
+        required_remote_bootstrap_env=("RECIPE_CARD_BUCKET",),
         display_name="Recipe Card Workflow",
         source_root="workflows",
         extra_packages=(
             "workflows/recipe_card_workflow/src/recipe_card_workflow",
-            # The workflow calls the agent's tools rather than copying them.
-            "agents/recipe_card_agent/src/recipe_card_agent",
+            "packages/recipe_cards/src/recipe_cards",
             "packages/gemini_shared/src/gemini_shared",
         ),
-        # Writes generated images and the finished deck to its own bucket, and
-        # reads bucket metadata to check the bucket exists before writing.
+        # The output bucket must already exist before granting object access.
         agent_identity_bucket_roles=(
             BucketRoles(
                 "${RECIPE_CARD_BUCKET}",
-                (STORAGE_OBJECT_ADMIN, STORAGE_BUCKET_READER),
+                (STORAGE_OBJECT_ADMIN,),
             ),
         ),
         requirements=COMMON_REQUIREMENTS + RECIPE_CARD_REQUIREMENTS,

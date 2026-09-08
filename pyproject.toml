@@ -12,8 +12,7 @@ members = [
 
 [tool.uv.sources]
 gemini-shared = { workspace = true }
-# The recipe workflow calls the recipe agent's tools rather than copying them.
-recipe-card-agent = { workspace = true }
+recipe-cards = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -37,6 +36,7 @@ addopts = "-q --strict-markers"
 # Add a line here when adding an agent.
 pythonpath = [
   "packages/gemini_shared/src",
+  "packages/recipe_cards/src",
   "agents/basic_assistant/src",
   "agents/auth_reference_agent/src",
   "agents/bigquery_mcp_agent/src",
@@ -67,7 +67,7 @@ select = ["E", "F", "I", "UP", "B", "S", "SIM", "RUF"]
 # The card renderer degrades a missing or unreadable image to a placeholder
 # rather than losing the whole deck, so these handlers are deliberately silent.
 # E501 covers the layout tables, which stay readable as single lines.
-"agents/recipe_card_agent/src/recipe_card_agent/tools/card_template.py" = [
+"packages/recipe_cards/src/recipe_cards/rendering/*.py" = [
   "E501",
   "S110",
   "S112",

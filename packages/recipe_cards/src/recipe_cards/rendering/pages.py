@@ -1,572 +1,54 @@
-"""Render recipe cards as an editable PowerPoint deck.
-
-Layout lives here and content arrives as JSON, so the agent fills in values and
-image locations while this module owns presentation and pagination. Keeping the
-two apart is what makes every card come out identically structured.
-
-Page 1  : title panel, hero image, ingredient rail, overview, tools, chef note,
-          allergens and footer.
-Page 2+ : cooking steps in a 2x2 grid, each reserving an image area. More than
-          four steps continue onto further pages, and the last one carries the
-          variations, bottom banner and footer.
-
-Image fields accept a local path or a gs:// URI. A URI is downloaded once per
-render into a temporary directory, because python-pptx embeds image bytes from
-a file. A missing or unreadable image degrades to a labelled placeholder rather
-than failing the render.
-"""
+"""Recipe page layouts and deck assembly."""
 
 from __future__ import annotations
 
 import contextlib
-import hashlib
-import json
 import math
-import os
 import re
 import tempfile
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
 from pptx import Presentation
-from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
 from pptx.util import Inches, Pt
 
-# -----------------------------------------------------------------------------
-# PAGE / THEME
-# -----------------------------------------------------------------------------
-
-PAGE_W = 10.0
-PAGE_H = 13.33
-LEFT_W = 3.45
-GAP = 0.28
-RIGHT_X = LEFT_W + GAP
-RIGHT_W = PAGE_W - RIGHT_X - 0.22
-
-# The hero photograph runs to the top and right edges of the sheet, with the
-# blue panel butting against it. Insetting it leaves a white margin the
-# reference cards do not have.
-HERO_X = LEFT_W
-HERO_W = PAGE_W - LEFT_W
-HERO_H = 7.42
-
-C = {
-    "blue": "6F97C5",
-    "dark_blue": "07347A",
-    "yellow": "F9B800",
-    "yellow2": "FFC515",
-    "ink": "1D2530",
-    "muted": "5C6573",
-    "pale": "F5F1E6",
-    "line": "0D3D85",
-    "white": "FFFFFF",
-    "cream": "FBF8F0",
-    "grey": "E8E8E8",
-    "border": "D8D8D8",
-}
-
-HEAD_FONT = "Georgia"
-BODY_FONT = "Aptos"
-
-
-def rgb(hex_color: str) -> RGBColor:
-    h = hex_color.lstrip("#")
-    return RGBColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
-
-
-def clean(value: Any, fallback: str = "") -> str:
-    if value is None:
-        return fallback
-    if isinstance(value, list):
-        return ", ".join(str(v) for v in value if v)
-    return str(value)
-
-
-def limit_text(value: Any, n: int) -> str:
-    """Trim to a length, breaking on a word so the tail stays readable."""
-    s = clean(value)
-    if len(s) <= n:
-        return s
-    cut = s[: max(0, n - 1)]
-    # Prefer the last space, unless that throws away most of the text.
-    space = cut.rfind(" ")
-    if space > n * 0.6:
-        cut = cut[:space]
-    return cut.rstrip(" ,;:") + "…"
-
-
-def servings_label(value: Any) -> str:
-    """Return "4 SERVINGS" whether the value is "4" or "4 servings".
-
-    A model writes the unit as often as it omits it, and the template supplies
-    one of its own, so the word is stripped before it is added back.
-    """
-    text = clean(value, "4").strip()
-    lowered = text.lower()
-    for suffix in ("servings", "serving", "portions", "portion"):
-        if lowered.endswith(suffix):
-            text = text[: -len(suffix)].strip().strip("-")
-            break
-    return f"{text or '4'} SERVINGS"
-
-
-GS_URI_PREFIX = "gs://"
-
-# Populated per render by build_pptx: gs:// URI -> downloaded local file. The
-# same image is referenced several times in a card, so it is fetched once.
-_RESOLVED_IMAGES: dict[str, str] = {}
-
-# Scratch directory for the current render, used for keyed line drawings.
-_INK_DIRECTORY = ""
-
-
-def _resolve(path: Any) -> str:
-    """Return a local path for a local path or an already-downloaded URI."""
-    if not isinstance(path, str) or not path:
-        return ""
-    if path.startswith(GS_URI_PREFIX):
-        return _RESOLVED_IMAGES.get(path, "")
-    return path
-
-
-def prefetch_images(data: dict[str, Any], project_id: str, directory: str) -> None:
-    """Download every gs:// image the deck references.
-
-    Done once up front rather than at each draw call, because a single image
-    appears in more than one place and python-pptx needs a real file.
-    """
-    from gemini_shared.connectors.cloud_storage import download_bytes
-
-    global _INK_DIRECTORY
-    _INK_DIRECTORY = directory
-    _TRANSPARENT_CACHE.clear()
-    _RESOLVED_IMAGES.clear()
-    for uri in sorted(_image_uris(data)):
-        target = Path(directory) / f"{hashlib.sha256(uri.encode()).hexdigest()[:16]}.png"
-        try:
-            target.write_bytes(download_bytes(project_id, uri))
-            _RESOLVED_IMAGES[uri] = str(target)
-        except Exception:
-            # A missing object degrades to the placeholder rather than losing
-            # the whole deck.
-            continue
-
-
-def _image_uris(data: dict[str, Any]) -> set[str]:
-    """Collect every gs:// value under any *_image_path key."""
-    found: set[str] = set()
-
-    def walk(node: Any) -> None:
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if (
-                    key.endswith("image_path")
-                    and isinstance(value, str)
-                    and value.startswith(GS_URI_PREFIX)
-                ):
-                    found.add(value)
-                else:
-                    walk(value)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
-
-    walk(data)
-    return found
-
-
-def exists(path: Any) -> bool:
-    resolved = _resolve(path)
-    return bool(resolved) and os.path.exists(resolved)
-
-
-def chunks(seq: list[Any], size: int) -> Iterable[list[Any]]:
-    for i in range(0, len(seq), size):
-        yield seq[i : i + size]
-
-
-# -----------------------------------------------------------------------------
-# LOW-LEVEL DRAWING HELPERS
-# -----------------------------------------------------------------------------
-
-
-# Autofit is a hint the renderer may honour: PowerPoint applies it, LibreOffice
-# and PDF export do not. Text is therefore measured here and the size chosen
-# before it is written, so a long title or a wordy step looks the same wherever
-# the deck is opened.
-
-# Mean advance width of one character as a fraction of font size, measured over
-# running sentence text in each face (0.434 body, 0.394 headings) and rounded up
-# slightly so an unusually wide line still fits.
-_CHAR_WIDTH_RATIO = 0.45
-_HEAD_CHAR_WIDTH_RATIO = 0.41
-_LINE_HEIGHT_RATIO = 1.22
-_POINTS_PER_INCH = 72.0
-
-
-def _wrapped_line_count(text: str, width_in: float, font_size: float, ratio: float) -> int:
-    """Lines this text needs at a size, wrapping on words like the renderer."""
-    char_w = (font_size * ratio) / _POINTS_PER_INCH
-    if char_w <= 0:
-        return 1
-    per_line = max(1, int(width_in / char_w))
-    lines = 0
-    for paragraph in (text or " ").splitlines() or [" "]:
-        words, current = paragraph.split(), 0
-        if not words:
-            lines += 1
-            continue
-        line_len = 0
-        for word in words:
-            need = len(word) if line_len == 0 else line_len + 1 + len(word)
-            if need <= per_line:
-                line_len = need
-            else:
-                current += 1
-                line_len = len(word)
-        lines += current + 1
-    return max(1, lines)
-
-
-def fit_to_box(
-    text: Any,
-    width_in: float,
-    height_in: float,
-    font_size: float,
-    *,
-    head: bool = False,
-) -> str:
-    """Trim text to what the box holds at a fixed size.
-
-    Type sizes are part of the design, so they do not change from card to card.
-    When a value is too long for its panel the value is shortened, which keeps
-    every card's hierarchy identical and legible.
-    """
-    body = clean(text)
-    if not body:
-        return body
-
-    ratio = _HEAD_CHAR_WIDTH_RATIO if head else _CHAR_WIDTH_RATIO
-    max_lines = max(1, int((height_in * _POINTS_PER_INCH) / (font_size * _LINE_HEIGHT_RATIO)))
-    if _wrapped_line_count(body, width_in, font_size, ratio) <= max_lines:
-        return body
-
-    char_w = (font_size * ratio) / _POINTS_PER_INCH
-    per_line = max(1, int(width_in / char_w))
-    # One ellipsis replaces the tail, so the sentence ends deliberately rather
-    # than colliding with the edge of the panel.
-    budget = max(1, per_line * max_lines - 1)
-    return limit_text(body, budget)
-
-
-def add_box(slide, x, y, w, h, fill, line=None, radius=False):
-    shape_type = MSO_SHAPE.ROUNDED_RECTANGLE if radius else MSO_SHAPE.RECTANGLE
-    shp = slide.shapes.add_shape(shape_type, Inches(x), Inches(y), Inches(w), Inches(h))
-    shp.fill.solid()
-    shp.fill.fore_color.rgb = rgb(fill)
-    shp.line.color.rgb = rgb(line or fill)
-    shp.line.width = Pt(0.9 if line else 0.1)
-    # Reduce the exaggerated corner rounding of PowerPoint's rounded rectangle.
-    if radius and hasattr(shp, "adjustments") and len(shp.adjustments):
-        try:
-            shp.adjustments[0] = 0.08
-        except Exception:
-            pass
-    return shp
-
-
-def add_rule(slide, x, y, w, color=None, width=1.0):
-    line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Pt(width))
-    line.fill.solid()
-    line.fill.fore_color.rgb = rgb(color or C["line"])
-    line.line.fill.background()
-    return line
-
-
-def add_vrule(slide, x, y, h, color=None, width=1.0):
-    line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Pt(width), Inches(h))
-    line.fill.solid()
-    line.fill.fore_color.rgb = rgb(color or C["line"])
-    line.line.fill.background()
-    return line
-
-
-def add_text(
-    slide,
-    text,
-    x,
-    y,
-    w,
-    h,
-    *,
-    font_size=12,
-    font_face=BODY_FONT,
-    color=None,
-    bold=False,
-    italic=False,
-    align="left",
-    valign="middle",
-    margin=0.0,
-    fit=True,
-    line_spacing=None,
-):
-    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
-    tf = box.text_frame
-    tf.clear()
-    tf.margin_left = Inches(margin)
-    tf.margin_right = Inches(margin)
-    tf.margin_top = Inches(margin)
-    tf.margin_bottom = Inches(margin)
-    tf.word_wrap = True
-    tf.vertical_anchor = {
-        "top": MSO_ANCHOR.TOP,
-        "middle": MSO_ANCHOR.MIDDLE,
-        "bottom": MSO_ANCHOR.BOTTOM,
-    }.get(valign, MSO_ANCHOR.MIDDLE)
-    if fit:
-        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
-        # Type sizes are fixed so every card reads the same. Text that would
-        # overflow is trimmed to what the box holds at this size rather than
-        # shrunk, which would make one card's body copy smaller than another's.
-        text = fit_to_box(
-            text,
-            max(0.1, w - 2 * margin),
-            max(0.1, h),
-            font_size,
-            head=font_face == HEAD_FONT,
-        )
-
-    p = tf.paragraphs[0]
-    p.alignment = {
-        "left": PP_ALIGN.LEFT,
-        "center": PP_ALIGN.CENTER,
-        "right": PP_ALIGN.RIGHT,
-    }.get(align, PP_ALIGN.LEFT)
-    if line_spacing is not None:
-        p.line_spacing = line_spacing
-
-    run = p.add_run()
-    run.text = clean(text)
-    f = run.font
-    f.name = font_face
-    f.size = Pt(font_size)
-    f.bold = bold
-    f.italic = italic
-    f.color.rgb = rgb(color or C["ink"])
-    return box
-
-
-def add_checkbox(slide, x, y, size=0.12):
-    shp = slide.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(size), Inches(size)
-    )
-    shp.fill.background()
-    shp.line.color.rgb = rgb(C["ink"])
-    shp.line.width = Pt(0.7)
-    return shp
-
-
-def _image_size(path: str) -> tuple[int, int]:
-    with Image.open(_resolve(path)) as im:
-        return im.size
-
-
-def add_picture_crop(slide, path: str, x, y, w, h):
-    """Add image cropped to fill a target box without distorting aspect ratio."""
-    if not exists(path):
-        return None
-    iw, ih = _image_size(path)
-    src_aspect = iw / ih
-    dst_aspect = w / h
-    pic = slide.shapes.add_picture(
-        _resolve(path), Inches(x), Inches(y), width=Inches(w), height=Inches(h)
-    )
-    if src_aspect > dst_aspect:
-        # Image is wider than target: crop left/right.
-        shown_ratio = dst_aspect / src_aspect
-        crop = (1.0 - shown_ratio) / 2.0
-        pic.crop_left = crop
-        pic.crop_right = crop
-    elif src_aspect < dst_aspect:
-        # Image is taller than target: crop top/bottom.
-        shown_ratio = src_aspect / dst_aspect
-        crop = (1.0 - shown_ratio) / 2.0
-        pic.crop_top = crop
-        pic.crop_bottom = crop
-    return pic
-
-
-# A line drawing arrives as ink on a solid white field, and dropped onto the
-# cream variations panel that field reads as a white patch stuck to the page.
-# Keying the white out lets the ink sit directly on the panel, the way the
-# reference cards set their sketches.
-# Light neutrals are background, not ink. The cutoff is well below white
-# because a model asked for a transparent background sometimes draws the
-# checkerboard that represents one, in greys around 220.
-_INK_WHITE_CUTOFF = 205
-_INK_SOFT_EDGE = 45
-# A pixel is only background if it is also unsaturated: this keeps pale
-# ink from being erased along with the checkerboard.
-_INK_MAX_SATURATION = 26
-_TRANSPARENT_CACHE: dict[str, str] = {}
-
-
-def _transparent_ink(path: str, directory: str) -> str:
-    """Return a copy of a line drawing with its white background removed.
-
-    Pixels at or above the cutoff become fully transparent and the band just
-    below it fades, so the strokes keep a soft edge instead of an aliased one.
-    """
-    resolved = _resolve(path)
-    if not resolved or not os.path.exists(resolved):
-        return resolved
-    if resolved in _TRANSPARENT_CACHE:
-        return _TRANSPARENT_CACHE[resolved]
-
-    try:
-        with Image.open(resolved) as source:
-            image = source.convert("RGBA")
-        alpha = []
-        for pixel in image.getdata():
-            low, high = min(pixel[0], pixel[1], pixel[2]), max(pixel[0], pixel[1], pixel[2])
-            neutral = (high - low) <= _INK_MAX_SATURATION
-            if neutral and low >= _INK_WHITE_CUTOFF:
-                alpha.append(0)
-            elif neutral and low >= _INK_WHITE_CUTOFF - _INK_SOFT_EDGE:
-                fade = (_INK_WHITE_CUTOFF - low) / _INK_SOFT_EDGE
-                alpha.append(int(255 * fade))
-            else:
-                alpha.append(255)
-        image.putalpha(Image.new("L", image.size).point(lambda _: 0))
-        image.putdata([(p[0], p[1], p[2], a) for p, a in zip(image.getdata(), alpha, strict=True)])
-        target = Path(directory) / f"ink-{hashlib.sha256(resolved.encode()).hexdigest()[:12]}.png"
-        image.save(target)
-        _TRANSPARENT_CACHE[resolved] = str(target)
-        return str(target)
-    except Exception:
-        # A drawing that cannot be keyed is still better placed than dropped.
-        return resolved
-
-
-def add_ink_image(slide, path, x, y, w, h, *, placeholder="SKETCH"):
-    """Place a line drawing with its white background keyed out."""
-    if exists(path) and _INK_DIRECTORY:
-        keyed = _transparent_ink(path, _INK_DIRECTORY)
-        if keyed and os.path.exists(keyed):
-            try:
-                return add_picture_contain(slide, keyed, x, y, w, h)
-            except Exception:
-                pass
-    return add_image(slide, path, x, y, w, h, crop=False, placeholder=placeholder, quiet=True)
-
-
-def add_picture_contain(slide, path: str, x, y, w, h):
-    """Add image fully contained in target box, preserving aspect ratio."""
-    if not exists(path):
-        return None
-    iw, ih = _image_size(path)
-    src_aspect = iw / ih
-    dst_aspect = w / h
-    if src_aspect >= dst_aspect:
-        rw = w
-        rh = w / src_aspect
-        rx = x
-        ry = y + (h - rh) / 2
-    else:
-        rh = h
-        rw = h * src_aspect
-        rx = x + (w - rw) / 2
-        ry = y
-    return slide.shapes.add_picture(
-        _resolve(path), Inches(rx), Inches(ry), width=Inches(rw), height=Inches(rh)
-    )
-
-
-def add_image(slide, path, x, y, w, h, *, crop=True, placeholder="IMAGE", quiet=False):
-    """Place an image, or a placeholder when it is missing or unreadable.
-
-    ``quiet`` draws nothing but the label. A boxed placeholder is right for a
-    large area such as a step photograph, where the gap should be obvious, but
-    wrong for a small inline cutout, where the box is more distracting than the
-    absence it marks.
-    """
-    if exists(path):
-        try:
-            return (
-                add_picture_crop(slide, path, x, y, w, h)
-                if crop
-                else add_picture_contain(slide, path, x, y, w, h)
-            )
-        except Exception:
-            pass
-
-    if not quiet:
-        add_box(slide, x, y, w, h, C["grey"], C["line"], radius=True)
-    add_text(
-        slide,
-        placeholder,
-        x + 0.05,
-        y + h / 2 - 0.13,
-        w - 0.10,
-        0.26,
-        font_size=9,
-        color=C["muted"],
-        bold=True,
-        align="center",
-    )
-    return None
-
-
-def add_circle_image(slide, path, cx, cy, d, fallback=""):
-    circle = slide.shapes.add_shape(
-        MSO_SHAPE.OVAL,
-        Inches(cx - d / 2),
-        Inches(cy - d / 2),
-        Inches(d),
-        Inches(d),
-    )
-    circle.fill.solid()
-    circle.fill.fore_color.rgb = rgb(C["white"] if exists(path) else C["cream"])
-    circle.line.color.rgb = rgb(C["border"])
-    circle.line.width = Pt(0.6)
-
-    # python-pptx cannot directly mask an image to an ellipse. Use a cropped square
-    # image placed inside the circle; with ingredient cutout PNGs this reads visually
-    # as the same circular ingredient treatment while remaining editable.
-    if exists(path):
-        pad = 0.025
-        add_image(
-            slide,
-            path,
-            cx - d / 2 + pad,
-            cy - d / 2 + pad,
-            d - 2 * pad,
-            d - 2 * pad,
-            crop=True,
-            placeholder=fallback,
-        )
-    else:
-        add_text(
-            slide,
-            (fallback[:1] or "?").upper(),
-            cx - d / 2,
-            cy - 0.11,
-            d,
-            0.22,
-            font_size=8.5,
-            color=C["line"],
-            bold=True,
-            align="center",
-        )
+from ..errors import ContentTooLong
+from ..schema import load_recipes
+from .assets import asset_context
+from .drawing import (
+    _CHAR_WIDTH_RATIO,
+    _LINE_HEIGHT_RATIO,
+    _POINTS_PER_INCH,
+    HEAD_FONT,
+    HERO_H,
+    HERO_W,
+    HERO_X,
+    LEFT_W,
+    PAGE_H,
+    PAGE_W,
+    RIGHT_W,
+    RIGHT_X,
+    C,
+    _wrapped_line_count,
+    add_box,
+    add_checkbox,
+    add_image,
+    add_ink_image,
+    add_rule,
+    add_text,
+    add_vrule,
+    chunks,
+    clean,
+    limit_text,
+    rgb,
+    servings_label,
+)
 
 
 def split_instructions(step: dict[str, Any]) -> list[str]:
     bullets = step.get("bullets")
-    if isinstance(bullets, list):
+    if bullets:
         return [clean(v).strip() for v in bullets if clean(v).strip()]
 
     body = clean(step.get("body") or step.get("instructions"))
@@ -1166,6 +648,9 @@ STEP_TITLE_FONT_SIZE = 20.0
 STEP_TITLE_BOX_HEIGHT = 0.62
 BULLET_FONT_SIZE = 10.0
 BULLET_LINE_HEIGHT = 0.56
+# Roughly how many words fit on one bullet line at the body size, used to turn
+# an overflow measured in inches into an edit the model can make.
+WORDS_PER_BULLET_LINE = 6
 # Breathing room under a bullet, so consecutive rows do not touch.
 BULLET_ROW_PADDING = 0.10
 
@@ -1220,7 +705,7 @@ def step_block_height(step: dict[str, Any], width: float) -> float:
     text_w = width - image_w - 0.16 - 0.30
 
     lines = sum(
-        _wrapped_line_count(limit_text(bullet, 160), text_w, BULLET_FONT_SIZE, _CHAR_WIDTH_RATIO)
+        _wrapped_line_count(bullet, text_w, BULLET_FONT_SIZE, _CHAR_WIDTH_RATIO)
         for bullet in bullets
     )
     # The text sets the height. The photograph then fills whatever the text
@@ -1280,12 +765,7 @@ def add_step_block(slide, step, idx, x, y, w, h):
         placeholder="STEP IMAGE",
     )
 
-    # A dropped bullet is a lost cooking instruction, so every one is drawn and
-    # the type shrinks to fit instead. The floor keeps a step with an unusual
-    # number of instructions legible rather than merely present.
-    # Body copy is one fixed size on every card. The number of bullets a panel
-    # shows is what varies, and the prompt asks for a step count that fits, so
-    # trimming here is a guard rather than the normal path.
+    # Reject overflow rather than dropping or shortening cooking instructions.
     bullets = split_instructions(step)
     available_h = h - (bullet_top - y) - 0.16
     line_h = BULLET_LINE_HEIGHT
@@ -1296,7 +776,7 @@ def add_step_block(slide, step, idx, x, y, w, h):
     heights = [
         max(
             line_h,
-            _wrapped_line_count(limit_text(b, 160), bullet_w, font_size, _CHAR_WIDTH_RATIO)
+            _wrapped_line_count(b, bullet_w, font_size, _CHAR_WIDTH_RATIO)
             * font_size
             * _LINE_HEIGHT_RATIO
             / _POINTS_PER_INCH
@@ -1305,25 +785,28 @@ def add_step_block(slide, step, idx, x, y, w, h):
         for b in bullets
     ]
 
-    # Drop only what genuinely will not fit, merging the remainder into the last
-    # visible bullet so the cook is never left a step short.
-    used, shown = 0.0, 0
-    for height in heights:
-        if used + height > available_h and shown:
-            break
-        used += height
-        shown += 1
-    if shown < len(bullets):
-        merged = " ".join(bullets[max(0, shown - 1) :])
-        bullets = [*bullets[: max(0, shown - 1)], merged]
-        heights = heights[: len(bullets)]
+    if sum(heights) > available_h:
+        # The model can fix this, so say which step and by how much rather than
+        # failing with a generic message it cannot act on.
+        overflow = sum(heights) - available_h
+        words_over = max(1, round(overflow / BULLET_LINE_HEIGHT * WORDS_PER_BULLET_LINE))
+        raise ContentTooLong(
+            field=f"steps[{idx}].body",
+            detail=(
+                f"Step {idx + 1} needs {sum(heights):.2f}in of text area but has "
+                f"{available_h:.2f}in."
+            ),
+            suggestion=(
+                f"Remove about {words_over} words from step {idx + 1}, or split it into two steps."
+            ),
+        )
 
     by = bullet_top
     for bullet, height in zip(bullets, heights, strict=False):
         add_checkbox(slide, x, by + 0.035, 0.12)
         add_text(
             slide,
-            limit_text(bullet, 160),
+            bullet,
             x + 0.26,
             by - 0.02,
             bullet_w,
@@ -1331,6 +814,7 @@ def add_step_block(slide, step, idx, x, y, w, h):
             font_size=font_size,
             valign="top",
             margin=0.01,
+            fit=False,
         )
         by += height
 
@@ -1565,29 +1049,15 @@ def build_pptx(data: dict[str, Any], output: str) -> None:
     prs.save(output)
 
 
-def render_deck(data: dict[str, Any], project_id: str) -> bytes:
-    """Return the finished deck as bytes, fetching any gs:// images first.
-
-    Bytes rather than a path, because the caller uploads the result to Cloud
-    Storage and never needs the file to outlive the call.
-    """
-    with tempfile.TemporaryDirectory(prefix="recipe-card-") as work_dir:
-        prefetch_images(data, project_id, work_dir)
+def render_deck(
+    data: dict[str, Any], project_id: str, *, allowed_uris: set[str] | None = None
+) -> bytes:
+    """Render validated content using only the run's authorized images."""
+    data = load_recipes(data)
+    with (
+        tempfile.TemporaryDirectory(prefix="recipe-card-") as work_dir,
+        asset_context(data, project_id, work_dir, allowed_uris or set()),
+    ):
         output = Path(work_dir) / "recipe_cards.pptx"
         build_pptx(data, str(output))
         return output.read_bytes()
-
-
-def load_recipes(payload: str | dict[str, Any]) -> dict[str, Any]:
-    """Accept the recipe payload as a JSON string or an already-parsed object.
-
-    A model emits JSON as text, so accepting both keeps the tool from failing
-    on a well-formed request that arrives in the other shape.
-    """
-    data = json.loads(payload) if isinstance(payload, str) else payload
-    if not isinstance(data, dict):
-        raise ValueError("Recipe payload must be an object.")
-    # A single recipe passed on its own is still a valid request.
-    if "recipes" not in data:
-        data = {"recipes": [data]}
-    return data

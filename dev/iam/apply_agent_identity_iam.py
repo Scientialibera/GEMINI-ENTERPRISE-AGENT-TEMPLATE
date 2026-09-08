@@ -9,6 +9,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+import vertexai
+
 # Runnable directly as well as imported by deploy/update helpers.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -34,6 +36,9 @@ ROLE_PATTERN = re.compile(
     r"organizations/[0-9]+/roles/[A-Za-z0-9_.]+)$"
 )
 DISALLOWED_BASIC_ROLES = frozenset({"roles/owner", "roles/editor"})
+UNSUPPORTED_BUCKET_ROLES = frozenset(
+    f"roles/storage.legacyBucket{suffix}" for suffix in ("Reader", "Writer", "Owner")
+)
 
 # What every Agent Identity in a project needs before any agent can serve a
 # request: reach the model, consume quota, and read its own configuration. The
@@ -49,7 +54,8 @@ BASELINE_AGENT_IDENTITY_ROLES = (
 )
 BASELINE_ROLES_ENV = "DEV_GRANT_AGENT_IDENTITY_BASELINE"
 REASONING_ENGINE_PATTERN = re.compile(
-    r"(?:^|/)locations/(?P<location>[^/]+)/reasoningEngines/(?P<engine_id>[^/]+)$"
+    r"^projects/(?P<project>[^/]+)/locations/(?P<location>[^/]+)/"
+    r"reasoningEngines/(?P<engine_id>[^/]+)$"
 )
 
 
@@ -69,6 +75,8 @@ def agent_identity_storage_bucket_roles_env(spec: AgentSpec) -> str:
 
 
 def _validate_role(role: str) -> str:
+    if role in UNSUPPORTED_BUCKET_ROLES:
+        raise SystemExit(f"Agent Identity does not support legacy bucket role '{role}'.")
     if role in DISALLOWED_BASIC_ROLES:
         raise SystemExit(
             f"Refusing broad basic IAM role '{role}'. Use a least-privilege predefined "
@@ -221,14 +229,30 @@ def _trust_domain(project_id: str, project_number: str) -> str:
 
 
 def agent_identity_principal(project_id: str, resource_name: str) -> str:
-    """Construct the exact Google-managed Agent Identity principal."""
+    """Read the deployed identity and verify its project and runtime resource."""
     project_number = _project_number(project_id)
     location, engine_id = _runtime_coordinates(resource_name)
-    return (
-        f"principal://{_trust_domain(project_id, project_number)}"
-        f"/resources/aiplatform/projects/{project_number}"
-        f"/locations/{location}/reasoningEngines/{engine_id}"
+    match = REASONING_ENGINE_PATTERN.fullmatch(resource_name.strip())
+    if match.group("project") not in (project_id, project_number):
+        raise SystemExit("The runtime belongs to a different project; no IAM grants were made.")
+    client = vertexai.Client(
+        project=project_id, location=location, http_options={"api_version": "v1beta1"}
     )
+    remote = client.agent_engines.get(name=resource_name)
+    spec = remote.api_resource.spec
+    identity_type = getattr(spec.identity_type, "value", spec.identity_type)
+    principal = spec.effective_identity or ""
+    expected_path = (
+        f"/resources/aiplatform/projects/{project_number}/locations/{location}"
+        f"/reasoningEngines/{engine_id}"
+    )
+    if (
+        identity_type != "AGENT_IDENTITY"
+        or not principal.startswith("principal://agents.global.")
+        or not principal.endswith(expected_path)
+    ):
+        raise SystemExit("The runtime has no matching Agent Identity; no IAM grants were made.")
+    return principal
 
 
 def agent_identity_principal_set(project_id: str) -> str:
@@ -281,7 +305,7 @@ def apply_agent_identity_iam(
     resource_name: str,
     spec: AgentSpec,
 ) -> str | None:
-    """Apply explicitly configured IAM bindings to one deployed Agent Identity."""
+    """Add configured bindings. Existing grants are never revoked by this helper."""
     project_roles = requested_project_roles(spec)
     bucket_bindings = requested_storage_bucket_roles(spec)
     configured_identity = os.getenv(agent_identity_id_env(spec), "").strip()
@@ -289,7 +313,7 @@ def apply_agent_identity_iam(
     if not project_roles and not bucket_bindings and not configured_identity:
         print(
             f"AGENT_IDENTITY_IAM={agent_name}: no agent-specific bindings configured; "
-            "the runtime keeps only platform baseline grants."
+            "existing grants are unchanged. This helper only adds permissions."
         )
         return None
 

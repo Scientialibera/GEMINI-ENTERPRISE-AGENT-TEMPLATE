@@ -205,9 +205,10 @@ through a `${VARIABLE}` placeholder, so the repository says which bucket an agen
 to without committing any project's bucket name; a placeholder that resolves to nothing
 is skipped rather than guessed at.
 
-Roles are only ever added by these lists. The baseline every Agent Identity already has
-comes from Terraform and is not repeated here, and the helper still refuses roles/owner
-and roles/editor.
+These lists only add roles. Removing an entry does not revoke an existing grant;
+an IAM administrator must review and remove it separately. The helper verifies the
+runtime's reported effective identity before granting access and rejects basic
+Owner/Editor roles and unsupported legacy bucket roles.
 
 Environment variable names are derived from the agent package name:
 
@@ -339,14 +340,14 @@ RECIPE_CARD_BUCKET=<project>-recipe-cards
 RECIPE_CARD_BUCKET_LOCATION=
 IMAGE_MODEL=
 IMAGE_MODEL_LOCATION=global
-RECIPE_CARD_AGENT_AGENT_IDENTITY_STORAGE_BUCKET_ROLES=gs://<bucket>=roles/storage.objectAdmin|roles/storage.legacyBucketReader
-RECIPE_CARD_WORKFLOW_AGENT_IDENTITY_STORAGE_BUCKET_ROLES=gs://<bucket>=roles/storage.objectAdmin|roles/storage.legacyBucketReader
+RECIPE_CARD_AGENT_AGENT_IDENTITY_STORAGE_BUCKET_ROLES=gs://<bucket>=roles/storage.objectAdmin
+RECIPE_CARD_WORKFLOW_AGENT_IDENTITY_STORAGE_BUCKET_ROLES=gs://<bucket>=roles/storage.objectAdmin
 ~~~
 
-`legacyBucketReader` is needed alongside object access because the bucket check reads
-bucket metadata, which object roles do not cover. The bucket is created on first use
-when the caller may create it; a runtime that can write objects but not inspect the
-bucket proceeds anyway.
+Create the output bucket with uniform bucket-level access before deploying. Grant
+object access on that bucket; do not grant legacy bucket roles to Agent Identity.
+Bucket creation belongs to the deploying administrator, not the runtime. A runtime
+without bucket metadata access can still upload and download permitted objects.
 
 The image models are served from the `global` location, not the region the runtime is
 deployed to, which is why `IMAGE_MODEL_LOCATION` defaults to `global` and is forwarded
@@ -364,9 +365,21 @@ deliberately small. Request a quota increase before demonstrating this live.
 
 ### How the card is laid out
 
-`tools/card_template.py` owns presentation; the model supplies content and image
-locations only. Nothing about the layout is left to the model, so every card comes out
-identically structured.
+`packages/recipe_cards` owns recipe validation, image publishing and presentation.
+Its renderer separates request-scoped assets, drawing primitives and page layouts.
+Both entry points call the same shared tools.
+
+Image generation records its output URIs in session state. Pass the returned `run_id`
+to subsequent image calls and to the render tool in the same session. The renderer
+rejects local paths and images that are absent from that run's manifest, even if the
+runtime could read them. A session retains its eight most recent runs.
+
+Inputs are limited to three recipes per deck, 24 steps per recipe and 128 KiB of JSON.
+Image batches allow 24 images with up to 48 per run. Downloads are limited to 12 MiB
+and 4,194,304 pixels per image, with 64 MiB of image bytes per render. Repeated image
+names are rejected; uploads use creation preconditions to avoid overwriting objects.
+If cooking instructions do not fit, rendering fails with a request to split the step.
+It never truncates those instructions. A failed render does not publish a deck.
 
 Steps paginate in fours. Four or fewer steps give a two-page deck whose second page
 carries the steps and the closing panels. Five to eight steps give three pages, where
@@ -489,6 +502,12 @@ packages/gemini_shared/src/gemini_shared/
   media/                     batched image generation with pacing and retries
   mcp/mcp_auth/              authenticated Streamable HTTP toolsets
   mcp/mcp_google_cloud/      managed endpoints and BigQuery tool allowlist
+packages/recipe_cards/src/recipe_cards/
+  schema.py                  bounded recipe models
+  runs.py                    session-owned runs and asset manifests
+  images.py, publish.py       shared ADK tools
+  rendering/                 asset handling, drawing primitives and page layouts
+  style/                     bundled reference images
 dev/                         local, packaging, deployment, IAM and registration scripts
 tests/                       import, validation and behavior tests
 ~~~
@@ -594,21 +613,21 @@ root_agent = SequentialAgent(
 app = AdkApp(agent=root_agent, enable_tracing=True)
 ~~~
 
-Reuse the tools of an existing agent rather than copying them. Declare that agent as a
-dependency in the workflow's pyproject.toml, add it to `[tool.uv.sources]` in the root
-pyproject.toml, and list its source path in the spec's `extra_packages` so it reaches
-the archive. A workflow that copies a tool will drift from the agent that owns it; the
-test suite asserts that every tool a stage calls is the object the agent exposes.
+Put reusable tools in a shared package and depend on it from both entry points.
+Declare that package in `[tool.uv.sources]` and include its source path in each spec's
+`extra_packages`. The recipe workflow depends on `recipe-cards`, not on the
+conversational agent. Packaging tests check that its tools and style images ship
+without the agent package.
 
-Because a workflow has stages rather than tools, and each stage carries its own
-instruction rather than reading one from Parameter Manager, the checks that describe a
-conversational agent do not apply to it. The test suite separates the two by
-`source_root` and applies the deployment-level checks — packaging, delegated auth,
-OAuth clients, scopes, release defaults — to both.
+The recipe workflow uses stage instructions and the bootstrap model from code and
+environment settings; changing its Parameter Manager entry does not change those
+stages. Update the deployment to change them. A validation callback checks the writer's
+recipe before image generation. Shared tool validation and deployment checks cover
+both entry points.
 
-Choose a workflow when the order is known in advance and should not vary: a fixed
-pipeline is cheaper, reproducible, and cannot skip a step. Choose an agent when the
-user's request should decide what happens next.
+Use a workflow when stage order is fixed. Model outputs still vary and a stage can
+fail, so validate the data passed between stages. Use a conversational agent when
+the user's request should determine which tool runs next.
 
 ## Code conventions
 

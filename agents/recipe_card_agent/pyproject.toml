@@ -5,11 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
   "gemini-shared",
   "google-adk[extensions]==2.7.1",
-  "google-cloud-storage==3.13.1",
-  "google-genai>=2.22.0,<3.0.0",
-  "python-pptx>=1.0.2,<2.0.0",
-  "pillow>=11.0.0",
-  "google-auth>=2.35.0,<3.0.0",
+  "recipe-cards",
 ]
 
 [build-system]

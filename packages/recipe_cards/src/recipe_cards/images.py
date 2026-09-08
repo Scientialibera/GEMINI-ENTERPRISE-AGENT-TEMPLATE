@@ -1,32 +1,25 @@
-"""Generate a batch of recipe photographs and publish them to Cloud Storage.
-
-One call produces a whole set, so a card costs two tool calls rather than one
-per photograph. The agent chooses the mode: ingredient cutouts are independent
-and run in parallel, while step photographs run sequentially so each inherits
-the pot, surface and lighting of the ones before it.
-"""
+"""Generate bounded image batches and register each asset in session state."""
 
 from __future__ import annotations
 
 import functools
-import re
-import secrets
-import time
 from pathlib import Path
 
-from gemini_shared.connectors.cloud_storage import ensure_bucket, upload_bytes
+from gemini_shared.connectors.cloud_storage import upload_bytes
 from gemini_shared.media import ImageRequest, generate_images
 from gemini_shared.media.images import MODE_PARALLEL, MODE_SEQUENTIAL_REFERENCE
+from google.adk.tools import ToolContext
 
-from ..config import OUTPUT_BUCKET, OUTPUT_BUCKET_ENV, OUTPUT_BUCKET_LOCATION, PROJECT_ID
+from .config import OUTPUT_BUCKET, OUTPUT_BUCKET_ENV, PROJECT_ID
+from .runs import get_run, new_run_id, safe_slug, save_run
+from .schema import MAX_IMAGES_PER_BATCH, MAX_IMAGES_PER_RUN
 
-IMAGE_CONTENT_TYPE = "image/png"
-UNSAFE_NAME = re.compile(r"[^a-z0-9]+")
+IMAGE_EXTENSIONS = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 
 # Finished cards shipped with the agent. Passing them as references shows the
 # model the house look — palette, lighting, unbranded containers, isolated
 # ingredients — rather than relying on the prompt to describe it in words.
-STYLE_DIR = Path(__file__).resolve().parents[1] / "style"
+STYLE_DIR = Path(__file__).resolve().parent / "style"
 
 
 @functools.cache
@@ -37,27 +30,11 @@ def _style_plates() -> tuple[bytes, ...]:
     return tuple(path.read_bytes() for path in sorted(STYLE_DIR.glob("*.jpg")))
 
 
-def safe_slug(value: str, fallback: str = "recipe") -> str:
-    """Lowercase hyphenated form of a name, safe as a storage path segment."""
-    return UNSAFE_NAME.sub("-", (value or "").strip().lower()).strip("-") or fallback
-
-
-def new_run_id() -> str:
-    """Identifier for one card, unique across concurrent requests.
-
-    Two people asking for the same dish would otherwise write to the same
-    prefix and overwrite each other's images and deck part-way through. The
-    timestamp keeps a listing readable; the random suffix is what makes it
-    collision-proof.
-    """
-    return f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
-
-
-def _object_name(recipe_slug: str, run_id: str, image_name: str) -> str:
+def _object_name(recipe_slug: str, run_id: str, image_name: str, extension: str = "png") -> str:
     """Group one run's images under their own prefix."""
     return (
         f"{safe_slug(recipe_slug)}/{safe_slug(run_id, 'run')}"
-        f"/images/{safe_slug(image_name, 'image')}.png"
+        f"/images/{safe_slug(image_name, 'image')}.{extension}"
     )
 
 
@@ -65,6 +42,7 @@ def generate_recipe_images(
     recipe_slug: str,
     prompts: list[str],
     names: list[str],
+    tool_context: ToolContext,
     mode: str = MODE_PARALLEL,
     run_id: str = "",
 ) -> dict[str, object]:
@@ -99,14 +77,29 @@ def generate_recipe_images(
         )
     if not prompts:
         raise ValueError("No prompts were supplied.")
+    if len(prompts) > MAX_IMAGES_PER_BATCH:
+        raise ValueError(f"At most {MAX_IMAGES_PER_BATCH} images may be generated per batch.")
+    if any(not p.strip() or len(p) > 4000 for p in prompts):
+        raise ValueError("Each image prompt must contain 1-4000 characters.")
+    normalized_names = [safe_slug(name, "") for name in names]
+    if not all(normalized_names) or len(set(normalized_names)) != len(names):
+        raise ValueError("Image names must be nonempty and unique after normalization.")
     if mode not in (MODE_PARALLEL, MODE_SEQUENTIAL_REFERENCE):
         raise ValueError(
             f"Unknown mode '{mode}'. Use '{MODE_PARALLEL}' for independent images "
             f"or '{MODE_SEQUENTIAL_REFERENCE}' for a consistent series."
         )
 
-    run_id = run_id.strip() or new_run_id()
-    created = ensure_bucket(PROJECT_ID, OUTPUT_BUCKET, OUTPUT_BUCKET_LOCATION)
+    slug = safe_slug(recipe_slug)
+    run = get_run(tool_context, run_id) if run_id else {"slug": slug, "images": {}}
+    if run["slug"] != slug:
+        raise ValueError("The run belongs to a different recipe.")
+    existing = dict(run["images"])
+    if set(normalized_names) & existing.keys():
+        raise ValueError("An image with that name already exists in this run; use a new name.")
+    if len(existing) + len(names) > MAX_IMAGES_PER_RUN:
+        raise ValueError(f"At most {MAX_IMAGES_PER_RUN} images may be generated per recipe run.")
+    run_id = run_id or new_run_id()
     # Every image carries the house style plates. In sequential mode the batch's
     # own earlier images are appended to these by the shared helper.
     plates = _style_plates()
@@ -118,19 +111,24 @@ def generate_recipe_images(
         mode=mode,
     )
 
-    uris = {
-        image.name: upload_bytes(
+    uris = {}
+    for image in images:
+        if image.mime_type not in IMAGE_EXTENSIONS:
+            raise ValueError("Unsupported generated image type.")
+        uri = upload_bytes(
             PROJECT_ID,
             OUTPUT_BUCKET,
-            _object_name(recipe_slug, run_id, image.name),
+            _object_name(slug, run_id, image.name, IMAGE_EXTENSIONS[image.mime_type]),
             image.data,
-            IMAGE_CONTENT_TYPE,
+            image.mime_type,
+            create_only=True,
         )
-        for image in images
-    }
+        uris[image.name] = uri
+        existing[safe_slug(image.name)] = uri
+        save_run(tool_context, run_id, {"slug": slug, "images": existing})
     return {
         "bucket": OUTPUT_BUCKET,
-        "bucket_created": created,
+        "bucket_created": False,
         "mode": mode,
         # Pass this back on the next call and to render_recipe_card, so one
         # card's images and deck stay together.

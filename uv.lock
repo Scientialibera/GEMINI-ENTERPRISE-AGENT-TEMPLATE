@@ -16,6 +16,7 @@ members = [
     "gemini-shared",
     "recipe-card-agent",
     "recipe-card-workflow",
+    "recipe-cards",
 ]
 
 [[package]]
@@ -3435,6 +3436,39 @@ source = { editable = "agents/recipe_card_agent" }
 dependencies = [
     { name = "gemini-shared" },
     { name = "google-adk", extra = ["extensions"] },
+    { name = "recipe-cards" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "gemini-shared", editable = "packages/gemini_shared" },
+    { name = "google-adk", extras = ["extensions"], specifier = "==2.7.1" },
+    { name = "recipe-cards", editable = "packages/recipe_cards" },
+]
+
+[[package]]
+name = "recipe-card-workflow"
+version = "0.1.0"
+source = { editable = "workflows/recipe_card_workflow" }
+dependencies = [
+    { name = "gemini-shared" },
+    { name = "google-adk", extra = ["extensions"] },
+    { name = "recipe-cards" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "gemini-shared", editable = "packages/gemini_shared" },
+    { name = "google-adk", extras = ["extensions"], specifier = "==2.7.1" },
+    { name = "recipe-cards", editable = "packages/recipe_cards" },
+]
+
+[[package]]
+name = "recipe-cards"
+version = "0.1.0"
+source = { editable = "packages/recipe_cards" }
+dependencies = [
+    { name = "gemini-shared" },
     { name = "google-auth" },
     { name = "google-cloud-storage" },
     { name = "google-genai" },
@@ -3445,29 +3479,11 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "gemini-shared", editable = "packages/gemini_shared" },
-    { name = "google-adk", extras = ["extensions"], specifier = "==2.7.1" },
     { name = "google-auth", specifier = ">=2.35.0,<3.0.0" },
     { name = "google-cloud-storage", specifier = "==3.13.1" },
     { name = "google-genai", specifier = ">=2.22.0,<3.0.0" },
     { name = "pillow", specifier = ">=11.0.0" },
     { name = "python-pptx", specifier = ">=1.0.2,<2.0.0" },
-]
-
-[[package]]
-name = "recipe-card-workflow"
-version = "0.1.0"
-source = { editable = "workflows/recipe_card_workflow" }
-dependencies = [
-    { name = "gemini-shared" },
-    { name = "google-adk", extra = ["extensions"] },
-    { name = "recipe-card-agent" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "gemini-shared", editable = "packages/gemini_shared" },
-    { name = "google-adk", extras = ["extensions"], specifier = "==2.7.1" },
-    { name = "recipe-card-agent", editable = "agents/recipe_card_agent" },
 ]
 
 [[package]]

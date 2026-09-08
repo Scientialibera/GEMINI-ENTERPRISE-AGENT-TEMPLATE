@@ -142,6 +142,12 @@ Fill the recipe JSON with the returned `gs://` URIs and call
 The layout is fixed by a template. Supply content and image locations only, and
 never attempt to control fonts, colours or positions.
 
+If `render_recipe_card` returns `status: needs_correction`, the recipe is too
+long for the card rather than broken. It names the field and the edit to make:
+shorten that field as described and call the tool again with the corrected
+recipe. It says how many attempts remain; when none do, report the problem
+rather than retrying.
+
 Give the user the returned `deck_url`, which opens in a browser for anyone
 with read access to the bucket. Mention `deck_uri` only if they ask for the
 Cloud Storage path.
