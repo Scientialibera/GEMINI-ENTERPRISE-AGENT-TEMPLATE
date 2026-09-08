@@ -7,7 +7,13 @@ authentication, OAuth client setup, Agent Identity IAM and runtime configuration
 ~~~bash
 uv run --group dev python dev/run_local.py --agent basic_assistant
 uv run --group dev python dev/release_dev.py --agent basic_assistant
+uv run --group dev python dev/release_dev.py --agent recipe_card_workflow
 ~~~
+
+Every script takes `--agent <name>`, and a workflow is named the same way: the registry
+holds agents and workflows together, because they deploy identically. `source_root` on
+the spec is the only thing that tells them apart, and only the prompt path and the
+delegated-auth source scan consult it.
 
 The local runner reads dev/.env.local; remote commands read dev/.env.dev.
 Copy the matching example file and fill in the required values. Shell variables take
@@ -23,7 +29,7 @@ it calls, each also runnable on its own.
 dev/
   release_dev.py       preflight, package, deploy or update, IAM, then register
   run_local.py         run one agent on the workstation, no deployment
-  common.py            agent registry, deployment settings, package paths, state
+  common.py            registry of agents and workflows, deployment settings, state
   deploy/              build an archive and create or update a runtime
   iam/                 exact Agent Identity IAM after the runtime exists
   register/            publish a runtime into a Gemini Enterprise app
@@ -34,8 +40,8 @@ dev/
 | Script | Purpose |
 |---|---|
 | release_dev.py | Run preflight, package, deploy or update, optional Agent Identity IAM, then register. |
-| run_local.py | Run one agent against real APIs using workstation credentials. |
-| deploy/package_agent.py | Build an archive with one agent and the shared package. |
+| run_local.py | Run one agent or workflow against real APIs using workstation credentials. |
+| deploy/package_agent.py | Build an archive with one entry point and the packages it imports. |
 | deploy/deploy_dev.py | Create a new runtime with Agent Identity and save its resource name. |
 | deploy/update_dev.py | Update the runtime from saved state or DEV_REASONING_ENGINE. |
 | iam/apply_agent_identity_iam.py | Apply explicitly configured roles to the exact deployed Agent Identity. |
@@ -48,14 +54,14 @@ to deploy without publishing into an app.
 
 | Imported module | Purpose |
 |---|---|
-| common.py | Agent registry, deployment settings, package paths and state. |
+| common.py | Registry of agents and workflows, deployment settings, package paths and state. |
 | config/environment.py | Boolean and placeholder parsing. |
 | config/bootstrap.py | Authentication, project, API, bucket and parameter checks. |
 | fixtures/bigquery_fixture.py | Sample dataset creation, schema validation and seeding. |
 
-Adding an agent to AGENTS in common.py is what makes it visible to every script
-above. Imports resolve against dev/, so a script in a subfolder puts that
-directory on sys.path before importing common.
+Adding an entry to AGENTS in common.py is what makes it visible to every script above,
+whether it is an agent or a workflow. Imports resolve against dev/, so a script in a
+subfolder puts that directory on sys.path before importing common.
 
 ## Sandbox controls
 

@@ -1,19 +1,31 @@
-# Gemini Enterprise ADK agents
+# Gemini Enterprise ADK agents and workflows
 
-This repository contains three Python agents and scripts to run them locally,
-deploy them to Agent Engine and register them in Gemini Enterprise.
+This repository contains four Python agents, one workflow and the scripts to run them
+locally, deploy them to Agent Engine and register them in Gemini Enterprise.
+
+An **agent** is conversational: it holds tools and decides which to call as the
+exchange goes on. A **workflow** is a pipeline: its stages always run in the same
+order and each hands its result to the next. Both deploy the same way, to the same
+runtime, under the same identity; they differ only in how they are composed. The
+recipe card exists in both forms so the two can be compared directly.
 
 | Agent | Purpose |
 |---|---|
 | basic_assistant | Answer questions and report the active runtime settings. |
 | auth_reference_agent | Read Cloud Storage with Agent Identity and query BigQuery with the user's delegated token. |
 | bigquery_mcp_agent | Explore BigQuery through Google's managed MCP server using the user's delegated token. |
+| recipe_card_agent | Write a recipe, generate its photography and publish a PowerPoint recipe card to Cloud Storage. |
+
+| Workflow | Purpose |
+|---|---|
+| recipe_card_workflow | The same card as a fixed pipeline: write the recipe, generate the images, render the deck. Takes a dish name and returns a link. |
 
 The dev/ scripts target development projects and require ENVIRONMENT=dev for remote
 operations. The companion template/terraform-iac-only branch contains shared platform
-setup and baseline IAM. Deployment never grants IAM to the caller itself. An optional
-per-agent IAM helper can apply explicitly configured roles to the exact Agent Identity
-after its runtime exists, but only when the caller already has permission to change IAM.
+setup and baseline IAM, and is unchanged by adding an agent or a workflow. Deployment
+never grants IAM to the caller itself. An optional per-agent IAM helper can apply
+explicitly configured roles to the exact Agent Identity after its runtime exists, but
+only when the caller already has permission to change IAM.
 
 ## Set up the workstation
 
@@ -256,6 +268,81 @@ The optional BigQuery fixture provides five sample orders. Run config/bootstrap_
 prepare it, or use a dataset the test user can already query.
 See [fixture settings](dev/README.md#bigquery-fixture).
 
+## Produce a recipe card
+
+Both recipe entry points build the same artefact from the same tools: a two- or
+three-page PowerPoint deck published to Cloud Storage, returned as a link that opens
+in a browser for anyone the bucket's IAM already allows.
+
+~~~bash
+uv run --group dev python dev/release_dev.py --agent recipe_card_agent
+uv run --group dev python dev/release_dev.py --agent recipe_card_workflow
+~~~
+
+Both need a bucket to publish into and write access to it:
+
+~~~text
+RECIPE_CARD_BUCKET=<project>-recipe-cards
+RECIPE_CARD_BUCKET_LOCATION=
+IMAGE_MODEL=
+IMAGE_MODEL_LOCATION=global
+RECIPE_CARD_AGENT_AGENT_IDENTITY_STORAGE_BUCKET_ROLES=gs://<bucket>=roles/storage.objectAdmin|roles/storage.legacyBucketReader
+RECIPE_CARD_WORKFLOW_AGENT_IDENTITY_STORAGE_BUCKET_ROLES=gs://<bucket>=roles/storage.objectAdmin|roles/storage.legacyBucketReader
+~~~
+
+`legacyBucketReader` is needed alongside object access because the bucket check reads
+bucket metadata, which object roles do not cover. The bucket is created on first use
+when the caller may create it; a runtime that can write objects but not inspect the
+bucket proceeds anyway.
+
+The image models are served from the `global` location, not the region the runtime is
+deployed to, which is why `IMAGE_MODEL_LOCATION` defaults to `global` and is forwarded
+separately from `GOOGLE_CLOUD_LOCATION`.
+
+### Card production is quota-bound
+
+A full card needs roughly sixteen images and the default project quota is **two image
+requests a minute** (`Generate content with image generation requests quota`,
+1/min/project/model). One card therefore takes eight to ten minutes and only one can
+run at a time. `gemini_shared.media` paces requests to that limit across the whole
+process and retries throttling, empty responses and transient auth failures with
+exponential backoff. Concurrency cannot beat a per-minute cap, so the pool is
+deliberately small. Request a quota increase before demonstrating this live.
+
+### How the card is laid out
+
+`tools/card_template.py` owns presentation; the model supplies content and image
+locations only. Nothing about the layout is left to the model, so every card comes out
+identically structured.
+
+Steps paginate in fours. Four or fewer steps give a two-page deck whose second page
+carries the steps and the closing panels. Five to eight steps give three pages, where
+the middle page is steps only and the closing panels move to the last. `cooking_tip`
+accepts a list, one tip per step page, each about the steps on its own page; a page
+without a tip closes the gap rather than drawing an empty banner.
+
+Type sizes are fixed so every card reads the same. What varies is space: step blocks
+are measured from their own text, then scaled together to use the page, and each
+photograph is a share of its block. A page of four already fills the height, so a lone
+trailing step gets a much larger image rather than leaving white beneath it. The
+ingredient panel is drawn to the length of its list, and `variation_ingredients` are
+listed under their own heading in the secondary colour so an optional item is never
+mistaken for a required one.
+
+### Iterate on the layout without spending quota
+
+`experiments/render_local.py` renders a full card from images already in Cloud Storage,
+in seconds and with no image generation:
+
+~~~bash
+uv run --with pymupdf --group dev python experiments/render_local.py --tag check
+uv run --with pymupdf --group dev python experiments/render_local.py --tag wide --ingredients 12
+uv run --with pymupdf --group dev python experiments/render_local.py --tag long --five-steps
+~~~
+
+It writes a .pptx, converts it with LibreOffice when available and exports one PNG per
+page. Use it for any layout change; generate images only when testing the prompts.
+
 ## Manage configuration
 
 | Setting | Location | How a change takes effect |
@@ -318,6 +405,10 @@ BOOTSTRAP_MODEL
 GEMINI_MODEL_LOCATION
 GEMINI_ENTERPRISE_AUTHORIZATION_ID
 MCP_SERVER_URL
+RECIPE_CARD_BUCKET
+RECIPE_CARD_BUCKET_LOCATION
+IMAGE_MODEL
+IMAGE_MODEL_LOCATION
 ~~~
 
 Add new bootstrap keys to RUNTIME_ENV_KEYS if they must reach the deployed agent.
@@ -338,20 +429,29 @@ agents/<agent>/
     agent.py                 construct the Agent and AdkApp
     config.py                resolve bootstrap settings
     tools/                   tool implementations and shared-tool exports
+workflows/<workflow>/
+  pyproject.toml             workflow dependencies and wheel settings
+  src/<workflow>/
+    workflow.py              compose the stages into a SequentialAgent and AdkApp
+    config.py                resolve bootstrap settings
+    stages/                  one module per stage, each with its own instruction
 packages/gemini_shared/src/gemini_shared/
   auth/                      delegated credential provider and token readers
   config/                    bootstrap settings, live cache, callbacks and status tool
   connectors/                shared Google Cloud clients
+  media/                     batched image generation with pacing and retries
   mcp/mcp_auth/              authenticated Streamable HTTP toolsets
   mcp/mcp_google_cloud/      managed endpoints and BigQuery tool allowlist
 dev/                         local, packaging, deployment, IAM and registration scripts
+experiments/                 local rendering harness; not deployed
 tests/                       import, validation and behavior tests
 ~~~
 
-Each archive includes one agent and the shared package. Packaging excludes caches and
-bytecode, rejects symlinks and normalizes timestamps and ownership. Unchanged inputs
-produce identical archive bytes. Outputs go under ignored artifacts/; deployment state
-goes under ignored dev/.state/.
+Each archive includes one entry point and the packages it imports. A workflow's archive
+also contains the agent whose tools it reuses. Packaging excludes caches and bytecode,
+rejects symlinks and normalizes timestamps and ownership. Unchanged inputs produce
+identical archive bytes. Outputs go under ignored artifacts/; deployment state goes
+under ignored dev/.state/.
 
 ## Add an agent
 
@@ -363,6 +463,7 @@ goes under ignored dev/.state/.
 4. Add an AgentSpec to AGENTS in dev/common.py. Supply the package name, import module,
    display name, source paths, deployment requirements and registration text.
    For delegated tools, declare AUTHORIZATION_ID_ENV and the required service scopes.
+   Leave source_root at its default; only a workflow overrides it.
 5. Add dependencies to the agent's pyproject.toml and deployment requirements.
    Use the existing agents as examples for the agent-identity and mcp extras.
 6. Add the source directory to pytest's pythonpath in the root pyproject.toml, add an
@@ -420,6 +521,48 @@ to the model; server-side permissions still control access.
 Headers use the current session token for each request. Tool descriptions are cached
 for five minutes by default. Keep shared endpoints, scopes and tool lists under
 gemini_shared/mcp/ when multiple agents use them.
+
+## Add a workflow
+
+A workflow is deployed exactly like an agent: the same runtime, the same Agent
+Identity, the same Parameter Manager entry and the same registration. Only two things
+differ, so most of this repository does not distinguish them.
+
+1. It lives under `workflows/` rather than `agents/`, and its `AgentSpec` sets
+   `source_root="workflows"`. That field is the only registry change a workflow needs.
+2. Its root object is a composition — `SequentialAgent`, `ParallelAgent` or
+   `LoopAgent` — rather than a single `Agent` holding tools.
+
+Build it from stages. Each stage is an `LlmAgent` with an `output_key`, which publishes
+its result into session state, and the next stage reads it by name from its own
+instruction:
+
+~~~python
+recipe_writer = LlmAgent(..., output_key="recipe")  # writes state["recipe"]
+image_director = LlmAgent(..., instruction="...{recipe}...")  # reads it back
+
+root_agent = SequentialAgent(
+    name="recipe_card_workflow",
+    sub_agents=[recipe_writer, image_director, card_renderer],
+)
+app = AdkApp(agent=root_agent, enable_tracing=True)
+~~~
+
+Reuse the tools of an existing agent rather than copying them. Declare that agent as a
+dependency in the workflow's pyproject.toml, add it to `[tool.uv.sources]` in the root
+pyproject.toml, and list its source path in the spec's `extra_packages` so it reaches
+the archive. A workflow that copies a tool will drift from the agent that owns it; the
+test suite asserts that every tool a stage calls is the object the agent exposes.
+
+Because a workflow has stages rather than tools, and each stage carries its own
+instruction rather than reading one from Parameter Manager, the checks that describe a
+conversational agent do not apply to it. The test suite separates the two by
+`source_root` and applies the deployment-level checks — packaging, delegated auth,
+OAuth clients, scopes, release defaults — to both.
+
+Choose a workflow when the order is known in advance and should not vary: a fixed
+pipeline is cheaper, reproducible, and cannot skip a step. Choose an agent when the
+user's request should decide what happens next.
 
 ## Code conventions
 
