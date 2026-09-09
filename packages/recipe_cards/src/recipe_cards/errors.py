@@ -36,7 +36,7 @@ class ContentTooLong(ValueError):
             "attempts_remaining": remaining,
             "next_step": (
                 f"Shorten {self.field} as described and call render_recipe_card again "
-                f"with the corrected recipe."
+                "with the corrected recipe and the same run_id returned in this result."
                 if remaining
                 else "No attempts remain. Report the problem rather than retrying."
             ),

@@ -8,7 +8,7 @@ from google.adk.tools import ToolContext
 from .config import OUTPUT_BUCKET, OUTPUT_BUCKET_ENV, PROJECT_ID
 from .errors import ContentTooLong
 from .rendering.pages import render_deck
-from .runs import get_run, new_run_id, safe_slug
+from .runs import get_run, new_run_id, safe_slug, save_run
 from .schema import load_recipes
 
 PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -16,7 +16,6 @@ PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationm
 # tool stops asking. Without a bound a model that cannot shorten enough would
 # retry until the request times out.
 MAX_CORRECTION_ATTEMPTS = 3
-_ATTEMPT_STATE_KEY = "recipe_card_render_attempts"
 # Authenticated browser download; the viewer still needs read access.
 CONSOLE_URL_PREFIX = "https://storage.cloud.google.com"
 
@@ -44,12 +43,13 @@ def render_recipe_card(
 
     When a step's text does not fit its panel this returns
     `{"status": "needs_correction", ...}` naming the field and the edit to make,
-    rather than failing. Shorten what it names and call again.
+    rather than failing. Shorten what it names and call again with the returned `run_id`.
 
     Args:
         recipe_json: The recipe payload as a JSON string.
         run_id: The `run_id` returned by generate_recipe_images, so the deck is
-            stored beside the images it uses.
+            stored beside the images it uses. For a card without images, omit on
+            the first call and reuse the returned ID for any corrections.
     """
     if not OUTPUT_BUCKET:
         raise RuntimeError(
@@ -72,18 +72,21 @@ def render_recipe_card(
 
     # Text that does not fit is the model's to fix, so it is answered rather
     # than raised: a raised error reaches the model as a generic failure with
-    # nothing to act on. Attempts are counted per session so a recipe that
+    # nothing to act on. Attempts are counted per run so a recipe that
     # cannot be shortened enough stops rather than looping.
-    attempts = int(tool_context.state.get(_ATTEMPT_STATE_KEY, 0)) + 1
+    attempts = int(run.get("render_attempts", 0)) + 1
+    save_run(tool_context, run_id, run)
     try:
         deck = render_deck(data, PROJECT_ID, allowed_uris=set(run["images"].values()))
     except ContentTooLong as too_long:
-        tool_context.state[_ATTEMPT_STATE_KEY] = attempts
+        run["render_attempts"] = attempts
+        save_run(tool_context, run_id, run)
         if attempts >= MAX_CORRECTION_ATTEMPTS:
             raise
-        return too_long.as_tool_result(attempts, MAX_CORRECTION_ATTEMPTS)
+        return {**too_long.as_tool_result(attempts, MAX_CORRECTION_ATTEMPTS), "run_id": run_id}
 
-    tool_context.state[_ATTEMPT_STATE_KEY] = 0
+    run["render_attempts"] = 0
+    save_run(tool_context, run_id, run)
     # A fresh deck name also preserves previous renders of this run.
     object_name = f"{slug}/{run_id}/{new_run_id()}-recipe-cards.pptx"
     uri = upload_bytes(

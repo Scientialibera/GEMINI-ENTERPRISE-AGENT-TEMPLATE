@@ -5,7 +5,6 @@ requires-python = ">=3.12"
 dependencies = [
   "gemini-shared",
   "recipe-cards",
-  "google-adk[extensions]==2.7.1",
 ]
 
 [build-system]

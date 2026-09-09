@@ -10,22 +10,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import argparse
 import os
 
-from common import (
-    ROOT,
-    AgentSpec,
-    build_app,
-    build_client,
-    deployment_config,
-    get_agent_spec,
+from config.bootstrap import ensure_dev_prerequisites
+from config.settings import (
     load_environment,
     require_dev_environment,
-    save_state,
-    staged_extra_packages,
     validate_agent_remote_environment,
 )
-from config.bootstrap import ensure_dev_prerequisites
 from iam.apply_agent_identity_iam import apply_agent_identity_iam
+from paths import ROOT
+from registry import AgentSpec, get_agent_spec
 from vertexai import types
+
+from deploy.runtime import build_app, build_client, deployment_config
+from deploy.sources import staged_extra_packages
+from deploy.state import save_state
 
 
 def deploy_agent(
@@ -52,7 +50,7 @@ def deploy_agent(
     resource_name = remote.api_resource.name
     # Persist first so an IAM failure does not cause a second runtime to be created
     # on the next release attempt.
-    save_state(agent_name, resource_name)
+    save_state(agent_name, resource_name, project_id, location)
     apply_agent_identity_iam(agent_name, project_id, resource_name, spec)
     return resource_name
 

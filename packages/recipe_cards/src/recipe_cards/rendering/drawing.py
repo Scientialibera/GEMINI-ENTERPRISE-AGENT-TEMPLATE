@@ -16,42 +16,15 @@ from pptx.util import Inches, Pt
 
 from .assets import CURRENT_ASSETS
 from .assets import resolve as _resolve
-
-# -----------------------------------------------------------------------------
-# PAGE / THEME
-# -----------------------------------------------------------------------------
-
-PAGE_W = 10.0
-PAGE_H = 13.33
-LEFT_W = 3.45
-GAP = 0.28
-RIGHT_X = LEFT_W + GAP
-RIGHT_W = PAGE_W - RIGHT_X - 0.22
-
-# The hero photograph runs to the top and right edges of the sheet, with the
-# blue panel butting against it. Insetting it leaves a white margin the
-# reference cards do not have.
-HERO_X = LEFT_W
-HERO_W = PAGE_W - LEFT_W
-HERO_H = 7.42
-
-C = {
-    "blue": "6F97C5",
-    "dark_blue": "07347A",
-    "yellow": "F9B800",
-    "yellow2": "FFC515",
-    "ink": "1D2530",
-    "muted": "5C6573",
-    "pale": "F5F1E6",
-    "line": "0D3D85",
-    "white": "FFFFFF",
-    "cream": "FBF8F0",
-    "grey": "E8E8E8",
-    "border": "D8D8D8",
-}
-
-HEAD_FONT = "Georgia"
-BODY_FONT = "Aptos"
+from .theme import (
+    BODY_FONT,
+    CHAR_WIDTH_RATIO,
+    HEAD_CHAR_WIDTH_RATIO,
+    HEAD_FONT,
+    LINE_HEIGHT_RATIO,
+    POINTS_PER_INCH,
+    C,
+)
 
 
 def rgb(hex_color: str) -> RGBColor:
@@ -118,15 +91,11 @@ def chunks(seq: list[Any], size: int) -> Iterable[list[Any]]:
 # Mean advance width of one character as a fraction of font size, measured over
 # running sentence text in each face (0.434 body, 0.394 headings) and rounded up
 # slightly so an unusually wide line still fits.
-_CHAR_WIDTH_RATIO = 0.45
-_HEAD_CHAR_WIDTH_RATIO = 0.41
-_LINE_HEIGHT_RATIO = 1.22
-_POINTS_PER_INCH = 72.0
 
 
-def _wrapped_line_count(text: str, width_in: float, font_size: float, ratio: float) -> int:
+def wrapped_line_count(text: str, width_in: float, font_size: float, ratio: float) -> int:
     """Lines this text needs at a size, wrapping on words like the renderer."""
-    char_w = (font_size * ratio) / _POINTS_PER_INCH
+    char_w = (font_size * ratio) / POINTS_PER_INCH
     if char_w <= 0:
         return 1
     per_line = max(1, int(width_in / char_w))
@@ -166,12 +135,12 @@ def fit_to_box(
     if not body:
         return body
 
-    ratio = _HEAD_CHAR_WIDTH_RATIO if head else _CHAR_WIDTH_RATIO
-    max_lines = max(1, int((height_in * _POINTS_PER_INCH) / (font_size * _LINE_HEIGHT_RATIO)))
-    if _wrapped_line_count(body, width_in, font_size, ratio) <= max_lines:
+    ratio = HEAD_CHAR_WIDTH_RATIO if head else CHAR_WIDTH_RATIO
+    max_lines = max(1, int((height_in * POINTS_PER_INCH) / (font_size * LINE_HEIGHT_RATIO)))
+    if wrapped_line_count(body, width_in, font_size, ratio) <= max_lines:
         return body
 
-    char_w = (font_size * ratio) / _POINTS_PER_INCH
+    char_w = (font_size * ratio) / POINTS_PER_INCH
     per_line = max(1, int(width_in / char_w))
     # One ellipsis replaces the tail, so the sentence ends deliberately rather
     # than colliding with the edge of the panel.

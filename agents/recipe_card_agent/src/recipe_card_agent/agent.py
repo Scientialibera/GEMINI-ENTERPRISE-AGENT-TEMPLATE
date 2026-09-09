@@ -8,19 +8,15 @@ Both write to the agent's own Cloud Storage bucket under its Agent Identity.
 from __future__ import annotations
 
 from gemini_shared import apply_runtime_model, runtime_instruction
+from gemini_shared.runtime import create_app, create_model
 from google.adk.agents import Agent
-from google.adk.models import Gemini
-from vertexai.agent_engines import AdkApp
 
 from .config import BOOTSTRAP
 from .tools import generate_recipe_images, render_recipe_card, report_runtime_config
 
 root_agent = Agent(
     name="recipe_card_agent",
-    model=Gemini(
-        model=BOOTSTRAP.bootstrap_model,
-        client_kwargs={"location": BOOTSTRAP.model_location},
-    ),
+    model=create_model(BOOTSTRAP),
     description=(
         "Produces print-ready recipe cards for a pantry business: writes the recipe, "
         "generates consistent food photography, and publishes an editable PowerPoint "
@@ -36,4 +32,4 @@ root_agent = Agent(
 )
 
 # Agent Runtime serves the AdkApp wrapper, not a bare Agent.
-app = AdkApp(agent=root_agent, enable_tracing=True)
+app = create_app(root_agent, BOOTSTRAP)

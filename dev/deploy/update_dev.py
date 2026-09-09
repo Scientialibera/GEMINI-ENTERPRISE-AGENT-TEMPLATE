@@ -10,21 +10,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import argparse
 import os
 
-from common import (
-    ROOT,
-    AgentSpec,
-    build_app,
-    build_client,
-    deployment_config,
-    get_agent_spec,
+from config.bootstrap import ensure_dev_prerequisites
+from config.settings import (
     load_environment,
-    load_resource_name,
     require_dev_environment,
-    staged_extra_packages,
     validate_agent_remote_environment,
 )
-from config.bootstrap import ensure_dev_prerequisites
 from iam.apply_agent_identity_iam import apply_agent_identity_iam
+from paths import ROOT
+from registry import AgentSpec, get_agent_spec
+
+from deploy.runtime import build_app, build_client, deployment_config
+from deploy.sources import staged_extra_packages
+from deploy.state import load_resource_name, save_state
 
 
 def update_agent(
@@ -36,7 +34,7 @@ def update_agent(
 ) -> str:
     """Update the Agent Engine this developer already owns."""
     validate_agent_remote_environment(spec)
-    resource_name = load_resource_name(agent_name)
+    resource_name = load_resource_name(agent_name, project_id, location)
 
     client = build_client(project_id, location, staging_bucket)
     app = build_app(spec)
@@ -47,6 +45,7 @@ def update_agent(
             config=deployment_config(spec, staging_bucket, extra_packages),
         )
     resource_name = updated.api_resource.name
+    save_state(agent_name, resource_name, project_id, location)
     apply_agent_identity_iam(agent_name, project_id, resource_name, spec)
     return resource_name
 
@@ -62,6 +61,7 @@ def main() -> None:
     load_environment(".env.dev")
     spec = get_agent_spec(args.agent)
     project_id, location, staging_bucket = require_dev_environment(spec=spec)
+    load_resource_name(args.agent, project_id, location)
     ensure_dev_prerequisites(project_id, location, staging_bucket, spec)
 
     resource_name = update_agent(args.agent, project_id, location, staging_bucket, spec)

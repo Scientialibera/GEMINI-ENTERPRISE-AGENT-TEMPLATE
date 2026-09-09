@@ -3,10 +3,15 @@ name = "gemini-shared"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-  "google-adk[extensions]==2.7.1",
+  "google-adk[agent-identity,extensions]==2.7.1",
+  "google-cloud-aiplatform[agent_engines,adk]==1.164.0",
+  "cloudpickle==3.1.2",
   "google-cloud-parametermanager==0.4.1",
   "pydantic==2.13.4",
 ]
+
+[project.optional-dependencies]
+mcp = ["google-adk[mcp]"]
 
 [build-system]
 requires = ["hatchling"]

@@ -25,7 +25,7 @@ developer_deployer_members = [
 developer_parameter_access    = true
 developer_staging_bucket_name = "REPLACE_WITH_EXISTING_DEV_STAGING_BUCKET_NAME"
 
-# Required when developer_deployer_members is non-empty.
+# Required when developer or runtime IAM bindings are configured.
 # Organization project:
 developer_agent_identity_organization_id = "REPLACE_WITH_ORGANIZATION_ID"
 developer_agent_identity_orgless         = false
@@ -38,12 +38,9 @@ developer_agent_identity_orgless         = false
 # them without a Terraform change. Every role here reaches every current and
 # future runtime in the project. Access to a specific bucket, dataset or secret
 # belongs on the exact Agent Identity after deploy instead.
-agent_identity_project_roles = [
-  "roles/aiplatform.expressUser",
-  "roles/serviceusage.serviceUsageConsumer",
-  "roles/parametermanager.parameterAccessor",
-  "roles/storage.objectViewer",
-]
+# Null uses runtime_iam_policy.json, shared with the sandbox helper.
+# Storage objectViewer is granted only on developer_staging_bucket_name.
+agent_identity_project_roles = null
 
 # OBSERVABILITY
 # Covers every Agent Engine runtime in the project, grouped by runtime id.

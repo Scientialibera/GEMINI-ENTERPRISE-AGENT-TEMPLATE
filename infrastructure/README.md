@@ -136,6 +136,12 @@ Do not reuse the Terraform execution service account as an Agent Identity.
 
 Terraform never sees agent source. The agent repository builds a deterministic `.tar.gz` with `dev/deploy/package_agent.py` and deploys it with `dev/deploy/deploy_dev.py`, which owns the entrypoint, requirements and bootstrap environment for that agent.
 
+The default runtime policy is defined once in runtime_iam_policy.json and also consumed
+by the Python sandbox helper. A null agent_identity_project_roles uses that policy;
+an explicit set replaces the project defaults. Storage objectViewer is granted only on
+developer_staging_bucket_name. Exact-agent data access and migration from the former
+project-wide storage grant are described in [Identity and IAM](IDENTITY_AND_IAM.md).
+
 ## Multi-agent safety
 
 This stack is applied once per project and carries no per-agent runtime resources, so agents cannot collide in it. Observability is project-wide and groups by runtime id, which means a new agent appears in the existing dashboard and alert without configuration.

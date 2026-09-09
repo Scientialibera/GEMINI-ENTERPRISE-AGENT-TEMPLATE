@@ -3,8 +3,7 @@ name = "bigquery-mcp-agent"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-  "gemini-shared",
-  "google-adk[extensions,mcp]==2.7.1",
+  "gemini-shared[mcp]",
 ]
 
 [build-system]

@@ -55,7 +55,7 @@ variable "developer_parameter_access" {
 }
 
 variable "developer_staging_bucket_name" {
-  description = "Optional existing developer staging bucket. Terraform grants object write access but does not create the bucket."
+  description = "Optional existing staging bucket. Terraform grants developer write and Agent Identity read access without creating the bucket."
   type        = string
   default     = null
   nullable    = true
@@ -88,12 +88,8 @@ variable "agent_identity_project_roles" {
     runtime exists.
   EOT
   type        = set(string)
-  default = [
-    "roles/aiplatform.expressUser",
-    "roles/serviceusage.serviceUsageConsumer",
-    "roles/parametermanager.parameterAccessor",
-    "roles/storage.objectViewer",
-  ]
+  default     = null
+  nullable    = true
 }
 
 variable "log_bucket_id" {

@@ -5,16 +5,13 @@ from __future__ import annotations
 import argparse
 import os
 
-from common import (
-    ROOT,
-    get_agent_spec,
-    load_environment,
-    require_dev_environment,
-    state_path,
-)
 from config.bootstrap import ensure_dev_prerequisites
+from config.settings import load_environment, require_dev_environment
 from deploy.package_agent import package_agent
+from deploy.state import find_resource_name, runtime_override
+from paths import ROOT
 from register.register_agent import APP_ENGINE_ID_ENV, register_agent
+from registry import get_agent_spec
 
 ARTIFACTS_DIR = ROOT / "artifacts"
 
@@ -36,14 +33,20 @@ def main() -> None:
     spec = get_agent_spec(args.agent)
     project_id, location, staging_bucket = require_dev_environment(spec=spec)
 
+    existing_resource = runtime_override(project_id, location)
+
     print("STEP=preflight")
     ensure_dev_prerequisites(project_id, location, staging_bucket, spec)
+
+    # Preflight may create an explicitly requested new sandbox project. Resolve
+    # its numeric state scope only after that project exists.
+    existing_resource = existing_resource or find_resource_name(args.agent, project_id, location)
 
     print("STEP=package")
     archive = package_agent(args.agent, ARTIFACTS_DIR / f"{spec.package_name}.tar.gz")
     print(f"AGENT_ARCHIVE={archive}")
 
-    already_deployed = state_path(args.agent).exists()
+    already_deployed = existing_resource is not None
     print("STEP=update" if already_deployed else "STEP=deploy")
     if already_deployed:
         from deploy.update_dev import update_agent

@@ -11,10 +11,10 @@ import pytest
 DEV = Path(__file__).resolve().parents[1] / "dev"
 sys.path.insert(0, str(DEV))
 agent_iam = importlib.import_module("iam.apply_agent_identity_iam")
-common = importlib.import_module("common")
+registry = importlib.import_module("registry")
 sys.path.remove(str(DEV))
 
-SPEC = common.AGENTS["auth_reference_agent"]
+SPEC = registry.AGENTS["auth_reference_agent"]
 RESOURCE_NAME = "projects/123456789/locations/us-central1/reasoningEngines/engine-123"
 PRINCIPAL = (
     "principal://agents.global.org-999.system.id.goog/resources/aiplatform/"
@@ -97,6 +97,8 @@ def test_storage_bucket_bindings_are_resource_scoped(monkeypatch):
 
 
 def test_agent_identity_principal_uses_organization_trust_domain(monkeypatch):
+    monkeypatch.setattr(agent_iam, "_project_number", lambda _: "123456789")
+
     def run(args):
         if args[:2] == ("projects", "describe"):
             return SimpleNamespace(stdout="123456789\n")
@@ -115,6 +117,8 @@ def test_agent_identity_principal_uses_organization_trust_domain(monkeypatch):
 
 
 def test_agent_identity_principal_uses_orgless_trust_domain(monkeypatch):
+    monkeypatch.setattr(agent_iam, "_project_number", lambda _: "123456789")
+
     def run(args):
         if args[:2] == ("projects", "describe"):
             return SimpleNamespace(stdout="123456789\n")

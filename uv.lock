@@ -214,7 +214,6 @@ version = "0.1.0"
 source = { editable = "agents/auth_reference_agent" }
 dependencies = [
     { name = "gemini-shared" },
-    { name = "google-adk", extra = ["agent-identity", "extensions"] },
     { name = "google-auth" },
     { name = "google-cloud-bigquery" },
     { name = "google-cloud-storage" },
@@ -223,7 +222,6 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "gemini-shared", editable = "packages/gemini_shared" },
-    { name = "google-adk", extras = ["agent-identity", "extensions"], specifier = "==2.7.1" },
     { name = "google-auth", specifier = ">=2.35.0,<3.0.0" },
     { name = "google-cloud-bigquery", specifier = "==3.43.0" },
     { name = "google-cloud-storage", specifier = "==3.13.1" },
@@ -265,14 +263,10 @@ version = "0.1.0"
 source = { editable = "agents/basic_assistant" }
 dependencies = [
     { name = "gemini-shared" },
-    { name = "google-adk", extra = ["extensions"] },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "gemini-shared", editable = "packages/gemini_shared" },
-    { name = "google-adk", extras = ["extensions"], specifier = "==2.7.1" },
-]
+requires-dist = [{ name = "gemini-shared", editable = "packages/gemini_shared" }]
 
 [[package]]
 name = "beautifulsoup4"
@@ -292,15 +286,11 @@ name = "bigquery-mcp-agent"
 version = "0.1.0"
 source = { editable = "agents/bigquery_mcp_agent" }
 dependencies = [
-    { name = "gemini-shared" },
-    { name = "google-adk", extra = ["extensions", "mcp"] },
+    { name = "gemini-shared", extra = ["mcp"] },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "gemini-shared", editable = "packages/gemini_shared" },
-    { name = "google-adk", extras = ["extensions", "mcp"], specifier = "==2.7.1" },
-]
+requires-dist = [{ name = "gemini-shared", extras = ["mcp"], editable = "packages/gemini_shared" }]
 
 [[package]]
 name = "boto3"
@@ -896,15 +886,12 @@ source = { virtual = "." }
 
 [package.dev-dependencies]
 dev = [
-    { name = "google-cloud-aiplatform", extra = ["adk", "agent-engines"] },
+    { name = "gemini-shared" },
     { name = "google-cloud-bigquery" },
-    { name = "google-cloud-parametermanager" },
     { name = "google-cloud-secret-manager" },
-    { name = "google-genai" },
-    { name = "pillow" },
     { name = "pytest" },
     { name = "python-dotenv" },
-    { name = "python-pptx" },
+    { name = "recipe-cards" },
     { name = "requests" },
     { name = "ruff" },
 ]
@@ -913,15 +900,12 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "google-cloud-aiplatform", extras = ["agent-engines", "adk"], specifier = "==1.164.0" },
+    { name = "gemini-shared", editable = "packages/gemini_shared" },
     { name = "google-cloud-bigquery", specifier = "==3.43.0" },
-    { name = "google-cloud-parametermanager", specifier = "==0.4.1" },
     { name = "google-cloud-secret-manager", specifier = ">=2.20.0,<3.0.0" },
-    { name = "google-genai", specifier = ">=2.22.0,<3.0.0" },
-    { name = "pillow", specifier = ">=11.0.0" },
     { name = "pytest", specifier = ">=8.3.0,<9.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2.0.0" },
-    { name = "python-pptx", specifier = ">=1.0.2,<2.0.0" },
+    { name = "recipe-cards", editable = "packages/recipe_cards" },
     { name = "requests", specifier = ">=2.32.0,<3.0.0" },
     { name = "ruff", specifier = ">=0.12.0,<1.0.0" },
 ]
@@ -931,17 +915,28 @@ name = "gemini-shared"
 version = "0.1.0"
 source = { editable = "packages/gemini_shared" }
 dependencies = [
-    { name = "google-adk", extra = ["extensions"] },
+    { name = "cloudpickle" },
+    { name = "google-adk", extra = ["agent-identity", "extensions"] },
+    { name = "google-cloud-aiplatform", extra = ["adk", "agent-engines"] },
     { name = "google-cloud-parametermanager" },
     { name = "pydantic" },
 ]
 
+[package.optional-dependencies]
+mcp = [
+    { name = "google-adk", extra = ["mcp"] },
+]
+
 [package.metadata]
 requires-dist = [
-    { name = "google-adk", extras = ["extensions"], specifier = "==2.7.1" },
+    { name = "cloudpickle", specifier = "==3.1.2" },
+    { name = "google-adk", extras = ["agent-identity", "extensions"], specifier = "==2.7.1" },
+    { name = "google-adk", extras = ["mcp"], marker = "extra == 'mcp'" },
+    { name = "google-cloud-aiplatform", extras = ["agent-engines", "adk"], specifier = "==1.164.0" },
     { name = "google-cloud-parametermanager", specifier = "==0.4.1" },
     { name = "pydantic", specifier = "==2.13.4" },
 ]
+provides-extras = ["mcp"]
 
 [[package]]
 name = "google-adk"
@@ -3435,14 +3430,12 @@ version = "0.1.0"
 source = { editable = "agents/recipe_card_agent" }
 dependencies = [
     { name = "gemini-shared" },
-    { name = "google-adk", extra = ["extensions"] },
     { name = "recipe-cards" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "gemini-shared", editable = "packages/gemini_shared" },
-    { name = "google-adk", extras = ["extensions"], specifier = "==2.7.1" },
     { name = "recipe-cards", editable = "packages/recipe_cards" },
 ]
 
@@ -3452,14 +3445,12 @@ version = "0.1.0"
 source = { editable = "workflows/recipe_card_workflow" }
 dependencies = [
     { name = "gemini-shared" },
-    { name = "google-adk", extra = ["extensions"] },
     { name = "recipe-cards" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "gemini-shared", editable = "packages/gemini_shared" },
-    { name = "google-adk", extras = ["extensions"], specifier = "==2.7.1" },
     { name = "recipe-cards", editable = "packages/recipe_cards" },
 ]
 
