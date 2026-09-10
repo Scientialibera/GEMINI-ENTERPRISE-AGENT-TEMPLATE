@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 import release_dev
 from config import bootstrap
+from conftest import requires_symlinks
 from deploy import package_agent, sources, state, update_dev
 from deploy.dependencies import export_requirements
 from gemini_shared.config.runtime_config import RuntimeConfig
@@ -105,6 +106,7 @@ def test_release_resolves_saved_state_after_new_project_preflight(monkeypatch, t
     deploy.assert_called_once()
 
 
+@requires_symlinks
 @pytest.mark.parametrize("kind", ["file", "directory", "parent"])
 def test_archive_and_sdk_staging_reject_the_same_symlinks(monkeypatch, tmp_path, kind):
     source = tmp_path / "src" / "agent"
@@ -130,9 +132,13 @@ def test_archive_and_sdk_staging_reject_the_same_symlinks(monkeypatch, tmp_path,
 
 
 def test_archive_and_sdk_staging_have_identical_sources(monkeypatch, tmp_path):
+    # Written and asserted as bytes: text mode rewrites newlines on Windows, so
+    # a hardcoded "\n" would disagree with the file on disk even though the
+    # archive and the staged copy match each other, which is what is under test.
+    contents = b"value = 1\n"
     source = tmp_path / "src" / "agent"
     source.mkdir(parents=True)
-    (source / "agent.py").write_text("value = 1\n")
+    (source / "agent.py").write_bytes(contents)
     (source / "cache.pyc").write_bytes(b"bytecode")
     (source / "__pycache__").mkdir()
     (source / "__pycache__/agent.pyc").write_bytes(b"cached")
@@ -156,7 +162,7 @@ def test_archive_and_sdk_staging_have_identical_sources(monkeypatch, tmp_path):
             if path.is_file()
         }
     assert Path.cwd() == original_cwd
-    assert archived == staged == {"agent/agent.py": b"value = 1\n"}
+    assert archived == staged == {"agent/agent.py": contents}
 
 
 @pytest.mark.parametrize("name", sorted(AGENTS))
