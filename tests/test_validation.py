@@ -503,12 +503,22 @@ def test_dev_configured_value_is_stripped(monkeypatch):
     assert not settings.is_missing_or_placeholder("DEV_TEST_VALUE")
 
 
-@pytest.mark.parametrize("agent", ALL_AGENTS)
-def test_config_status_tool_is_shared(agent):
+def test_config_status_tool_is_shared():
+    """Only the reference assistant exposes the runtime status tool.
+
+    It exists to demonstrate reading Parameter Manager settings, so the other
+    agents carry it as noise: a tool offered to the model on every request that
+    has nothing to do with the job they were deployed for.
+    """
     from gemini_shared.config.tools import report_runtime_config
 
-    module = importlib.import_module(f"{agent}.tools.runtime_config_status")
+    module = importlib.import_module("basic_assistant.tools.runtime_config_status")
     assert module.report_runtime_config is report_runtime_config
+
+    for agent in ALL_AGENTS:
+        tools = importlib.import_module(f"{agent}.tools")
+        has_status = "report_runtime_config" in getattr(tools, "__all__", ())
+        assert has_status == (agent == "basic_assistant"), agent
 
 
 def test_ensure_bucket_tolerates_a_writer_only_identity(monkeypatch):
@@ -549,13 +559,15 @@ def test_concurrent_cards_for_one_dish_do_not_overwrite_each_other():
     Without a per-run segment both requests write to <slug>/images/hero.png and
     the second silently replaces the first part-way through the card.
     """
+    from recipe_cards.config import USE_CASE_PREFIX
     from recipe_cards.images import _object_name, new_run_id
 
     first, second = new_run_id(), new_run_id()
     assert first != second
     assert _object_name("beef-chili", first, "hero") != _object_name("beef-chili", second, "hero")
-    # The dish still groups its runs together.
-    assert _object_name("beef-chili", first, "hero").startswith("beef-chili/")
+    # The dish still groups its runs together, under the use-case prefix that
+    # lets one bucket serve more than this agent.
+    assert _object_name("beef-chili", first, "hero").startswith(f"{USE_CASE_PREFIX}/beef-chili/")
 
 
 def test_run_id_is_reused_so_one_card_stays_together():

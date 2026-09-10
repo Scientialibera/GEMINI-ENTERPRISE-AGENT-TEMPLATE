@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import time
+
 from gemini_shared.config.runtime_config import get_runtime_config
 from gemini_shared.connectors.cloud_storage import upload_bytes
 from google.adk.tools import ToolContext
 
-from .config import OUTPUT_BUCKET, OUTPUT_BUCKET_ENV, PROJECT_ID
+from .config import OUTPUT_BUCKET, OUTPUT_BUCKET_ENV, PROJECT_ID, dish_prefix
 from .errors import ContentTooLong
 from .rendering.pages import render_deck
 from .runs import get_run, new_run_id, safe_slug, save_run
@@ -25,8 +27,8 @@ def render_recipe_card(
 ) -> dict[str, object]:
     """Render recipe cards from structured JSON and store the PowerPoint deck.
 
-    Call this once the images exist, with their gs:// URIs already placed in
-    the JSON. The layout is fixed by a template, so supply content and image
+    Call this once the images exist, with their relative paths already placed
+    in the JSON. The layout is fixed by a template, so supply content and image
     locations only.
 
     Expected shape, as `{"recipes": [ ... ]}` or a single recipe object:
@@ -38,8 +40,9 @@ def render_recipe_card(
       hero_image_path, footer_image_path, decorative_image_path,
       variations_image_path.
 
-    Any image field may be a gs:// URI returned by generate_recipe_images. A
-    missing image renders as a placeholder rather than failing the deck.
+    Every image field takes a path exactly as generate_recipe_images or
+    retrieve returned it, relative to the card store. A missing image renders
+    as a placeholder rather than failing the deck.
 
     When a step's text does not fit its panel this returns
     `{"status": "needs_correction", ...}` naming the field and the edit to make,
@@ -80,7 +83,7 @@ def render_recipe_card(
     attempts = int(run.get("render_attempts", 0)) + 1
     save_run(tool_context, run_id, run)
     try:
-        deck = render_deck(data, PROJECT_ID, allowed_uris=set(run["images"].values()))
+        deck = render_deck(data, PROJECT_ID, bucket=OUTPUT_BUCKET)
     except ContentTooLong as too_long:
         run["render_attempts"] = attempts
         result = {**too_long.as_tool_result(attempts, max_attempts), "run_id": run_id}
@@ -91,14 +94,14 @@ def render_recipe_card(
 
     run["render_attempts"] = 0
     save_run(tool_context, run_id, run)
-    # A fresh deck name also preserves previous renders of this run.
-    object_name = f"{slug}/{run_id}/{new_run_id()}-recipe-cards.pptx"
+    # A fresh timestamp also preserves previous renders of this run. Only the
+    # clock part is needed: run_id already carries this run's random suffix.
+    object_name = f"{dish_prefix(slug)}{run_id}/{time.strftime('%Y%m%d-%H%M%S')}-recipe-cards.pptx"
     uri = upload_bytes(
         PROJECT_ID, OUTPUT_BUCKET, object_name, deck, PPTX_CONTENT_TYPE, create_only=True
     )
     return {
         "bucket": OUTPUT_BUCKET,
-        "bucket_created": False,
         "run_id": run_id,
         "recipe_count": len(recipes),
         "size_bytes": len(deck),

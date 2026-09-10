@@ -120,6 +120,37 @@ def download_bytes(project_id: str, uri: str, *, max_bytes: int | None = None) -
     return data
 
 
+def list_objects(
+    project_id: str,
+    bucket_name: str,
+    prefix: str,
+    *,
+    limit: int,
+    delimiter: str | None = None,
+) -> tuple[list[str], list[str], bool]:
+    """List object names under a prefix, and the sub-prefixes beneath it.
+
+    A delimiter makes this one cheap metadata call per level rather than a walk
+    of every object: Cloud Storage returns the immediate children as prefixes
+    instead of expanding them.
+
+    Returns:
+        The object names, the child prefixes, and whether the limit truncated
+        the result. Truncation is reported rather than hidden, so a caller can
+        say the list is partial instead of implying it is complete.
+    """
+    if limit < 1:
+        raise ValueError("limit must be positive.")
+    client = storage.Client(project=project_id)
+    # One past the limit distinguishes "exactly full" from "there is more".
+    iterator = client.list_blobs(
+        bucket_name, prefix=prefix, delimiter=delimiter, max_results=limit + 1
+    )
+    names = [blob.name for blob in iterator]
+    truncated = len(names) > limit
+    return names[:limit], sorted(iterator.prefixes), truncated
+
+
 def parse_gs_uri(uri: str) -> tuple[str, str]:
     """Split a gs://bucket/object URI into its two parts."""
     if not uri.startswith(GS_URI_PREFIX):

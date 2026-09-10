@@ -7,7 +7,7 @@ from gemini_shared.runtime import create_app, create_model
 from google.adk.agents import Agent
 
 from .config import BOOTSTRAP
-from .tools import bigquery_mcp_toolset, report_runtime_config
+from .tools import bigquery_mcp_toolset
 
 root_agent = Agent(
     name="bigquery_mcp_agent",
@@ -18,10 +18,7 @@ root_agent = Agent(
     ),
     instruction=runtime_instruction,
     before_model_callback=apply_runtime_model,
-    tools=[
-        report_runtime_config,
-        bigquery_mcp_toolset,
-    ],
+    tools=[bigquery_mcp_toolset],
 )
 
 # Expose the app to Agent Runtime.

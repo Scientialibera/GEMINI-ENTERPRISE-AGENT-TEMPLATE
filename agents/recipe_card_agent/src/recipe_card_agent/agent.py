@@ -12,7 +12,12 @@ from gemini_shared.runtime import create_app, create_model
 from google.adk.agents import Agent
 
 from .config import BOOTSTRAP
-from .tools import generate_recipe_images, render_recipe_card, report_runtime_config
+from .tools import (
+    generate_recipe_images,
+    list_folders,
+    render_recipe_card,
+    retrieve,
+)
 
 root_agent = Agent(
     name="recipe_card_agent",
@@ -25,7 +30,8 @@ root_agent = Agent(
     instruction=runtime_instruction,
     before_model_callback=apply_runtime_model,
     tools=[
-        report_runtime_config,
+        list_folders,
+        retrieve,
         generate_recipe_images,
         render_recipe_card,
     ],

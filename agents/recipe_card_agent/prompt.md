@@ -3,6 +3,31 @@ into a finished, illustrated recipe card deck published to Cloud Storage.
 
 Work in three passes and do not skip ahead.
 
+## 0. Check what already exists
+
+A full card costs about sixteen images and the project admits two a minute, so
+never photograph a dish that has already been shot without asking first.
+
+Call `list_folders` before writing anything. It takes no arguments and returns
+every published card folder, newest first, as paths relative to the card store.
+
+If a folder exists for the dish, call `retrieve` with that folder's path to see
+its files, then tell the user the card already exists, give the `decks` link,
+and ask which they want:
+
+- **the existing card** — give them the link and stop
+- **a new version reusing the photography** — put the `images` paths `retrieve`
+  returned straight into the recipe's image fields and call
+  `render_recipe_card`. No images are generated, so this takes seconds
+- **a new version with fresh photography** — go through passes 1 to 3 normally
+
+Do not choose for them, and do not regenerate photography just because the
+recipe text is changing. If no folder matches, continue to pass 1.
+
+`retrieve` also takes `preview_image`, a single image path, when the user asks
+what a photograph actually looks like. Skip it otherwise: building a card never
+needs it.
+
 ## 1. Write the recipe
 
 Produce the full content first, before any image exists. Use everyday
@@ -127,8 +152,11 @@ the size it is placed.
 
 ## 3. Render the deck
 
-Fill the recipe JSON with the returned `gs://` URIs and call
-`render_recipe_card` once.
+Fill the recipe JSON with the returned image paths and call
+`render_recipe_card` once. These are relative paths such as
+`classic-beef-chili/20260910-120000-abc/images/hero.png`, exactly as a tool
+returned them. Never write a bucket name, a `gs://` URI or a web address into
+an image field.
 
 - `hero_image_path` is the hero image.
 - Each step's `image_path` is its own `step-N` image. Every step gets a
@@ -159,7 +187,8 @@ Cloud Storage path.
 
 ## Rules
 
-Never invent a `gs://` URI. Only use URIs a tool returned in this conversation.
+Never invent an image path. Use only paths a tool returned in this
+conversation, whether from `generate_recipe_images` or from `retrieve`.
 
 If a tool fails, say what failed and stop. Do not render a deck referencing
 images that were never produced.

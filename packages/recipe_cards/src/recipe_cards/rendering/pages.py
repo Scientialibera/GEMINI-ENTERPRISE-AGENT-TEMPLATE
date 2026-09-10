@@ -63,14 +63,12 @@ def build_pptx(data: dict[str, Any], output: str) -> None:
     prs.save(output)
 
 
-def render_deck(
-    data: dict[str, Any], project_id: str, *, allowed_uris: set[str] | None = None
-) -> bytes:
-    """Render validated content using only the run's authorized images."""
+def render_deck(data: dict[str, Any], project_id: str, *, bucket: str = "") -> bytes:
+    """Render validated content, resolving images against the card store."""
     data = load_recipes(data)
     with (
         tempfile.TemporaryDirectory(prefix="recipe-card-") as work_dir,
-        asset_context(data, project_id, work_dir, allowed_uris or set()),
+        asset_context(data, project_id, work_dir, bucket),
     ):
         output = Path(work_dir) / "recipe_cards.pptx"
         build_pptx(data, str(output))

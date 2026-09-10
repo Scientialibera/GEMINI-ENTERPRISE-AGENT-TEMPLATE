@@ -7,11 +7,7 @@ from gemini_shared.runtime import create_app, create_model
 from google.adk.agents import Agent
 
 from .config import BOOTSTRAP
-from .tools import (
-    bigquery_query_tool,
-    list_storage_objects,
-    report_runtime_config,
-)
+from .tools import bigquery_query_tool, list_storage_objects
 
 root_agent = Agent(
     name="auth_reference_agent",
@@ -20,7 +16,6 @@ root_agent = Agent(
     instruction=runtime_instruction,
     before_model_callback=apply_runtime_model,
     tools=[
-        report_runtime_config,
         list_storage_objects,
         bigquery_query_tool,
     ],

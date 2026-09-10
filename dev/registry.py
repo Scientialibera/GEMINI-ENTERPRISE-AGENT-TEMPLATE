@@ -208,6 +208,9 @@ AGENTS: dict[str, AgentSpec] = {
             "packages/recipe_cards/src/recipe_cards",
             "packages/gemini_shared/src/gemini_shared",
         ),
+        # Cards live under one use-case prefix, so the bucket can serve more
+        # than this agent and a dish's versions are discoverable together.
+        runtime_env=(("RECIPE_CARD_PREFIX", "recipe-cards"),),
         # The output bucket must already exist before granting object access.
         agent_identity_bucket_roles=(
             BucketRoles(
@@ -241,6 +244,9 @@ AGENTS: dict[str, AgentSpec] = {
             "packages/recipe_cards/src/recipe_cards",
             "packages/gemini_shared/src/gemini_shared",
         ),
+        # Writes to the same prefix as the agent. It has no discovery tools:
+        # a fixed pipeline cannot ask whether to reuse an existing card.
+        runtime_env=(("RECIPE_CARD_PREFIX", "recipe-cards"),),
         # The output bucket must already exist before granting object access.
         agent_identity_bucket_roles=(
             BucketRoles(

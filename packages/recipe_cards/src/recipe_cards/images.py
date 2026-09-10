@@ -10,7 +10,7 @@ from gemini_shared.media import ImageRequest, generate_images
 from gemini_shared.media.images import MODE_PARALLEL, MODE_SEQUENTIAL_REFERENCE
 from google.adk.tools import ToolContext
 
-from .config import OUTPUT_BUCKET, OUTPUT_BUCKET_ENV, PROJECT_ID
+from .config import OUTPUT_BUCKET, OUTPUT_BUCKET_ENV, PROJECT_ID, USE_CASE_PREFIX
 from .runs import get_run, new_run_id, safe_slug, save_run
 from .schema import MAX_IMAGES_PER_BATCH, MAX_IMAGES_PER_RUN
 
@@ -33,7 +33,7 @@ def _style_plates() -> tuple[bytes, ...]:
 def _object_name(recipe_slug: str, run_id: str, image_name: str, extension: str = "png") -> str:
     """Group one run's images under their own prefix."""
     return (
-        f"{safe_slug(recipe_slug)}/{safe_slug(run_id, 'run')}"
+        f"{USE_CASE_PREFIX}/{safe_slug(recipe_slug)}/{safe_slug(run_id, 'run')}"
         f"/images/{safe_slug(image_name, 'image')}.{extension}"
     )
 
@@ -115,20 +115,23 @@ def generate_recipe_images(
     for image in images:
         if image.mime_type not in IMAGE_EXTENSIONS:
             raise ValueError("Unsupported generated image type.")
-        uri = upload_bytes(
+        object_name = _object_name(slug, run_id, image.name, IMAGE_EXTENSIONS[image.mime_type])
+        upload_bytes(
             PROJECT_ID,
             OUTPUT_BUCKET,
-            _object_name(slug, run_id, image.name, IMAGE_EXTENSIONS[image.mime_type]),
+            object_name,
             image.data,
             image.mime_type,
             create_only=True,
         )
-        uris[image.name] = uri
-        existing[safe_slug(image.name)] = uri
+        # Relative to the card store, which is what a recipe's image fields
+        # take. The model never handles a bucket name or an absolute URI.
+        relative = object_name.removeprefix(f"{USE_CASE_PREFIX}/")
+        uris[image.name] = relative
+        existing[safe_slug(image.name)] = relative
         save_run(tool_context, run_id, {**run, "images": existing})
     return {
         "bucket": OUTPUT_BUCKET,
-        "bucket_created": False,
         "mode": mode,
         # Pass this back on the next call and to render_recipe_card, so one
         # card's images and deck stay together.
