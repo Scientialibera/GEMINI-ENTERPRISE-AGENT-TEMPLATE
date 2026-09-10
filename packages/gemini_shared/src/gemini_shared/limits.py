@@ -3,6 +3,7 @@
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.agents.run_config import RunConfig
+from google.adk.apps.app import EventsCompactionConfig
 from google.adk.models.llm_request import LlmRequest
 from google.adk.plugins.base_plugin import BasePlugin
 from google.genai import types
@@ -16,11 +17,17 @@ class RuntimeLimitsPlugin(BasePlugin):
 
     async def before_run_callback(self, *, invocation_context: InvocationContext) -> None:
         """Use ADK's invocation-wide counter, shared by all workflow stages."""
-        limit = get_runtime_config().max_model_calls_per_request
+        settings = get_runtime_config()
+        limit = settings.max_model_calls_per_request
         requested = invocation_context.run_config or RunConfig()
         if requested.max_llm_calls > 0:
             limit = min(limit, requested.max_llm_calls)
         invocation_context.run_config = requested.model_copy(update={"max_llm_calls": limit})
+        # Keep configuration request-local; ADK initializes the summarizer lazily.
+        invocation_context.events_compaction_config = EventsCompactionConfig(
+            token_threshold=settings.context_compaction_threshold_tokens,
+            event_retention_size=6,
+        )
 
     async def before_model_callback(
         self, *, callback_context: CallbackContext, llm_request: LlmRequest

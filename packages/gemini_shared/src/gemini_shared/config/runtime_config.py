@@ -32,7 +32,8 @@ DEFAULT_LOG_LEVEL = "DEBUG"
 DEFAULT_STORAGE_OBJECT_LIMIT = 10
 DEFAULT_BIGQUERY_QUERY_ROW_LIMIT = 100
 DEFAULT_MAX_ATTEMPTS = 3
-DEFAULT_MAX_MODEL_CALLS = 20
+DEFAULT_MAX_MODEL_CALLS = 100
+DEFAULT_COMPACTION_THRESHOLD = 100_000
 LAST_KNOWN_GOOD_RETRY_SECONDS = 30
 PARAMETER_VERSION_SEGMENT = "/versions/"
 LATEST_VERSION = "latest"
@@ -53,6 +54,9 @@ class RuntimeConfig(BaseModel):
     bigquery_query_row_limit: int = Field(default=DEFAULT_BIGQUERY_QUERY_ROW_LIMIT, ge=1, le=10_000)
     max_attempts: int = Field(default=DEFAULT_MAX_ATTEMPTS, ge=1, le=10)
     max_model_calls_per_request: int = Field(default=DEFAULT_MAX_MODEL_CALLS, ge=1, le=100)
+    context_compaction_threshold_tokens: int = Field(
+        default=DEFAULT_COMPACTION_THRESHOLD, ge=1000, le=1_000_000
+    )
 
     @field_validator("model", "instruction", "config_revision", "environment")
     @classmethod
@@ -80,6 +84,9 @@ def _required_local_value(name: str) -> str:
 def _local_payload() -> dict[str, object]:
     return {
         "max_attempts": os.getenv("MAX_ATTEMPTS", str(DEFAULT_MAX_ATTEMPTS)),
+        "context_compaction_threshold_tokens": os.getenv(
+            "CONTEXT_COMPACTION_THRESHOLD_TOKENS", str(DEFAULT_COMPACTION_THRESHOLD)
+        ),
         "max_model_calls_per_request": os.getenv(
             "MAX_MODEL_CALLS_PER_REQUEST", str(DEFAULT_MAX_MODEL_CALLS)
         ),
@@ -192,6 +199,7 @@ class RuntimeConfigStore:
             "model": config.model,
             "environment": config.environment,
             "max_attempts": config.max_attempts,
+            "context_compaction_threshold_tokens": config.context_compaction_threshold_tokens,
             "max_model_calls_per_request": config.max_model_calls_per_request,
         }
 

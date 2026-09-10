@@ -432,7 +432,8 @@ versions/latest. RuntimeConfig rejects unknown fields and invalid values.
   "storage_object_limit": 10,
   "bigquery_query_row_limit": 100,
   "max_attempts": 3,
-  "max_model_calls_per_request": 20
+  "max_model_calls_per_request": 100,
+  "context_compaction_threshold_tokens": 100000
 }
 ~~~
 
@@ -542,7 +543,7 @@ It controls Gemini transport retries, transient image-generation retries and rec
 layout correction attempts. Image generation disables SDK-internal retries to avoid
 multiplying its outer retry budget. Non-retryable errors are not retried.
 
-`max_model_calls_per_request` defaults to 20 and caps ADK model calls across the entire
+`max_model_calls_per_request` defaults to 100 and caps ADK model calls across the entire
 user request, including all workflow stages. The shared application factory installs
 the limit plugin. Callers may request a lower limit but cannot raise the server's cap.
 Exceeding it stops the request with ADK's `LlmCallsLimitExceededError`, not another model
@@ -556,7 +557,19 @@ read when each operation starts. `report_runtime_config` includes both settings.
 Local equivalents are `MAX_ATTEMPTS` and `MAX_MODEL_CALLS_PER_REQUEST`.
 
 Deploy this code once before expecting live parameter edits to enforce the new limits.
-Context compaction is separate and is not enabled by these settings.
+`context_compaction_threshold_tokens` defaults to 100000. At request startup the
+plugin enables ADK token-based compaction using that threshold, retaining the six
+most recent events (and any extra events needed to preserve tool-call/response pairs).
+ADK summarizes older history before preparing a subsequent model call when the last
+reported prompt-token usage reaches the threshold (or uses ADK's estimate when usage
+metadata is unavailable). This is not a strict token ceiling:
+a large new input can cross the threshold before usage is reported, and recent content
+may remain larger than it. Summaries can lose detail, so original documents and recipe
+assets remain the source of truth. Compaction does not reset the request's call budget.
+Summarizer calls are additional model usage outside ADK's orchestration-call counter.
+The local equivalent is `CONTEXT_COMPACTION_THRESHOLD_TOKENS`.
+Existing Parameter Manager versions that explicitly set a 20-call ceiling retain it;
+publish 100 there to raise that value. No live parameters are changed by a code push.
 
 ## Add an agent
 

@@ -84,3 +84,75 @@ def test_request_budget_is_shared_across_workflow_stages(monkeypatch):
 
     asyncio.run(run())
     assert len(calls) == 1
+
+
+def test_default_compaction_and_call_limits():
+    config = RuntimeConfig(config_revision="test", model="test", instruction="test")
+    assert config.max_attempts == 3
+    assert config.max_model_calls_per_request == 100
+    assert config.context_compaction_threshold_tokens == 100_000
+
+
+def test_compaction_settings_are_request_local(monkeypatch):
+    plugin = RuntimeLimitsPlugin()
+    first = SimpleNamespace(run_config=RunConfig())
+    asyncio.run(plugin.before_run_callback(invocation_context=first))
+    monkeypatch.setenv("CONTEXT_COMPACTION_THRESHOLD_TOKENS", "120000")
+    second = SimpleNamespace(run_config=RunConfig())
+    asyncio.run(plugin.before_run_callback(invocation_context=second))
+    assert first.events_compaction_config.token_threshold == 100_000
+    assert second.events_compaction_config.token_threshold == 120_000
+    assert first.events_compaction_config.event_retention_size == 6
+    assert first.events_compaction_config is not second.events_compaction_config
+
+
+@pytest.mark.parametrize("tokens, expected", [(99_999, False), (100_000, True), (100_001, True)])
+def test_adk_compaction_trigger(tokens, expected):
+    from unittest.mock import AsyncMock
+
+    from google.adk.apps.base_events_summarizer import BaseEventsSummarizer
+    from google.adk.events import Event
+    from google.adk.flows.llm_flows.compaction import request_processor
+    from google.adk.sessions import Session
+
+    summarized = []
+
+    class FakeSummarizer(BaseEventsSummarizer):
+        async def maybe_summarize_events(self, *, events):
+            summarized.extend(events)
+            return Event(author="agent", content=types.Content(parts=[types.Part(text="Summary")]))
+
+    context = SimpleNamespace(run_config=RunConfig())
+    asyncio.run(RuntimeLimitsPlugin().before_run_callback(invocation_context=context))
+    context.events_compaction_config.summarizer = FakeSummarizer()
+    context.agent = Agent(name="agent", model="fake")
+    context.branch = None
+    context.token_compaction_checked = False
+    context.session_service = SimpleNamespace(append_event=AsyncMock())
+    context.session = Session(
+        id="test",
+        app_name="test",
+        user_id="test",
+        events=[
+            Event(
+                author="agent",
+                timestamp=float(i + 1),
+                invocation_id=str(i),
+                content=types.Content(role="model", parts=[types.Part(text=f"Message {i}")]),
+                usage_metadata=types.GenerateContentResponseUsageMetadata(
+                    prompt_token_count=tokens
+                ),
+            )
+            for i in range(10)
+        ],
+    )
+
+    async def compact():
+        async for _ in request_processor.run_async(context, LlmRequest()):
+            pass
+
+    asyncio.run(compact())
+    assert bool(summarized) is expected
+    assert context.session_service.append_event.await_count == int(expected)
+    if expected:
+        assert len(summarized) == 4
