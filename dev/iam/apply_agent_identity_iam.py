@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
-import shutil
-import subprocess
 import sys
-from collections.abc import Sequence
 from pathlib import Path
 
 import vertexai
@@ -14,17 +12,13 @@ import vertexai
 # Runnable directly as well as imported by deploy/update helpers.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from common import (
-    ROOT,
-    AgentSpec,
-    get_agent_spec,
-    load_environment,
-    load_resource_name,
-    require_dev_environment,
-)
 from config.environment import env_bool
-
-GCLOUD = shutil.which("gcloud")
+from config.settings import load_environment, require_dev_environment
+from deploy.state import RuntimeResource, load_resource_name
+from gcp import project_number as _project_number
+from gcp import run_gcloud as _run_gcloud
+from paths import ROOT
+from registry import AgentSpec, get_agent_spec
 
 IDENTITY_ID_SUFFIX = "_AGENT_IDENTITY_ID"
 PROJECT_ROLES_SUFFIX = "_AGENT_IDENTITY_PROJECT_ROLES"
@@ -40,23 +34,11 @@ UNSUPPORTED_BUCKET_ROLES = frozenset(
     f"roles/storage.legacyBucket{suffix}" for suffix in ("Reader", "Writer", "Owner")
 )
 
-# What every Agent Identity in a project needs before any agent can serve a
-# request: reach the model, consume quota, and read its own configuration. The
-# storage role is what the Cloud Storage example reads with. Terraform grants
-# these in a managed environment; this list exists so a sandbox without the
-# platform stack can be brought up by these scripts alone, and it must stay in
-# step with agent_identity_project_roles in the Terraform branch.
-BASELINE_AGENT_IDENTITY_ROLES = (
-    "roles/aiplatform.expressUser",
-    "roles/serviceusage.serviceUsageConsumer",
-    "roles/parametermanager.parameterAccessor",
-    "roles/storage.objectViewer",
-)
+# Terraform and the sandbox helper consume the same runtime policy.
+_RUNTIME_POLICY = json.loads((ROOT / "infrastructure/runtime_iam_policy.json").read_text())
+BASELINE_AGENT_IDENTITY_ROLES = tuple(_RUNTIME_POLICY["baseline_project_roles"])
+STAGING_BUCKET_READER_ROLE = _RUNTIME_POLICY["staging_bucket_reader_role"]
 BASELINE_ROLES_ENV = "DEV_GRANT_AGENT_IDENTITY_BASELINE"
-REASONING_ENGINE_PATTERN = re.compile(
-    r"^projects/(?P<project>[^/]+)/locations/(?P<location>[^/]+)/"
-    r"reasoningEngines/(?P<engine_id>[^/]+)$"
-)
 
 
 def agent_identity_id_env(spec: AgentSpec) -> str:
@@ -159,34 +141,6 @@ def requested_storage_bucket_roles(spec: AgentSpec) -> dict[str, tuple[str, ...]
     return bindings
 
 
-def _run_gcloud(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    if GCLOUD is None:
-        raise SystemExit("Google Cloud CLI is required and must be available on PATH.")
-
-    command = [GCLOUD, *args]
-    result = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        raise SystemExit(
-            f"Command failed: {' '.join(command)}\n{detail or 'No error details returned.'}"
-        )
-    return result
-
-
-def _project_number(project_id: str) -> str:
-    project_number = _run_gcloud(
-        ("projects", "describe", project_id, "--format=value(projectNumber)")
-    ).stdout.strip()
-    if not project_number.isdigit():
-        raise SystemExit(f"Could not resolve the numeric project number for '{project_id}'.")
-    return project_number
-
-
 def _organization_id(project_id: str) -> str | None:
     result = _run_gcloud(
         (
@@ -205,16 +159,6 @@ def _organization_id(project_id: str) -> str | None:
     return None
 
 
-def _runtime_coordinates(resource_name: str) -> tuple[str, str]:
-    match = REASONING_ENGINE_PATTERN.search(resource_name.strip())
-    if not match:
-        raise SystemExit(
-            "Reasoning Engine resource name must end in "
-            "locations/<location>/reasoningEngines/<engine-id>."
-        )
-    return match.group("location"), match.group("engine_id")
-
-
 def _trust_domain(project_id: str, project_number: str) -> str:
     """Trust domain the project's Agent Identities belong to.
 
@@ -231,9 +175,9 @@ def _trust_domain(project_id: str, project_number: str) -> str:
 def agent_identity_principal(project_id: str, resource_name: str) -> str:
     """Read the deployed identity and verify its project and runtime resource."""
     project_number = _project_number(project_id)
-    location, engine_id = _runtime_coordinates(resource_name)
-    match = REASONING_ENGINE_PATTERN.fullmatch(resource_name.strip())
-    if match.group("project") not in (project_id, project_number):
+    resource = RuntimeResource.parse(resource_name)
+    location, engine_id = resource.location, resource.engine
+    if resource.project not in (project_id, project_number):
         raise SystemExit("The runtime belongs to a different project; no IAM grants were made.")
     client = vertexai.Client(
         project=project_id, location=location, http_options={"api_version": "v1beta1"}
@@ -268,7 +212,7 @@ def agent_identity_principal_set(project_id: str) -> str:
     )
 
 
-def ensure_baseline_roles(project_id: str) -> tuple[str, ...]:
+def ensure_baseline_roles(project_id: str, staging_bucket: str | None = None) -> tuple[str, ...]:
     """Grant every Agent Identity in the project the roles a runtime needs.
 
     Terraform owns this in a managed environment. A sandbox with no platform
@@ -282,6 +226,11 @@ def ensure_baseline_roles(project_id: str) -> tuple[str, ...]:
     if not env_bool(BASELINE_ROLES_ENV, False):
         return ()
 
+    bucket = (
+        (staging_bucket or os.getenv("DEV_STAGING_BUCKET", "")).removeprefix("gs://").strip("/")
+    )
+    if not bucket or "/" in bucket:
+        raise SystemExit("A staging bucket is required before granting baseline runtime access.")
     principal_set = agent_identity_principal_set(project_id)
     for role in BASELINE_AGENT_IDENTITY_ROLES:
         _run_gcloud(
@@ -296,6 +245,18 @@ def ensure_baseline_roles(project_id: str) -> tuple[str, ...]:
             )
         )
         print(f"BASELINE_AGENT_IDENTITY_ROLE={role}")
+    _run_gcloud(
+        (
+            "storage",
+            "buckets",
+            "add-iam-policy-binding",
+            f"gs://{bucket}",
+            f"--member={principal_set}",
+            f"--role={STAGING_BUCKET_READER_ROLE}",
+            "--condition=None",
+            "--quiet",
+        )
+    )
     return BASELINE_AGENT_IDENTITY_ROLES
 
 
@@ -370,8 +331,8 @@ def main() -> None:
     os.chdir(ROOT)
     load_environment(".env.dev")
     spec = get_agent_spec(args.agent)
-    project_id, _, _ = require_dev_environment(spec=spec)
-    resource_name = load_resource_name(args.agent)
+    project_id, location, _ = require_dev_environment(spec=spec)
+    resource_name = load_resource_name(args.agent, project_id, location)
     apply_agent_identity_iam(args.agent, project_id, resource_name, spec)
 
 

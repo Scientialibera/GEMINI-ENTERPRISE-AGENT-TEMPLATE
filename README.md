@@ -121,7 +121,10 @@ uv run --group dev python dev/release_dev.py --agent basic_assistant
 
 The release checks prerequisites, builds an archive, deploys or updates the runtime,
 applies any explicitly configured Agent Identity IAM and then registers the runtime in
-the app. It chooses an update when dev/.state/ contains a saved resource for that agent.
+the app. It chooses an update when saved state or DEV_REASONING_ENGINE identifies a
+runtime in the selected project and region. State is stored under
+dev/.state/<project-number>/<region>/<agent>.json. Matching older agent-only state files
+are migrated automatically. A mismatched explicit runtime is rejected before preflight.
 Keep this ignored state directory between releases.
 
 Use --skip-register to stop after deployment. Registration is also skipped when the
@@ -455,7 +458,7 @@ prompt again. Local runs use AGENT_INSTRUCTION rather than loading prompt.md.
 
 ### Bootstrap settings
 
-dev/common.py forwards these environment keys to the runtime:
+dev/config/settings.py forwards these environment keys to the runtime:
 
 ~~~text
 CONFIG_PARAMETER
@@ -512,11 +515,20 @@ dev/                         local, packaging, deployment, IAM and registration 
 tests/                       import, validation and behavior tests
 ~~~
 
-Each archive includes one entry point and the packages it imports. A workflow's archive
-also contains the agent whose tools it reuses. Packaging excludes caches and bytecode,
+Each archive includes one entry point and the packages it imports. Recipe agents and
+workflows share tools through recipe_cards. Packaging excludes caches and bytecode,
 rejects symlinks and normalizes timestamps and ownership. Unchanged inputs produce
-identical archive bytes. Outputs go under ignored artifacts/; deployment state goes
+identical archive bytes. Archive creation and SDK staging use the same source manifest
+from dev/deploy/sources.py. Requirements are exported from uv.lock for the selected
+workspace package, including its transitive dependencies; there is no second dependency
+list in the registry. Outputs go under ignored artifacts/; deployment state goes
 under ignored dev/.state/.
+
+The recipe renderer separates theme, drawing, ingredients, overview, steps and deck
+assembly. Lists longer than the first ingredient panel continue on additional pages,
+including optional variation ingredients. Quantities and ingredient names are never
+silently shortened: text that cannot fit returns a correction request. Reuse its run_id
+when correcting a card; each new run has its own retry budget.
 
 ## Add an agent
 
@@ -525,21 +537,25 @@ under ignored dev/.state/.
 2. Write prompt.md. Keep instructions specific to the task and available tools.
 3. Add tools under tools/ and export them from tools/__init__.py. Keep tool logic
    separate from agent construction. Share reusable behavior in gemini_shared.
-4. Add an AgentSpec to AGENTS in dev/common.py. Supply the package name, import module,
-   display name, source paths, deployment requirements and registration text.
+4. Add an AgentSpec to AGENTS in dev/registry.py. Supply the package name, import module,
+   display name, source paths and registration text.
    For delegated tools, declare AUTHORIZATION_ID_ENV and the required service scopes.
    Leave source_root at its default; only a workflow overrides it.
-5. Add dependencies to the agent's pyproject.toml and deployment requirements.
-   Use the existing agents as examples for the agent-identity and mcp extras.
+5. Add dependencies to the agent's pyproject.toml and update uv.lock with uv sync.
+   gemini-shared provides the shared SDK and Agent Identity dependencies; use
+   gemini-shared[mcp] for the MCP extra. Deployment requirements come from the lock.
 6. Add the source directory to pytest's pythonpath in the root pyproject.toml, add an
    import test and test the new tools. Registry-based tests include the agent automatically.
 7. Run uv sync --all-packages --group dev, lint and tests. Try the local runner, then
    release the agent and test it in Gemini Enterprise.
 
-Keep runtime_instruction, apply_runtime_model and the AdkApp wrapper from the copied
+Keep runtime_instruction, apply_runtime_model and the shared create_model/create_app factories from the copied
 agent. Tool functions need type hints and short docstrings: ADK uses them to describe
 the tools to the model. Document arguments the model must supply and return
 JSON-compatible values. The BigQuery example converts dates, decimals and byte strings.
+
+The unit suite uses dummy settings and anonymous credentials through tests/conftest.py.
+Run it with `uv run --group dev pytest`; no gcloud login or live project is required.
 
 ### Choose tool authentication
 

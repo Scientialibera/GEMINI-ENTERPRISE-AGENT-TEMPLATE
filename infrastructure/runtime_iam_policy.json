@@ -1,0 +1,8 @@
+{
+  "baseline_project_roles": [
+    "roles/aiplatform.expressUser",
+    "roles/serviceusage.serviceUsageConsumer",
+    "roles/parametermanager.parameterAccessor"
+  ],
+  "staging_bucket_reader_role": "roles/storage.objectViewer"
+}

@@ -4,7 +4,10 @@ import argparse
 import asyncio
 import os
 
-from common import ROOT, build_app, get_agent_spec, load_environment
+from config.settings import load_environment
+from deploy.runtime import build_app
+from paths import ROOT
+from registry import get_agent_spec
 
 
 async def _run(agent_name: str, message: str) -> None:

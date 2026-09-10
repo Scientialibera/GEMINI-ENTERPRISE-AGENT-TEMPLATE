@@ -9,15 +9,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import os
 
-from common import ROOT, load_environment, require_dev_environment
 from fixtures.bigquery_fixture import (
     BIGQUERY_API_SERVICE,
     bigquery_fixture_enabled,
     prepare_bigquery_fixture,
 )
+from paths import ROOT
 
 from config.bootstrap import ensure_runtime_parameter, prepare_dev_platform
 from config.environment import configured_value
+from config.settings import load_environment, require_dev_environment
 
 
 def main() -> None:
@@ -50,7 +51,7 @@ def main() -> None:
     # granted IAM behind Terraform's back.
     from iam.apply_agent_identity_iam import ensure_baseline_roles
 
-    granted = ensure_baseline_roles(project_id)
+    granted = ensure_baseline_roles(project_id, staging_bucket)
     if granted:
         print(f"AGENT_IDENTITY_BASELINE_GRANTED={len(granted)}")
 

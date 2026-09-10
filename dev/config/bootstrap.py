@@ -4,16 +4,19 @@ import hashlib
 import json
 import os
 import shutil
-import subprocess
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
+from uuid import uuid4
+
+from gcp import run_gcloud as _run
+from gemini_shared.config.bootstrap import DEFAULT_BOOTSTRAP_MODEL, DEFAULT_PARAMETER_LOCATION
 
 from config.environment import configured_value, env_bool
 
 if TYPE_CHECKING:
-    from common import AgentSpec
     from gemini_shared.config.runtime_config import RuntimeConfig
     from google.cloud.parametermanager_v1 import ParameterManagerClient
+    from registry import AgentSpec
 
 GCLOUD = shutil.which("gcloud")
 
@@ -27,7 +30,6 @@ STAGING_BUCKET_LOCATION_ENV = "DEV_STAGING_BUCKET_LOCATION"
 CONFIG_PARAMETER_ENV = "CONFIG_PARAMETER"
 CONFIG_PARAMETER_LOCATION_ENV = "CONFIG_PARAMETER_LOCATION"
 
-DEFAULT_PARAMETER_LOCATION = "global"
 
 REQUIRED_DEV_SERVICES = (
     "aiplatform.googleapis.com",
@@ -35,24 +37,6 @@ REQUIRED_DEV_SERVICES = (
     "serviceusage.googleapis.com",
     "storage.googleapis.com",
 )
-
-
-def _run(args: Sequence[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
-    if GCLOUD is None:
-        raise SystemExit("Google Cloud CLI is required and must be available on PATH.")
-    command = [GCLOUD, *args]
-    result = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if check and result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        raise SystemExit(
-            f"Command failed: {' '.join(command)}\n{detail or 'No error details returned.'}"
-        )
-    return result
 
 
 def _exists(args: Sequence[str]) -> bool:
@@ -222,7 +206,9 @@ def _publish_instruction(
     """Publish a new version carrying an edited prompt, keeping other settings."""
     config = current.model_dump()
     config["instruction"] = prompt
-    revision = f"prompt-{hashlib.sha256(prompt.encode('utf-8')).hexdigest()[:12]}"
+    snapshot = {key: value for key, value in config.items() if key != "config_revision"}
+    digest = hashlib.sha256(json.dumps(snapshot, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+    revision = f"prompt-{digest}-{uuid4().hex}"
     config["config_revision"] = revision
     _add_parameter_version(project_id, parameter, location, revision, json.dumps(config))
     print(f"INSTRUCTION_PUBLISHED={revision}")
@@ -233,7 +219,7 @@ def _create_runtime_parameter(project_id: str, parameter: str, location: str, pr
     payload = json.dumps(
         {
             "config_revision": "bootstrap-v1",
-            "model": os.getenv("BOOTSTRAP_MODEL", "").strip() or "gemini-3.7-flash",
+            "model": os.getenv("BOOTSTRAP_MODEL", "").strip() or DEFAULT_BOOTSTRAP_MODEL,
             "instruction": (
                 prompt
                 or os.getenv("AGENT_INSTRUCTION", "").strip()

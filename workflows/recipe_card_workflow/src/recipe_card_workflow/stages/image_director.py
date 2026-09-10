@@ -7,8 +7,8 @@ of batching, pacing and publishing rather than two that can drift apart.
 
 from __future__ import annotations
 
+from gemini_shared.runtime import create_model
 from google.adk.agents import LlmAgent
-from google.adk.models import Gemini
 from recipe_cards.images import generate_recipe_images
 
 from ..config import BOOTSTRAP
@@ -89,10 +89,7 @@ Never invent a URI. Use only what a tool returned.
 image_director = LlmAgent(
     name="image_director",
     before_agent_callback=validate_recipe_stage,
-    model=Gemini(
-        model=BOOTSTRAP.bootstrap_model,
-        client_kwargs={"location": BOOTSTRAP.model_location},
-    ),
+    model=create_model(BOOTSTRAP),
     description="Generates and publishes every photograph a recipe card needs.",
     instruction=INSTRUCTION,
     tools=[generate_recipe_images],

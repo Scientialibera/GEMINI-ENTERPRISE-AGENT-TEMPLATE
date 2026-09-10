@@ -6,8 +6,8 @@ produce byte-identical cards from the same template.
 
 from __future__ import annotations
 
+from gemini_shared.runtime import create_model
 from google.adk.agents import LlmAgent
-from google.adk.models import Gemini
 from recipe_cards.publish import render_recipe_card
 
 from ..config import BOOTSTRAP
@@ -39,7 +39,9 @@ The layout is fixed by a template, so supply content and image locations only.
 If `render_recipe_card` returns `status: needs_correction`, the recipe is too
 long for the card rather than broken. It names the field and the edit to make:
 shorten that field as described and call the tool again with the corrected
-recipe. It says how many attempts remain; when none do, report the problem
+recipe and the same returned `run_id`. Preserve ingredient amounts when shortening
+descriptions or abbreviating units. Extra ingredients continue on additional pages.
+It says how many attempts remain; when none do, report the problem
 rather than retrying.
 
 Then reply with a single JSON object and nothing else:
@@ -53,10 +55,7 @@ taking `deck_url`, `deck_uri` and `run_id` from what the tool returned, and
 
 card_renderer = LlmAgent(
     name="card_renderer",
-    model=Gemini(
-        model=BOOTSTRAP.bootstrap_model,
-        client_kwargs={"location": BOOTSTRAP.model_location},
-    ),
+    model=create_model(BOOTSTRAP),
     description="Renders the recipe card deck and publishes it to Cloud Storage.",
     instruction=INSTRUCTION,
     tools=[render_recipe_card],

@@ -13,21 +13,17 @@ import argparse
 import os
 import urllib.parse
 
-import google.auth
-import google.auth.transport.requests
 import requests
-from common import (
-    AUTHORIZATION_ID_ENV,
-    OAUTH_CLIENTS_ENV,
-    ROOT,
-    AgentSpec,
-    detect_delegated_auth,
-    get_agent_spec,
-    load_environment,
-    load_resource_name,
-    oauth_client_id_for,
-    require_dev_environment,
-)
+from config.settings import load_environment, require_dev_environment
+from deploy.state import load_resource_name
+from gcp import project_number as _project_number
+from gemini_shared.config.bootstrap import AUTHORIZATION_ID_ENV
+from paths import ROOT
+from registry import AgentSpec, detect_delegated_auth, get_agent_spec
+
+from register.http import REQUEST_TIMEOUT_SECONDS, iter_resources
+from register.http import request as _request
+from register.oauth import OAUTH_CLIENTS_ENV, oauth_client_id_for
 
 DISCOVERY_ENGINE_HOST = "https://discoveryengine.googleapis.com"
 DISCOVERY_ENGINE_VERSION = "v1alpha"
@@ -41,7 +37,6 @@ OAUTH_CLIENT_SECRET_ENV = "GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET"
 OAUTH_CLIENT_SECRET_NAME_ENV = "GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET_NAME"
 AGENT_STATE_ENABLED = "ENABLED"
 CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
-REQUEST_TIMEOUT_SECONDS = 60
 
 OAUTH_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 OAUTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
@@ -49,48 +44,6 @@ OAUTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 OAUTH_REDIRECT_URI = "https://vertexaisearch.cloud.google.com/static/oauth/oauth.html"
 OAUTH_CONSENT_REDIRECT_URI = "https://vertexaisearch.cloud.google.com/oauth-redirect"
 OAUTH_REDIRECT_URIS = (OAUTH_REDIRECT_URI, OAUTH_CONSENT_REDIRECT_URI)
-
-
-def _access_token() -> str:
-    """Return an OAuth token for the developer's Application Default Credentials."""
-    credentials, _ = google.auth.default(scopes=[CLOUD_PLATFORM_SCOPE])
-    credentials.refresh(google.auth.transport.requests.Request())
-    return credentials.token
-
-
-def _request(
-    method: str,
-    url: str,
-    project_id: str,
-    payload: dict[str, object] | None = None,
-) -> dict[str, object]:
-    response = requests.request(
-        method,
-        url,
-        json=payload,
-        headers={
-            "Authorization": f"Bearer {_access_token()}",
-            # Discovery Engine rejects bare user ADC without an explicit quota project.
-            "X-Goog-User-Project": project_id,
-        },
-        timeout=REQUEST_TIMEOUT_SECONDS,
-    )
-    if not response.ok:
-        raise SystemExit(f"{method} {url} failed with HTTP {response.status_code}: {response.text}")
-    return response.json() if response.content else {}
-
-
-def _project_number(project_id: str) -> str:
-    """Resolve a project id to its number, which authorization names require."""
-    response = _request(
-        "GET",
-        f"https://cloudresourcemanager.googleapis.com/v1/projects/{project_id}",
-        project_id,
-    )
-    number = response.get("projectNumber")
-    if not number:
-        raise SystemExit(f"Could not resolve the project number for '{project_id}'.")
-    return str(number)
 
 
 def _assistant_path(project_id: str, app_id: str) -> str:
@@ -236,8 +189,9 @@ def _authorizations_url(project_id: str) -> str:
 
 
 def _authorization_exists(project_id: str, authorization_id: str) -> bool:
-    listing = _request("GET", _authorizations_url(project_id), project_id)
-    for authorization in listing.get("authorizations", []) or []:
+    for authorization in iter_resources(
+        _authorizations_url(project_id), project_id, "authorizations"
+    ):
         if str(authorization.get("name", "")).rsplit("/", 1)[-1] == authorization_id:
             return True
     return False
@@ -307,8 +261,7 @@ def ensure_authorization(
 
 
 def _find_existing(project_id: str, app_id: str, display_name: str) -> str | None:
-    listing = _request("GET", _agents_url(project_id, app_id), project_id)
-    for agent in listing.get("agents", []) or []:
+    for agent in iter_resources(_agents_url(project_id, app_id), project_id, "agents"):
         if agent.get("displayName") == display_name:
             return str(agent.get("name"))
     return None
@@ -328,7 +281,7 @@ def register_agent(
         raise SystemExit(
             f"{spec.display_name} uses delegated auth in its source but its AgentSpec does not "
             f"declare it. Add {AUTHORIZATION_ID_ENV} to required_remote_bootstrap_env in "
-            "dev/common.py, so the agent is deployed with an authorization and its own OAuth "
+            "dev/registry.py, so the agent is deployed with an authorization and its own OAuth "
             "client."
         )
 
@@ -365,7 +318,7 @@ def main() -> None:
     load_environment(".env.dev")
     # Resolve the authorization ID; registration does not read runtime settings.
     spec = get_agent_spec(args.agent)
-    project_id, _, _ = require_dev_environment(require_parameter=False, spec=spec)
+    project_id, location, _ = require_dev_environment(require_parameter=False, spec=spec)
 
     app_id = (args.app_id or os.getenv(APP_ENGINE_ID_ENV, "")).strip()
     if not app_id:
@@ -374,7 +327,7 @@ def main() -> None:
             "Enterprise app id, not the web app client id in the console URL."
         )
 
-    reasoning_engine = load_resource_name(args.agent)
+    reasoning_engine = load_resource_name(args.agent, project_id, location)
     register_agent(args.agent, app_id, project_id, spec, reasoning_engine)
     print(f"REASONING_ENGINE={reasoning_engine}")
 

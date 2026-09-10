@@ -18,9 +18,10 @@ The trigger is a dish name. The result is a link to the published deck.
 
 from __future__ import annotations
 
+from gemini_shared.runtime import create_app
 from google.adk.agents import SequentialAgent
-from vertexai.agent_engines import AdkApp
 
+from .config import BOOTSTRAP
 from .stages import card_renderer, image_director, recipe_writer
 
 root_agent = SequentialAgent(
@@ -34,4 +35,4 @@ root_agent = SequentialAgent(
 )
 
 # Agent Runtime serves the AdkApp wrapper, not a bare agent.
-app = AdkApp(agent=root_agent, enable_tracing=True)
+app = create_app(root_agent, BOOTSTRAP)

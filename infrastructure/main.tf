@@ -11,7 +11,9 @@ resource "google_project_service" "required" {
 }
 
 locals {
-  effective_log_bucket_id = coalesce(var.log_bucket_id, "agent-engine-runtimes")
+  effective_log_bucket_id      = coalesce(var.log_bucket_id, "agent-engine-runtimes")
+  runtime_iam_policy           = jsondecode(file("${path.module}/runtime_iam_policy.json"))
+  agent_identity_project_roles = var.agent_identity_project_roles != null ? var.agent_identity_project_roles : toset(local.runtime_iam_policy.baseline_project_roles)
 
   # Orgless trust domains use "proj-". Documentation shows "project-", which
   # IAM rejects as an unknown member type.
@@ -39,7 +41,7 @@ resource "terraform_data" "configuration_validation" {
 
   lifecycle {
     precondition {
-      condition = (length(var.developer_deployer_members) == 0 && length(var.agent_identity_project_roles) == 0) || (
+      condition = (length(var.developer_deployer_members) == 0 && length(local.agent_identity_project_roles) == 0 && var.developer_staging_bucket_name == null) || (
         (var.developer_agent_identity_organization_id != null) != var.developer_agent_identity_orgless
       )
       error_message = "When developer or runtime IAM bindings are configured, set exactly one of developer_agent_identity_organization_id or developer_agent_identity_orgless=true."
@@ -121,11 +123,26 @@ resource "google_secret_manager_secret_iam_member" "managed_secret_readers" {
 # set covers Agent Engines this stack never sees, which is what lets a developer
 # add an agent to the repository and deploy it without a Terraform change.
 resource "google_project_iam_member" "agent_identity_common" {
-  for_each = var.agent_identity_project_roles
+  for_each = local.agent_identity_project_roles
 
   project = var.project_id
   role    = each.value
   member  = local.agent_identity_principal_set
+
+  depends_on = [
+    google_project_service.required,
+    terraform_data.configuration_validation,
+  ]
+}
+
+# Source archives are readable only in the configured staging bucket. Business
+# data buckets need explicit grants to the individual runtime identity.
+resource "google_storage_bucket_iam_member" "agent_identity_staging_reader" {
+  count = var.developer_staging_bucket_name == null ? 0 : 1
+
+  bucket = var.developer_staging_bucket_name
+  role   = local.runtime_iam_policy.staging_bucket_reader_role
+  member = local.agent_identity_principal_set
 
   depends_on = [
     google_project_service.required,

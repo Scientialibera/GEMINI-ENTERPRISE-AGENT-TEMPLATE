@@ -47,3 +47,29 @@ run "ambiguous_trust_domain_rejected" {
   }
   expect_failures = [terraform_data.configuration_validation]
 }
+
+run "default_policy_limits_storage_to_staging" {
+  command = plan
+  variables {
+    developer_agent_identity_orgless = true
+    developer_staging_bucket_name    = "unit-test-staging"
+    agent_identity_project_roles     = null
+  }
+  assert {
+    condition     = !contains(keys(google_project_iam_member.agent_identity_common), "roles/storage.objectViewer")
+    error_message = "The default runtime policy must not grant project-wide bucket reads."
+  }
+  assert {
+    condition     = google_storage_bucket_iam_member.agent_identity_staging_reader[0].bucket == "unit-test-staging" && google_storage_bucket_iam_member.agent_identity_staging_reader[0].role == "roles/storage.objectViewer"
+    error_message = "Runtime archive reads must be bound to the configured staging bucket."
+  }
+}
+
+run "staging_access_alone_requires_trust_domain" {
+  command = plan
+  variables {
+    agent_identity_project_roles  = []
+    developer_staging_bucket_name = "unit-test-staging"
+  }
+  expect_failures = [terraform_data.configuration_validation]
+}

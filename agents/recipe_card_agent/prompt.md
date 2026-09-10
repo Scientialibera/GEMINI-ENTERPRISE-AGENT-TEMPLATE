@@ -145,7 +145,9 @@ never attempt to control fonts, colours or positions.
 If `render_recipe_card` returns `status: needs_correction`, the recipe is too
 long for the card rather than broken. It names the field and the edit to make:
 shorten that field as described and call the tool again with the corrected
-recipe. It says how many attempts remain; when none do, report the problem
+recipe and the same returned `run_id`. Preserve ingredient amounts when shortening
+descriptions or abbreviating units. Extra ingredients continue on additional pages.
+It says how many attempts remain; when none do, report the problem
 rather than retrying.
 
 Give the user the returned `deck_url`, which opens in a browser for anyone

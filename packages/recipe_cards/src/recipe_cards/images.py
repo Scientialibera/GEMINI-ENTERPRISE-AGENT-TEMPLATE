@@ -125,7 +125,7 @@ def generate_recipe_images(
         )
         uris[image.name] = uri
         existing[safe_slug(image.name)] = uri
-        save_run(tool_context, run_id, {"slug": slug, "images": existing})
+        save_run(tool_context, run_id, {**run, "images": existing})
     return {
         "bucket": OUTPUT_BUCKET,
         "bucket_created": False,

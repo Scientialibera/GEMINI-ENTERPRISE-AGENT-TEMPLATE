@@ -30,18 +30,20 @@ DEV = Path(__file__).resolve().parents[1] / "dev"
 sys.path.insert(0, str(DEV))
 bootstrap = importlib.import_module("config.bootstrap")
 fixture = importlib.import_module("fixtures.bigquery_fixture")
-common = importlib.import_module("common")
+registry = importlib.import_module("registry")
+settings = importlib.import_module("config.settings")
+sources = importlib.import_module("deploy.sources")
 packaging = importlib.import_module("deploy.package_agent")
 sys.path.remove(str(DEV))
 
 # Cover newly registered agents automatically.
-ALL_ENTRIES = sorted(common.AGENTS)
+ALL_ENTRIES = sorted(registry.AGENTS)
 # A workflow is deployed exactly like an agent but is composed rather than
 # conversational: it has stages instead of tools, and each stage carries its own
 # instruction rather than reading one from Parameter Manager. The checks that
 # describe a conversational agent therefore run over the agents only.
-ALL_AGENTS = [name for name in ALL_ENTRIES if common.AGENTS[name].source_root == "agents"]
-ALL_WORKFLOWS = [name for name in ALL_ENTRIES if common.AGENTS[name].source_root == "workflows"]
+ALL_AGENTS = [name for name in ALL_ENTRIES if registry.AGENTS[name].source_root == "agents"]
+ALL_WORKFLOWS = [name for name in ALL_ENTRIES if registry.AGENTS[name].source_root == "workflows"]
 
 
 @pytest.fixture(autouse=True)
@@ -59,7 +61,7 @@ def environment(monkeypatch):
 def test_remote_boundary(monkeypatch, environment):
     monkeypatch.setenv("ENVIRONMENT", environment)
     with pytest.raises(SystemExit, match="Refusing remote"):
-        common.require_dev_environment()
+        settings.require_dev_environment()
 
 
 def test_required_placeholder(monkeypatch):
@@ -132,7 +134,9 @@ def test_packaging_excludes_cache_and_other_agent(tmp_path, monkeypatch, agent):
     cache = source / "__pycache__"
     cache.mkdir()
     (cache / "agent.pyc").write_bytes(b"first")
-    spec = SimpleNamespace(requirements=("test==1",), extra_packages=(agent,))
+    spec = SimpleNamespace(extra_packages=(agent,))
+    monkeypatch.setattr(sources, "ROOT", tmp_path)
+    monkeypatch.setattr(packaging, "export_requirements", lambda _: ("test==1",))
     monkeypatch.setattr(packaging, "ROOT", tmp_path)
     monkeypatch.setattr(packaging, "get_agent_spec", lambda name: spec)
     first = packaging.package_agent(agent, tmp_path / "one.tar.gz").read_bytes()
@@ -334,17 +338,17 @@ def test_mcp_toolset_is_wired_to_a_remote_server():
 @pytest.mark.parametrize("agent", ALL_ENTRIES)
 def test_delegated_auth_detection_matches_the_spec(agent):
     """The source marker and declared auth requirements must agree."""
-    spec = common.get_agent_spec(agent)
-    assert common.detect_delegated_auth(spec) == spec.uses_delegated_auth
+    spec = registry.get_agent_spec(agent)
+    assert registry.detect_delegated_auth(spec) == spec.uses_delegated_auth
 
 
 @pytest.mark.parametrize("agent", ALL_ENTRIES)
 def test_delegated_agents_name_their_own_oauth_client(agent):
     """Delegated agents have distinct client, secret and authorization names."""
-    spec = common.get_agent_spec(agent)
+    spec = registry.get_agent_spec(agent)
     if not spec.uses_delegated_auth:
         return
-    others = [s for name, s in common.AGENTS.items() if name != agent and s.uses_delegated_auth]
+    others = [s for name, s in registry.AGENTS.items() if name != agent and s.uses_delegated_auth]
     for other in others:
         assert spec.oauth_client_id_env != other.oauth_client_id_env
         assert spec.default_oauth_secret_name != other.default_oauth_secret_name
@@ -354,21 +358,21 @@ def test_delegated_agents_name_their_own_oauth_client(agent):
 @pytest.mark.parametrize("agent", ALL_ENTRIES)
 def test_oauth_scopes_cover_only_delegated_services(agent):
     """Each agent requests scopes only for its delegated tools."""
-    spec = common.get_agent_spec(agent)
+    spec = registry.get_agent_spec(agent)
     if not spec.uses_delegated_auth:
         assert spec.delegated_oauth_scopes == ()
         return
     assert spec.delegated_oauth_scopes, f"{agent} takes a user token but requests no scope"
-    for scope in common.IDENTITY_OAUTH_SCOPES:
+    for scope in registry.IDENTITY_OAUTH_SCOPES:
         assert scope in spec.oauth_scopes
     # cloud-platform would grant far more than any one tool needs.
-    assert common.CLOUD_PLATFORM_SCOPE not in spec.delegated_oauth_scopes
+    assert registry.CLOUD_PLATFORM_SCOPE not in spec.delegated_oauth_scopes
 
 
 @pytest.mark.parametrize("agent", ALL_AGENTS)
 def test_every_agent_has_a_prompt(agent):
     """Each registered agent has a source prompt."""
-    spec = common.get_agent_spec(agent)
+    spec = registry.get_agent_spec(agent)
     prompt = spec.read_prompt()
     assert prompt, f"{agent} has no prompt.md at {spec.prompt_path}"
     assert len(prompt) > 40, f"{agent} prompt is too short to be a real instruction"
@@ -381,12 +385,12 @@ def test_release_resolves_agent_defaults(monkeypatch, tmp_path, agent, already_d
     release = importlib.import_module("release_dev")
     deploy = importlib.import_module("deploy.deploy_dev")
     update = importlib.import_module("deploy.update_dev")
-    spec = common.get_agent_spec(agent)
+    spec = registry.get_agent_spec(agent)
     monkeypatch.setenv("ENVIRONMENT", "dev")
     monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
     monkeypatch.setenv("DEV_STAGING_BUCKET", "gs://test-bucket")
     monkeypatch.setenv("GEMINI_ENTERPRISE_APP_ID", "test-app")
-    monkeypatch.delenv(common.AUTHORIZATION_ID_ENV)
+    monkeypatch.delenv(settings.AUTHORIZATION_ID_ENV)
     monkeypatch.setattr(sys, "argv", ["release_dev.py", "--agent", agent])
     monkeypatch.setattr(release, "ROOT", tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -394,7 +398,11 @@ def test_release_resolves_agent_defaults(monkeypatch, tmp_path, agent, already_d
     monkeypatch.setattr(release, "ensure_dev_prerequisites", Mock())
     monkeypatch.setattr(release, "package_agent", Mock(return_value=tmp_path / "agent.tar.gz"))
     monkeypatch.setattr(
-        release, "state_path", lambda name: SimpleNamespace(exists=lambda: already_deployed)
+        release,
+        "find_resource_name",
+        lambda *args: (
+            "projects/123/locations/us-central1/reasoningEngines/test" if already_deployed else None
+        ),
     )
     create = Mock(return_value="new-runtime")
     change = Mock(return_value="existing-runtime")
@@ -405,11 +413,11 @@ def test_release_resolves_agent_defaults(monkeypatch, tmp_path, agent, already_d
 
     release.main()
 
-    assert os.environ[common.CONFIG_PARAMETER_ENV] == spec.config_parameter_id
+    assert os.environ[settings.CONFIG_PARAMETER_ENV] == spec.config_parameter_id
     if spec.uses_delegated_auth:
-        assert os.environ[common.AUTHORIZATION_ID_ENV] == spec.authorization_id
+        assert os.environ[settings.AUTHORIZATION_ID_ENV] == spec.authorization_id
     else:
-        assert common.AUTHORIZATION_ID_ENV not in os.environ
+        assert settings.AUTHORIZATION_ID_ENV not in os.environ
     called, unused = (change, create) if already_deployed else (create, change)
     called.assert_called_once_with(agent, "test-project", "us-central1", "gs://test-bucket", spec)
     unused.assert_not_called()
@@ -484,7 +492,7 @@ def test_dev_placeholder_parsing(monkeypatch, raw):
 
     monkeypatch.setenv("DEV_TEST_VALUE", raw)
     assert configured_value("DEV_TEST_VALUE") == ""
-    assert common.is_missing_or_placeholder("DEV_TEST_VALUE")
+    assert settings.is_missing_or_placeholder("DEV_TEST_VALUE")
 
 
 def test_dev_configured_value_is_stripped(monkeypatch):
@@ -492,7 +500,7 @@ def test_dev_configured_value_is_stripped(monkeypatch):
 
     monkeypatch.setenv("DEV_TEST_VALUE", " real-value ")
     assert configured_value("DEV_TEST_VALUE") == "real-value"
-    assert not common.is_missing_or_placeholder("DEV_TEST_VALUE")
+    assert not settings.is_missing_or_placeholder("DEV_TEST_VALUE")
 
 
 @pytest.mark.parametrize("agent", ALL_AGENTS)
@@ -569,7 +577,7 @@ def test_ingredient_panel_fits_its_rows(count):
     Rows keep one pitch until the list would run past the footer; only then do
     they compress, and never below the readable floor.
     """
-    from recipe_cards.rendering import pages as ct
+    from recipe_cards.rendering import theme as ct
 
     rows = min(count, ct.INGREDIENT_MAX_ROWS)
     available = ct.INGREDIENT_PANEL_MAX_BOTTOM - ct.INGREDIENT_PANEL_TOP
@@ -596,7 +604,7 @@ def test_workflow_stages_are_ordered_and_chained(workflow):
     the next stage receives it. A stage without one silently produces nothing
     for its successor to read.
     """
-    spec = common.get_agent_spec(workflow)
+    spec = registry.get_agent_spec(workflow)
     module = importlib.import_module(spec.module)
     stages = module.root_agent.sub_agents
 
@@ -615,7 +623,7 @@ def test_workflow_reuses_agent_tools(workflow):
     """
     from recipe_card_agent.tools import generate_recipe_images, render_recipe_card
 
-    spec = common.get_agent_spec(workflow)
+    spec = registry.get_agent_spec(workflow)
     module = importlib.import_module(spec.module)
 
     shared = {generate_recipe_images, render_recipe_card}
@@ -635,7 +643,7 @@ def test_cooking_tip_is_per_step_page():
     Repeating a single tip above every page reads as a rendering fault, and a
     tip about the opening steps is noise above the closing ones.
     """
-    from recipe_cards.rendering.pages import cooking_tip_for_page
+    from recipe_cards.rendering.content import cooking_tip_for_page
 
     recipe = {"cooking_tip": ["Tip for steps 1-4.", "Tip for steps 5-8."]}
     assert cooking_tip_for_page(recipe, 0) == "Tip for steps 1-4."
@@ -646,7 +654,7 @@ def test_cooking_tip_is_per_step_page():
 
 def test_single_cooking_tip_appears_once():
     """A plain string stays supported, but only on the first page."""
-    from recipe_cards.rendering.pages import cooking_tip_for_page
+    from recipe_cards.rendering.content import cooking_tip_for_page
 
     recipe = {"cooking_tip": "Reserve some pasta water."}
     assert cooking_tip_for_page(recipe, 0) == "Reserve some pasta water."
@@ -668,7 +676,7 @@ def test_identity_roles_are_declared_in_the_spec(agent, monkeypatch):
     from iam.apply_agent_identity_iam import requested_storage_bucket_roles
 
     monkeypatch.setenv("RECIPE_CARD_BUCKET", "unit-test-bucket")
-    spec = common.get_agent_spec(agent)
+    spec = registry.get_agent_spec(agent)
     for binding in spec.agent_identity_bucket_roles:
         assert binding.roles, f"{agent} names a bucket with no roles"
         assert binding.resolved_bucket().startswith("gs://")
@@ -681,7 +689,7 @@ def test_identity_roles_are_declared_in_the_spec(agent, monkeypatch):
 def test_bucket_placeholder_resolves_from_the_environment(monkeypatch):
     """A spec names its bucket by variable, so no project's bucket is committed."""
     monkeypatch.setenv("RECIPE_CARD_BUCKET", "some-bucket")
-    binding = common.BucketRoles("${RECIPE_CARD_BUCKET}", (common.STORAGE_OBJECT_ADMIN,))
+    binding = registry.BucketRoles("${RECIPE_CARD_BUCKET}", (registry.STORAGE_OBJECT_ADMIN,))
     assert binding.resolved_bucket() == "gs://some-bucket"
 
     # Unset resolves to nothing rather than to a guessed name.
@@ -696,7 +704,7 @@ def test_environment_overrides_the_declared_roles(monkeypatch):
     sys.path.insert(0, str(DEV))
     from iam.apply_agent_identity_iam import requested_project_roles
 
-    spec = common.get_agent_spec("recipe_card_agent")
+    spec = registry.get_agent_spec("recipe_card_agent")
     monkeypatch.setenv(f"{spec.env_prefix}_AGENT_IDENTITY_PROJECT_ROLES", "roles/logging.logWriter")
     assert requested_project_roles(spec) == ("roles/logging.logWriter",)
 
@@ -707,7 +715,6 @@ def test_every_environment_variable_is_documented():
     Someone deploying from a clean clone has only the example files to work
     from, so an undocumented variable is a silent gap in the setup.
     """
-    import re
 
     repo = DEV.parent
     roots = [repo / d for d in ("dev", "packages", "agents", "workflows")]
@@ -734,27 +741,11 @@ def test_every_environment_variable_is_documented():
 
 
 def test_baseline_roles_match_the_platform_stack():
-    """The scripts can grant what Terraform grants, so a sandbox needs neither.
-
-    The two lists are maintained separately, so they are asserted equal here:
-    a role added to one and not the other would leave a project deployed by the
-    scripts subtly different from one deployed by the platform stack.
-    """
-    import sys
-
-    sys.path.insert(0, str(DEV))
     from iam.apply_agent_identity_iam import BASELINE_AGENT_IDENTITY_ROLES
 
-    # Read from the stack itself rather than restated here, so the two cannot
-    # drift: a role added to one and not the other would leave a project built
-    # by the scripts subtly different from one built by Terraform.
-    variables = (DEV.parent / "infrastructure" / "variables.tf").read_text(encoding="utf-8")
-    block = variables[variables.index('variable "agent_identity_project_roles"') :]
-    block = block[: block.index("\n}")]
-    terraform_roles = set(re.findall(r'"(roles/[^"]+)"', block))
-
-    assert terraform_roles, "could not read agent_identity_project_roles from infrastructure/"
-    assert set(BASELINE_AGENT_IDENTITY_ROLES) == terraform_roles
+    policy = json.loads((DEV.parent / "infrastructure/runtime_iam_policy.json").read_text())
+    assert set(BASELINE_AGENT_IDENTITY_ROLES) == set(policy["baseline_project_roles"])
+    assert "roles/storage.objectViewer" not in BASELINE_AGENT_IDENTITY_ROLES
 
 
 def test_baseline_grant_is_off_unless_requested(monkeypatch):
@@ -843,9 +834,17 @@ def test_correction_attempts_are_bounded(monkeypatch):
     payload = "{}"
 
     context = SimpleNamespace(state={})
+    run_id = ""
     for _ in range(publish.MAX_CORRECTION_ATTEMPTS - 1):
-        assert publish.render_recipe_card(payload, context)["status"] == "needs_correction"
+        result = publish.render_recipe_card(payload, context, run_id)
+        assert result["status"] == "needs_correction"
+        run_id = result["run_id"]
 
     # The last attempt raises rather than inviting another correction.
     with pytest.raises(ContentTooLong):
-        publish.render_recipe_card(payload, context)
+        publish.render_recipe_card(payload, context, run_id)
+
+    # A new recipe run in the same session receives its own correction budget.
+    result = publish.render_recipe_card(payload, context)
+    assert result["run_id"] != run_id
+    assert result["attempts_remaining"] == publish.MAX_CORRECTION_ATTEMPTS - 1

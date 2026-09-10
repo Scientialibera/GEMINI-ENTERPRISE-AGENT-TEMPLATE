@@ -29,7 +29,8 @@ it calls, each also runnable on its own.
 dev/
   release_dev.py       preflight, package, deploy or update, IAM, then register
   run_local.py         run one agent on the workstation, no deployment
-  common.py            registry of agents and workflows, deployment settings, state
+  registry.py          agent and workflow metadata
+  paths.py, gcp.py      repository paths and shared gcloud execution
   deploy/              build an archive and create or update a runtime
   iam/                 exact Agent Identity IAM after the runtime exists
   register/            publish a runtime into a Gemini Enterprise app
@@ -49,19 +50,30 @@ dev/
 | config/bootstrap_dev.py | Check the sandbox and prepare optional BigQuery sample data. |
 
 Deployment creates a missing runtime parameter and publishes changes to prompt.md.
-The release script chooses an update when saved agent state exists. Use --skip-register
-to deploy without publishing into an app.
+The release script chooses an update when saved state or DEV_REASONING_ENGINE matches
+the selected project and region. State lives at
+dev/.state/<project-number>/<region>/<agent>.json. Matching legacy state migrates on
+read; legacy state from another scope is ignored. Explicit overrides are checked before
+preflight; saved state is checked before any runtime update. Use --skip-register to deploy without
+publishing into an app.
 
 | Imported module | Purpose |
 |---|---|
-| common.py | Registry of agents and workflows, deployment settings, package paths and state. |
+| registry.py | Agent and workflow metadata, source paths, OAuth scopes and exact identity grants. |
+| paths.py, gcp.py | Repository paths and shared gcloud execution/project resolution. |
+| deploy/state.py | Project and region validation, state lookup and migration. |
+| deploy/sources.py | One validated source manifest for archives and SDK staging. |
+| deploy/dependencies.py | Export runtime requirements from uv.lock. |
+| deploy/runtime.py | SDK client, existing app and deployment configuration. |
+| config/settings.py | Local and remote environment contract. |
+| register/http.py, register/oauth.py | Paginated JSON API access and OAuth client configuration. |
 | config/environment.py | Boolean and placeholder parsing. |
 | config/bootstrap.py | Authentication, project, API, bucket and parameter checks. |
 | fixtures/bigquery_fixture.py | Sample dataset creation, schema validation and seeding. |
 
-Adding an entry to AGENTS in common.py is what makes it visible to every script above,
+Adding an entry to AGENTS in registry.py is what makes it visible to every script above,
 whether it is an agent or a workflow. Imports resolve against dev/, so a script in a
-subfolder puts that directory on sys.path before importing common.
+subfolder puts that directory on sys.path before importing the shared dev modules.
 
 ## Order of operations
 
@@ -111,11 +123,19 @@ uv run --group dev python dev/release_dev.py --agent basic_assistant
 That baseline matters more than it looks. Every agent reads its model and instruction
 from Parameter Manager under its own identity, so without it an agent deploys, starts,
 and then fails on its first request with no permission to read anything. The roles
-granted are the four the platform stack grants: `aiplatform.expressUser`,
-`serviceusage.serviceUsageConsumer`, `parametermanager.parameterAccessor` and
-`storage.objectViewer`. They go to the trust-domain principal set covering every Agent
-Identity in the project, so an agent deployed later inherits them, and granting is
-idempotent.
+granted at project scope are `aiplatform.expressUser`,
+`serviceusage.serviceUsageConsumer` and `parametermanager.parameterAccessor`.
+`storage.objectViewer` is granted on DEV_STAGING_BUCKET only, so runtimes can read
+their source archives. Both Terraform and this helper read those defaults from
+infrastructure/runtime_iam_policy.json. The principal set covers future runtimes too.
+Business data buckets, including the auth reference agent's sample bucket, require
+explicit grants to the exact agent identity.
+
+When upgrading an existing sandbox, grant staging and required business-bucket access
+first, then have its IAM administrator remove the former project-wide objectViewer
+binding. This helper only adds bindings. Terraform-managed projects remove the old
+binding on apply when it is no longer in agent_identity_project_roles; explicit
+overrides must also be updated.
 
 `DEV_GRANT_AGENT_IDENTITY_BASELINE` is false by default and the caller needs project
 IAM admin to use it. Leave it false wherever the platform stack is applied: IAM there

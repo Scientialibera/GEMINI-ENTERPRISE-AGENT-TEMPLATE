@@ -101,6 +101,35 @@ def test_render_keeps_complete_instruction():
     assert "Boil the water." in text
 
 
+@pytest.mark.parametrize("core_count,extra_count", [(12, 1), (13, 0), (24, 12), (5, 12)])
+def test_all_ingredients_and_quantities_are_rendered(core_count, extra_count):
+    recipe = deepcopy(RECIPE)
+    recipe["ingredients"] = [
+        {"quantity": f"{i + 1} g", "item": f"Core {i + 1}"} for i in range(core_count)
+    ]
+    recipe["variation_ingredients"] = [
+        {"quantity": f"{i + 25} g", "item": f"Extra {i + 1}"} for i in range(extra_count)
+    ]
+    deck = Presentation(BytesIO(pages.render_deck(recipe, "test")))
+    texts = [shape.text for slide in deck.slides for shape in slide.shapes if shape.has_text_frame]
+    for ingredient in recipe["ingredients"] + recipe["variation_ingredients"]:
+        assert texts.count(ingredient["item"]) == 1
+        assert texts.count(ingredient["quantity"]) == 1
+    assert not any(text.startswith("+ ") and text.endswith("more") for text in texts)
+    if extra_count:
+        assert "OPTIONAL VARIATION" in texts
+
+
+def test_overlong_ingredient_quantity_returns_a_correction():
+    from recipe_cards.errors import ContentTooLong
+
+    recipe = deepcopy(RECIPE)
+    recipe["ingredients"][0]["quantity"] = "one hundred and twenty five grams of water"
+    with pytest.raises(ContentTooLong, match="Ingredient quantity") as raised:
+        pages.render_deck(recipe, "test")
+    assert raised.value.field == "ingredients[0].quantity"
+
+
 def test_overflow_raises_instead_of_truncating():
     """Cooking text is never silently shortened.
 

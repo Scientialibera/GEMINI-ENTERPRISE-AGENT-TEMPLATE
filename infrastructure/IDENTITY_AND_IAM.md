@@ -41,10 +41,17 @@ which is what allows agents to be added to the monorepo independently of infrast
 Organization and orgless projects use different trust-domain prefixes; configure exactly
 one through the provided variables.
 
-The baseline covers runtime/platform basics such as model/quota use, Parameter Manager
-reads and project-wide Cloud Storage object reads, which is what lets the reference
-agents run on a fresh project. Every role in it reaches every current and future
-runtime, so add one only when that is intended.
+The default baseline covers model/quota use and Parameter Manager reads. Defaults come
+from runtime_iam_policy.json, which the sandbox helper also reads. Storage object reads
+are granted only on developer_staging_bucket_name so runtimes can load source archives.
+Every principal-set role reaches every current and future runtime, so add one only when
+that is intended. Reference-agent data buckets require explicit exact-identity grants.
+
+For an existing deployment, prepare the staging and business-bucket grants before
+removing the former project-wide storage.objectViewer binding. Terraform removes its
+tracked binding on apply when the role is absent from agent_identity_project_roles;
+remove it from any custom override too. An IAM administrator must remove bindings
+previously added by the sandbox helper, which never revokes access.
 
 Access to a particular bucket, dataset or secret should target an individual Agent
 Identity at the narrowest practical resource scope. The companion dev helper applies

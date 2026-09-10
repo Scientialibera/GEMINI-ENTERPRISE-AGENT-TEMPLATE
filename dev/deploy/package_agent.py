@@ -14,7 +14,11 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-from common import ROOT, get_agent_spec
+from paths import ROOT
+from registry import get_agent_spec
+
+from deploy.dependencies import export_requirements
+from deploy.sources import source_entries
 
 DEFAULT_ARTIFACT_DIR = ROOT / "artifacts"
 REQUIREMENTS_FILENAME = "requirements.txt"
@@ -45,31 +49,17 @@ def _normalized_tarinfo(path: Path, arcname: str) -> tarfile.TarInfo:
     return info
 
 
-def _add_path(archive: tarfile.TarFile, source: Path, arcname: str) -> None:
-    if source.is_symlink():
-        raise ValueError(f"Package sources must not contain symbolic links: {source}")
-    if source.name == "__pycache__" or source.suffix in {".pyc", ".pyo"}:
-        return
-    if source.is_dir():
-        archive.addfile(_normalized_tarinfo(source, arcname))
-        for child in sorted(source.iterdir(), key=lambda item: item.name):
-            _add_path(archive, child, f"{arcname}/{child.name}")
-        return
-
-    info = _normalized_tarinfo(source, arcname)
-    with source.open("rb") as handle:
-        archive.addfile(info, handle)
-
-
 def package_agent(agent_name: str, output: Path) -> Path:
     spec = get_agent_spec(agent_name)
+    entries = source_entries(spec)
+    requirements = export_requirements(spec)
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="agent-package-") as temp_dir:
         requirements_path = Path(temp_dir) / REQUIREMENTS_FILENAME
         requirements_path.write_text(
-            "\n".join(spec.requirements) + "\n",
+            "\n".join(requirements) + "\n",
             encoding="utf-8",
             newline="\n",
         )
@@ -84,12 +74,15 @@ def package_agent(agent_name: str, output: Path) -> Path:
             ) as compressed,
             tarfile.open(fileobj=compressed, mode="w") as archive,
         ):
-            _add_path(archive, requirements_path, REQUIREMENTS_FILENAME)
-            for package_path in spec.extra_packages:
-                source = ROOT / package_path
-                if not source.exists():
-                    raise FileNotFoundError(source)
-                _add_path(archive, source, source.name)
+            sources = [(requirements_path, REQUIREMENTS_FILENAME)]
+            sources.extend((entry.path, entry.archive_name) for entry in entries)
+            for source, name in sources:
+                info = _normalized_tarinfo(source, name)
+                if source.is_file():
+                    with source.open("rb") as handle:
+                        archive.addfile(info, handle)
+                else:
+                    archive.addfile(info)
 
     return output
 
