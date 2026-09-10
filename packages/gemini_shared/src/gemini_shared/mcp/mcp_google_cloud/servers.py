@@ -13,6 +13,9 @@ COMPUTE_ENGINE = "https://compute.googleapis.com/mcp"
 # Scope the delegated authorization must carry to reach the server above.
 BIGQUERY_SCOPE = "https://www.googleapis.com/auth/bigquery"
 CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+# The Cloud Monitoring MCP guide lists the read-write "monitoring" scope, but the
+# API's own scope list defines this read-only one, which covers every tool below.
+CLOUD_MONITORING_READONLY_SCOPE = "https://www.googleapis.com/auth/monitoring.read"
 
 # Exclude execute_sql; server-side IAM still controls access.
 BIGQUERY_READONLY_TOOLS = [
@@ -21,4 +24,17 @@ BIGQUERY_READONLY_TOOLS = [
     "list_table_ids",
     "get_table_info",
     "execute_sql_readonly",
+]
+
+# The full published tool set for this server; each is annotated read-only.
+CLOUD_MONITORING_READONLY_TOOLS = [
+    "list_timeseries",
+    "query_range",
+    "list_metric_descriptors",
+    "list_alert_policies",
+    "get_alert_policy",
+    "list_alerts",
+    "get_alert",
+    "list_dashboards",
+    "get_dashboard",
 ]

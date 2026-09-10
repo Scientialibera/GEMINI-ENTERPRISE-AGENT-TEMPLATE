@@ -41,14 +41,12 @@ The runtime still uses Agent Identity for its own platform needs, such as readin
 configuration. Do not grant that identity access to the target service to work around
 a failed delegated request. Service access belongs to the consenting user in this design.
 
-Known limitation: `auth/delegated.py::read_session_token` accepts the sole session-state
-value when the configured authorization key is absent. This legacy fallback does not
-validate the key or token type. Reusing the helper does not prove strict token routing.
-Before calling a new integration production-ready, add regression coverage for a
-mismatched single-entry state and resolve this ambiguity explicitly, checking existing
-Gemini Enterprise behavior. Do not copy the fallback into a new agent or hide the
-problem by inserting an arbitrary state value. This documentation review has not
-changed that runtime behavior.
+`auth/delegated.py::read_session_token` matches a known authorization ID exactly, so a
+session carrying only another agent's authorization fails closed rather than yielding
+that agent's token. The single-entry fallback remains only for the legacy case where no
+authorization ID is known. Keep regression coverage for a mismatched single-entry state
+when adding an integration, and confirm the isolation against real Gemini Enterprise
+sessions with two accounts: unit tests use fake tokens and cannot prove it.
 
 ## Add the package
 
@@ -80,10 +78,12 @@ names and environment keys. Add the client ID to `OAUTH_CLIENTS` as
 client ID override. Follow the root README for redirect URIs, consent setup and the
 per-agent Secret Manager secret. Never commit client secrets or token files.
 
-Check shell overrides as well as `dev/.env.dev` before releasing. In particular,
-`MCP_SERVER_URL` is forwarded to remote agents: a leftover BigQuery endpoint overrides
-the new agent's default. Check authorization, runtime and parameter overrides too.
-Do not reuse another agent's authorization just because its ID is already configured.
+Declare the endpoint in the spec's `runtime_env` as `MCP_SERVER_URL`, so it is
+versioned and no other agent's value can retarget it. Check shell overrides as well as
+`dev/.env.dev` before releasing: setting that name in the environment overrides every
+agent released while it is set. Check authorization, runtime and parameter overrides
+too. Do not reuse another agent's authorization just because its ID is already
+configured.
 
 `ensure_authorization` creates missing authorizations but does not reconcile existing
 ones. Editing `delegated_oauth_scopes` does not update an existing authorization or

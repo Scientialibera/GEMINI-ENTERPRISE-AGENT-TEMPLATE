@@ -98,6 +98,29 @@ For a new service, follow the [delegated MCP guide](../docs/adding-delegated-mcp
 Step 4 is optional when the project and bucket already exist, because
 `release_dev.py` runs the same preflight itself.
 
+Step 3 includes the consent screen's **Data Access** scope list and, for an app in
+*Testing*, its **Audience → Test users**. Enable the target service's API before
+editing scopes, or the scope will not appear in the picker. Some organisations require
+an administrator to allow the OAuth client or its scopes; see
+[service scopes may need an administrator](../README.md#service-scopes-may-need-an-administrator).
+
+### Running a step script directly
+
+`release_dev.py` and `run_local.py` run as files. The step scripts under `deploy/`,
+`register/`, `iam/` and `config/` are imported by it as modules, and one of them must
+be run the same way: executing `register/register_agent.py` directly puts
+`dev/register/` first on `sys.path`, where its own `http.py` shadows the standard
+library's `http` package and `google.auth` fails to import. Run it as a module from the
+repository root:
+
+~~~bash
+uv run --group dev python -c "import sys; sys.path.insert(0,'dev'); \
+from register.register_agent import main; \
+sys.argv=['register_agent.py','--agent','<name>']; main()"
+~~~
+
+Or simply use `release_dev.py`, which imports it correctly.
+
 To ship a change to one agent, only step 5 is needed:
 
 ~~~bash
@@ -168,6 +191,13 @@ An empty staging location uses GOOGLE_CLOUD_LOCATION.
 The CLI account needs permission for enabled setup operations. Python clients use ADC
 for Parameter Manager and the fixture. Bootstrap reuses existing resources without
 assigning IAM or changing billing on an existing project.
+
+These are two different identities, and they are granted separately. A deployment can
+succeed through ADC while `gcloud parametermanager parameters list` returns
+`PERMISSION_DENIED` for the CLI account, which reads as a broken deployment but is only
+a missing grant on the account running gcloud. To inspect a parameter the way the
+runtime does, read it through ADC rather than the CLI, or grant the CLI account
+`roles/parametermanager.parameterViewer`.
 
 Use the platform stack in infrastructure/ for shared platform resources and baseline IAM.
 Review its grants before deploying an agent with new resource-access requirements.

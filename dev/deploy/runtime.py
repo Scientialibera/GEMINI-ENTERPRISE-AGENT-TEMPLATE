@@ -53,5 +53,5 @@ def deployment_config(
         "extra_packages": list(extra_packages),
         "staging_bucket": staging_bucket,
         "gcs_dir_name": staging_prefix(spec),
-        "env_vars": runtime_env(),
+        "env_vars": runtime_env(spec),
     }

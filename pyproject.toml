@@ -38,6 +38,7 @@ pythonpath = [
   "agents/basic_assistant/src",
   "agents/auth_reference_agent/src",
   "agents/bigquery_mcp_agent/src",
+  "agents/monitoring_mcp_agent/src",
   "agents/recipe_card_agent/src",
   "workflows/recipe_card_workflow/src",
 ]

@@ -26,3 +26,9 @@ def test_bigquery_mcp_agent_imports(monkeypatch):
     _base_env(monkeypatch)
     module = importlib.import_module("bigquery_mcp_agent.agent")
     assert module.root_agent.name == "bigquery_mcp_agent"
+
+
+def test_monitoring_mcp_agent_imports(monkeypatch):
+    _base_env(monkeypatch)
+    module = importlib.import_module("monitoring_mcp_agent.agent")
+    assert module.root_agent.name == "monitoring_mcp_agent"
