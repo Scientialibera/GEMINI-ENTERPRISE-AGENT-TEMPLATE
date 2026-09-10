@@ -20,6 +20,34 @@ Do not copy an administrator role from a quickstart when narrower permissions wo
 Some MCP guides list scopes that include writes even for read-oriented tools.
 Document that distinction instead of inventing an unsupported read-only scope.
 
+### Widening an allowlist
+
+The read-only allowlists here are decisions, not defaults. `BIGQUERY_READONLY_TOOLS`
+excludes `execute_sql` deliberately, so adding a write-capable tool is a reviewable
+change rather than a one-line edit. Adding one to an existing agent means all of:
+
+1. **The name stops being true.** A write tool inside `BIGQUERY_READONLY_TOOLS`, reached
+   through `bigquery_readonly_toolset`, misleads every later reader. Add a separate
+   list and factory instead of widening the read-only pair.
+2. **A test blocks it, on purpose.** `test_validation.py` asserts `execute_sql` is absent
+   from the list. Change that assertion consciously and say why in the commit; do not
+   delete the guard to make a new tool pass.
+3. **Re-examine the scope.** The BigQuery agents already request the read-write
+   `https://www.googleapis.com/auth/bigquery` scope, so a write tool may need no scope
+   change — which is exactly why the check is easy to skip. Confirm the scope actually
+   covers the new tool, and that `test_oauth_scopes_cover_only_delegated_services` still
+   passes for the right reason.
+4. **The prompt forbids it.** Each MCP agent's `prompt.md` tells the model the tools are
+   read-only and to decline modification requests. A tool the prompt disowns will not be
+   called. Update the prompt in the same change, or the new tool is dead weight.
+
+Weigh what the tool grants before any of that. A delegated tool runs as the signed-in
+user, so `execute_sql` permits exactly what that person could already do in the console:
+harmless for an analyst with read-only IAM, and a way to drop a production table for
+someone with write access. The allowlist is the only limit that does not depend on who
+happens to be signed in. Prefer a separate agent with its own authorization and prompt
+over widening one that users already treat as read-only.
+
 Reference sources:
 
 - [Google MCP authentication](https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers)
