@@ -1,7 +1,6 @@
-from recipe_cards.discover import list_folders, retrieve
-from recipe_cards.images import generate_recipe_images
-from recipe_cards.publish import render_recipe_card
-
+from .card_browsing import list_folders, retrieve
+from .card_publishing import render_recipe_card
+from .recipe_images import generate_recipe_images
 from .runtime_config_status import report_runtime_config
 
 __all__ = [
