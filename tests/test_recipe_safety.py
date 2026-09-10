@@ -36,6 +36,8 @@ def png():
         {**RECIPE, "ingredients": []},
         {**RECIPE, "hero_image_path": "C:/private/image.png"},
         {**RECIPE, "hero_image_path": "https://example.com/image.png"},
+        {**RECIPE, "hero_image_path": "gs://other-bucket/image.png"},
+        {**RECIPE, "hero_image_path": "../../private/image.png"},
         {**RECIPE, "steps": RECIPE["steps"] * 25},
         {**RECIPE, "unexpected": "value"},
     ],
@@ -46,18 +48,25 @@ def test_recipe_schema_rejects_invalid_payload(payload):
 
 
 def test_legacy_image_aliases_are_normalized():
-    result = load_recipes({**RECIPE, "heroImagePath": "gs://output/soup/hero.png"})
-    assert result["recipes"][0]["hero_image_path"] == "gs://output/soup/hero.png"
+    result = load_recipes({**RECIPE, "heroImagePath": "soup/run-1/images/hero.png"})
+    assert result["recipes"][0]["hero_image_path"] == "soup/run-1/images/hero.png"
 
 
-def test_unregistered_image_rejected_before_download(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "path",
+    ["gs://private/secret.png", "../../private/secret.png", "/etc/passwd"],
+)
+def test_image_outside_the_card_store_rejected_before_download(monkeypatch, tmp_path, path):
+    """A payload can only name assets inside the use-case root.
+
+    Authorization is structural: each path is rebuilt from that root, so an
+    absolute location or a traversal cannot resolve at all.
+    """
     download = Mock()
     monkeypatch.setattr(assets, "download_bytes", download)
     with (
-        pytest.raises(ValueError, match="not generated"),
-        assets.asset_context(
-            {"hero_image_path": "gs://private/secret.png"}, "test", str(tmp_path), set()
-        ),
+        pytest.raises(ValueError),
+        assets.asset_context({"hero_image_path": path}, "test", str(tmp_path), "test-bucket"),
     ):
         pytest.fail("Unauthorized image accepted")
     download.assert_not_called()
@@ -70,12 +79,12 @@ def test_concurrent_asset_contexts_remain_isolated(monkeypatch, tmp_path):
     def render(index):
         directory = tmp_path / str(index)
         directory.mkdir()
-        uri = f"gs://output/run-{index}/hero.png"
-        with assets.asset_context({"hero_image_path": uri}, "test", str(directory), {uri}):
+        uri = f"soup/run-{index}/images/hero.png"
+        with assets.asset_context({"hero_image_path": uri}, "test", str(directory), "test-bucket"):
             before = assets.resolve(uri)
             barrier.wait(timeout=10)
             assert before == assets.resolve(uri)
-            assert assets.resolve(f"gs://output/run-{1 - index}/hero.png") == ""
+            assert assets.resolve(f"soup/run-{1 - index}/images/hero.png") == ""
         assert assets.CURRENT_ASSETS.get() is None
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -84,10 +93,10 @@ def test_concurrent_asset_contexts_remain_isolated(monkeypatch, tmp_path):
 
 def test_failed_download_resets_asset_context(monkeypatch, tmp_path):
     monkeypatch.setattr(assets, "download_bytes", Mock(side_effect=ValueError("too large")))
-    uri = "gs://output/hero.png"
+    uri = "soup/run-1/images/hero.png"
     with (
         pytest.raises(ValueError, match="too large"),
-        assets.asset_context({"hero_image_path": uri}, "test", str(tmp_path), {uri}),
+        assets.asset_context({"hero_image_path": uri}, "test", str(tmp_path), "test-bucket"),
     ):
         pytest.fail("Download unexpectedly succeeded")
     assert assets.CURRENT_ASSETS.get() is None
@@ -201,7 +210,13 @@ def test_generated_assets_are_owned_by_session(monkeypatch):
     monkeypatch.setattr(publish, "render_deck", render)
     monkeypatch.setattr(publish, "upload_bytes", Mock(return_value="gs://output/deck.pptx"))
     publish.render_recipe_card(json.dumps(recipe), context, result["run_id"])
-    assert render.call_args.kwargs["allowed_uris"] == {result["images"]["hero"]}
+    # Generation hands back a relative path, and that is what the payload
+    # carries: the model never sees or writes a bucket name.
+    hero = result["images"]["hero"]
+    assert not hero.startswith("gs://")
+    assert render.call_args.args[0]["recipes"][0]["hero_image_path"] == hero
+    # The bucket reaches the renderer as configuration, not through the payload.
+    assert render.call_args.kwargs["bucket"] == publish.OUTPUT_BUCKET
 
 
 def test_bounded_download_reads_only_limit_plus_one(monkeypatch):
@@ -218,9 +233,9 @@ def test_bounded_download_reads_only_limit_plus_one(monkeypatch):
 
 def test_authorized_image_is_embedded_in_deck(monkeypatch):
     monkeypatch.setattr(assets, "download_bytes", lambda *args, **kwargs: png())
-    uri = "gs://output/soup/run/images/hero.png"
+    uri = "soup/run/images/hero.png"
     recipe = {**RECIPE, "hero_image_path": uri, "decorative_image_path": uri}
-    deck = Presentation(BytesIO(pages.render_deck(recipe, "test", allowed_uris={uri})))
+    deck = Presentation(BytesIO(pages.render_deck(recipe, "test", bucket="test-bucket")))
     assert any(shape.shape_type == 13 for slide in deck.slides for shape in slide.shapes)
     assert assets.CURRENT_ASSETS.get() is None
 

@@ -115,16 +115,20 @@ def generate_recipe_images(
     for image in images:
         if image.mime_type not in IMAGE_EXTENSIONS:
             raise ValueError("Unsupported generated image type.")
-        uri = upload_bytes(
+        object_name = _object_name(slug, run_id, image.name, IMAGE_EXTENSIONS[image.mime_type])
+        upload_bytes(
             PROJECT_ID,
             OUTPUT_BUCKET,
-            _object_name(slug, run_id, image.name, IMAGE_EXTENSIONS[image.mime_type]),
+            object_name,
             image.data,
             image.mime_type,
             create_only=True,
         )
-        uris[image.name] = uri
-        existing[safe_slug(image.name)] = uri
+        # Relative to the card store, which is what a recipe's image fields
+        # take. The model never handles a bucket name or an absolute URI.
+        relative = object_name.removeprefix(f"{USE_CASE_PREFIX}/")
+        uris[image.name] = relative
+        existing[safe_slug(image.name)] = relative
         save_run(tool_context, run_id, {**run, "images": existing})
     return {
         "bucket": OUTPUT_BUCKET,

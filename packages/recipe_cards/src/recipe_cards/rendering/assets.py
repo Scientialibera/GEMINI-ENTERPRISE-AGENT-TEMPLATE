@@ -13,6 +13,8 @@ from typing import Any
 from gemini_shared.connectors.cloud_storage import download_bytes
 from PIL import Image
 
+from ..config import resolve_relative
+
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_TOTAL_BYTES = 64 * 1024 * 1024
 MAX_IMAGE_PIXELS = 4_194_304
@@ -30,13 +32,20 @@ CURRENT_ASSETS: ContextVar[RenderAssets | None] = ContextVar("recipe_assets", de
 
 
 def image_uris(data: Any) -> set[str]:
-    """Collect canonical image fields; reject local paths."""
+    """Collect canonical image fields as relative paths.
+
+    A recipe names images the way a listing tool returned them, relative to the
+    use-case root. Nothing here accepts a bucket, a URL or a local path, so the
+    payload cannot point the renderer at an object outside that root.
+    """
     found: set[str] = set()
     if isinstance(data, dict):
         for key, value in data.items():
             if key.endswith(("image_path", "ImagePath")) and value:
-                if not isinstance(value, str) or not value.startswith("gs://"):
-                    raise ValueError("Recipe images must be authorized Cloud Storage assets.")
+                if not isinstance(value, str):
+                    raise ValueError("Recipe images must be relative asset paths.")
+                # Raises on anything that is not an ordinary relative path.
+                resolve_relative(value)
                 found.add(value)
             else:
                 found.update(image_uris(value))
@@ -55,18 +64,23 @@ def resolve(path: Any) -> str:
 
 @contextmanager
 def asset_context(
-    data: dict[str, Any], project_id: str, directory: str, allowed_uris: set[str]
+    data: dict[str, Any], project_id: str, directory: str, bucket: str
 ) -> Iterator[RenderAssets]:
-    """Authorize the whole request before fetching any image."""
+    """Resolve every image against the use-case root before fetching any.
+
+    Authorization is structural rather than a list check: each path is rebuilt
+    from the fixed root, so a recipe can only reach objects inside it.
+    """
     uris = image_uris(data)
-    if not uris <= allowed_uris:
-        raise ValueError("An image was not generated for this session's recipe run.")
     assets = RenderAssets(directory)
     token = CURRENT_ASSETS.set(assets)
     try:
         total = 0
         for uri in sorted(uris):
-            content = download_bytes(project_id, uri, max_bytes=MAX_IMAGE_BYTES)
+            object_name = resolve_relative(uri)
+            content = download_bytes(
+                project_id, f"gs://{bucket}/{object_name}", max_bytes=MAX_IMAGE_BYTES
+            )
             total += len(content)
             if total > MAX_TOTAL_BYTES:
                 raise ValueError("Recipe images exceed the 64 MiB render limit.")

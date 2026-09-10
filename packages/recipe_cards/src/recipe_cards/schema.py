@@ -12,7 +12,11 @@ MAX_IMAGES_PER_BATCH = 24
 MAX_IMAGES_PER_RUN = 48
 Text = Annotated[str, StringConstraints(max_length=1200)]
 ShortText = Annotated[str, StringConstraints(max_length=160)]
-ImagePath = Annotated[str, StringConstraints(max_length=1024, pattern=r"^(gs://[^/]+/.+)?$")]
+# Relative to the use-case root, exactly as a listing tool returned it. A
+# bucket, a URL or a traversal segment is rejected before anything is fetched.
+_SEGMENT = r"[A-Za-z0-9][A-Za-z0-9._-]*"
+RELATIVE_ASSET_PATH = rf"^({_SEGMENT}(/{_SEGMENT})*)?$"
+ImagePath = Annotated[str, StringConstraints(max_length=1024, pattern=RELATIVE_ASSET_PATH)]
 
 
 class InputModel(BaseModel):

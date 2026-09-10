@@ -13,11 +13,11 @@ from google.adk.agents import Agent
 
 from .config import BOOTSTRAP
 from .tools import (
-    find_recipe_runs,
     generate_recipe_images,
-    list_recipe_cards,
+    list_folders,
     render_recipe_card,
     report_runtime_config,
+    retrieve,
 )
 
 root_agent = Agent(
@@ -32,8 +32,8 @@ root_agent = Agent(
     before_model_callback=apply_runtime_model,
     tools=[
         report_runtime_config,
-        list_recipe_cards,
-        find_recipe_runs,
+        list_folders,
+        retrieve,
         generate_recipe_images,
         render_recipe_card,
     ],

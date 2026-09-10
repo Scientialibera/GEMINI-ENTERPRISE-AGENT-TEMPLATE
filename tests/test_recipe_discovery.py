@@ -1,4 +1,9 @@
-"""Finding published cards, reusing their photography, and the dish fence."""
+"""Browsing published cards by relative path, and the root that fences them.
+
+The model never handles a bucket name or an absolute URI: a listing hands it
+relative paths and every path is rebuilt from the fixed use-case root. These
+tests cover that structural guarantee rather than an allowlist comparison.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +15,7 @@ from unittest.mock import Mock
 
 import pytest
 from recipe_cards import discover
-from recipe_cards.config import USE_CASE_PREFIX
+from recipe_cards.config import USE_CASE_PREFIX, resolve_relative
 
 DEV = Path(__file__).resolve().parents[1] / "dev"
 sys.path.insert(0, str(DEV))
@@ -20,6 +25,7 @@ sys.path.remove(str(DEV))
 BUCKET = "test-bucket"
 SLUG = "classic-beef-chili"
 RUN = "20260910-120000-abc"
+FOLDER = f"{SLUG}/{RUN}"
 
 
 @pytest.fixture(autouse=True)
@@ -28,139 +34,145 @@ def bucket(monkeypatch):
     monkeypatch.setattr(discover, "PROJECT_ID", "test-project")
 
 
-def _objects(*names: str) -> list[str]:
-    return [f"{USE_CASE_PREFIX}/{SLUG}/{name}" for name in names]
-
-
 def test_missing_bucket_fails_rather_than_listing_nothing(monkeypatch):
     """An unset bucket is a configuration fault, not an empty catalogue."""
     monkeypatch.setattr(discover, "OUTPUT_BUCKET", "")
     with pytest.raises(RuntimeError, match="RECIPE_CARD_BUCKET"):
-        discover.list_recipe_cards()
+        discover.list_folders()
 
 
-def test_dishes_are_listed_from_the_use_case_prefix(monkeypatch):
-    """Only this use case's dishes, named without their prefix."""
-    listing = Mock(
-        return_value=([], [f"{USE_CASE_PREFIX}/{SLUG}/", f"{USE_CASE_PREFIX}/tacos/"], False)
-    )
-    monkeypatch.setattr(discover, "list_objects", listing)
+def test_folders_are_relative_and_newest_first(monkeypatch):
+    """Paths carry no bucket, and a dish's newest run comes first."""
+    older = f"{USE_CASE_PREFIX}/{SLUG}/20260901-090000-zzz/"
+    calls = [
+        ([], [f"{USE_CASE_PREFIX}/{SLUG}/"], False),
+        ([], [f"{USE_CASE_PREFIX}/{SLUG}/{RUN}/", older], False),
+    ]
+    monkeypatch.setattr(discover, "list_objects", Mock(side_effect=calls))
 
-    result = discover.list_recipe_cards()
+    result = discover.list_folders()
 
-    assert result["dishes"] == [SLUG, "tacos"]
-    assert result["truncated"] is False
-    # A delimiter keeps this one metadata call instead of walking every object.
-    assert listing.call_args.kwargs["delimiter"] == "/"
-    assert listing.call_args.args[2] == f"{USE_CASE_PREFIX}/"
+    assert [folder["path"] for folder in result["folders"]] == [
+        FOLDER,
+        f"{SLUG}/20260901-090000-zzz",
+    ]
+    assert all(folder["dish"] == SLUG for folder in result["folders"])
+    # Nothing in the response exposes the bucket.
+    assert BUCKET not in str(result)
 
 
 def test_truncation_is_reported_not_hidden(monkeypatch):
-    """A partial list must not read as the complete catalogue."""
+    """A partial listing must not read as the complete catalogue."""
     monkeypatch.setattr(discover, "list_objects", Mock(return_value=([], [], True)))
-    assert discover.list_recipe_cards()["truncated"] is True
+    assert discover.list_folders()["truncated"] is True
 
 
-def test_runs_are_grouped_newest_first_with_decks_and_counts(monkeypatch):
-    older = "20260901-090000-zzz"
-    names = _objects(
-        f"{RUN}/images/hero.png",
-        f"{RUN}/images/step-1.png",
-        f"{RUN}/20260910-120500-recipe-cards.pptx",
-        f"{older}/images/hero.png",
-    )
-    monkeypatch.setattr(discover, "list_objects", Mock(return_value=(names, [], False)))
-    context = SimpleNamespace(state={})
-
-    result = discover.find_recipe_runs(SLUG, context)
-
-    assert [run["run_id"] for run in result["runs"]] == [RUN, older]
-    newest = result["runs"][0]
-    assert newest["image_count"] == 2
-    assert newest["decks"] == [
-        f"{discover.CONSOLE_URL_PREFIX}/{BUCKET}/{USE_CASE_PREFIX}/{SLUG}/{RUN}"
-        "/20260910-120500-recipe-cards.pptx"
+def test_retrieve_returns_relative_paths_and_a_deck_link(monkeypatch):
+    names = [
+        f"{USE_CASE_PREFIX}/{FOLDER}/images/hero.png",
+        f"{USE_CASE_PREFIX}/{FOLDER}/images/step-1.png",
+        f"{USE_CASE_PREFIX}/{FOLDER}/20260910-120500-recipe-cards.pptx",
     ]
-    assert result["reusable_image_count"] == 3
-
-
-def test_found_images_become_renderable_for_that_dish(monkeypatch):
-    """Rediscovered photography must pass render_recipe_card's fence.
-
-    The renderer only accepts URIs registered for the run, so a rediscovered
-    card would otherwise be listed but impossible to rebuild.
-    """
-    names = _objects(f"{RUN}/images/hero.png")
     monkeypatch.setattr(discover, "list_objects", Mock(return_value=(names, [], False)))
-    context = SimpleNamespace(state={})
 
-    result = discover.find_recipe_runs(SLUG, context)
+    result = discover.retrieve([FOLDER], SimpleNamespace(state={}))
 
-    assert result["reuse_run_id"] == SLUG
-    stored = context.state["recipe_card_runs"][SLUG]
-    assert stored["slug"] == SLUG
-    assert stored["reusable_uris"] == [
-        f"gs://{BUCKET}/{USE_CASE_PREFIX}/{SLUG}/{RUN}/images/hero.png"
+    assert result["image_count"] == 2
+    assert [image["path"] for image in result["images"]] == [
+        f"{FOLDER}/images/hero.png",
+        f"{FOLDER}/images/step-1.png",
     ]
+    # A deck is a link, never bytes: its content is useless to a model.
+    assert result["decks"][0]["url"].startswith("https://storage.cloud.google.com/")
+    assert "preview" not in result
 
 
-def test_a_dish_with_no_runs_registers_nothing(monkeypatch):
-    """Nothing found means nothing becomes renderable."""
-    monkeypatch.setattr(discover, "list_objects", Mock(return_value=([], [], False)))
-    context = SimpleNamespace(state={})
-
-    result = discover.find_recipe_runs("never-made", context)
-
-    assert result["run_count"] == 0
-    assert result["reuse_run_id"] == ""
-    assert context.state == {}
-
-
-def test_lookup_is_scoped_to_the_requested_dish(monkeypatch):
-    """Another dish's images must never be pulled into this card."""
+def test_retrieve_accepts_several_folders(monkeypatch):
     listing = Mock(return_value=([], [], False))
     monkeypatch.setattr(discover, "list_objects", listing)
 
-    discover.find_recipe_runs("Classic Beef Chili!!", SimpleNamespace(state={}))
+    discover.retrieve([FOLDER, "tacos-al-pastor/20260908-x"], SimpleNamespace(state={}))
 
-    # The slug is normalized and the query is fenced to that dish alone.
-    assert listing.call_args.args[2] == f"{USE_CASE_PREFIX}/{SLUG}/"
+    assert [call.args[2] for call in listing.call_args_list] == [
+        f"{USE_CASE_PREFIX}/{FOLDER}/",
+        f"{USE_CASE_PREFIX}/tacos-al-pastor/20260908-x/",
+    ]
 
 
-def test_render_accepts_reused_images_but_not_another_dishs(monkeypatch):
-    """The fence is the dish: its own runs are reusable, others are not."""
-    from recipe_cards import publish
+def test_retrieve_needs_at_least_one_folder():
+    with pytest.raises(ValueError, match="at least one folder"):
+        discover.retrieve([], SimpleNamespace(state={}))
 
-    monkeypatch.setattr(publish, "OUTPUT_BUCKET", BUCKET)
-    captured = {}
 
-    def render(data, project, allowed_uris):
-        captured["allowed"] = allowed_uris
-        return b"deck"
+@pytest.mark.parametrize(
+    "path",
+    [
+        "../secrets/key.png",
+        "chili/../../other/hero.png",
+        "/absolute/hero.png",
+        "gs://other-bucket/hero.png",
+        "https://example.com/hero.png",
+        "",
+    ],
+)
+def test_paths_cannot_escape_the_use_case_root(path):
+    """Resolution is what authorizes an asset, so traversal must fail closed."""
+    with pytest.raises(ValueError):
+        resolve_relative(path)
 
-    monkeypatch.setattr(publish, "render_deck", render)
-    monkeypatch.setattr(publish, "upload_bytes", Mock(return_value=f"gs://{BUCKET}/deck.pptx"))
-    monkeypatch.setattr(publish, "load_recipes", lambda _: {"recipes": [{"slug": SLUG}]})
 
-    reused = f"gs://{BUCKET}/{USE_CASE_PREFIX}/{SLUG}/{RUN}/images/hero.png"
-    foreign = f"gs://{BUCKET}/{USE_CASE_PREFIX}/tacos/{RUN}/images/hero.png"
+def test_resolution_rebuilds_the_path_under_the_root():
+    assert resolve_relative(FOLDER) == f"{USE_CASE_PREFIX}/{FOLDER}"
+    # A trailing slash is tolerated, since a folder reads naturally with one.
+    assert resolve_relative(f"{FOLDER}/") == f"{USE_CASE_PREFIX}/{FOLDER}"
+    # A leading slash is not: it was meant to be absolute, and quietly
+    # reinterpreting it under the root would substitute a different object.
+    with pytest.raises(ValueError, match="relative to the card store"):
+        resolve_relative(f"/{FOLDER}")
+
+
+def test_a_traversing_folder_is_rejected_before_listing(monkeypatch):
+    listing = Mock()
+    monkeypatch.setattr(discover, "list_objects", listing)
+    with pytest.raises(ValueError):
+        discover.retrieve(["../../etc"], SimpleNamespace(state={}))
+    listing.assert_not_called()
+
+
+def test_preview_loads_one_image_the_model_can_see(monkeypatch):
+    names = [f"{USE_CASE_PREFIX}/{FOLDER}/images/hero.png"]
+    monkeypatch.setattr(discover, "list_objects", Mock(return_value=(names, [], False)))
+    monkeypatch.setattr(discover, "download_bytes", Mock(return_value=b"\x89PNG"))
+    saved = {}
+
     context = SimpleNamespace(
-        state={"recipe_card_runs": {SLUG: {"slug": SLUG, "images": {}, "reusable_uris": [reused]}}}
+        state={},
+        save_artifact=lambda filename, artifact: saved.update(
+            {"filename": filename, "mime": artifact.inline_data.mime_type}
+        ),
     )
+    result = discover.retrieve([FOLDER], context, preview_image=f"{FOLDER}/images/hero.png")
 
-    publish.render_recipe_card("{}", context, SLUG)
-
-    assert reused in captured["allowed"]
-    assert foreign not in captured["allowed"]
+    assert result["preview"] == saved["filename"]
+    assert saved["mime"] == "image/png"
 
 
-def test_deck_and_images_share_the_use_case_prefix():
-    """Both artefacts must land under the same dish prefix to be discoverable."""
+def test_only_an_image_can_be_previewed(monkeypatch):
+    monkeypatch.setattr(discover, "list_objects", Mock(return_value=([], [], False)))
+    download = Mock()
+    monkeypatch.setattr(discover, "download_bytes", download)
+    with pytest.raises(ValueError, match="Only an image"):
+        discover.retrieve([FOLDER], SimpleNamespace(state={}), preview_image=f"{FOLDER}/deck.pptx")
+    download.assert_not_called()
+
+
+def test_generated_images_are_returned_as_relative_paths():
+    """What generation returns must be what a recipe field accepts."""
     from recipe_cards.images import _object_name
 
     name = _object_name(SLUG, RUN, "hero")
     assert name.startswith(f"{USE_CASE_PREFIX}/{SLUG}/{RUN}/images/")
-    assert discover.dish_prefix(SLUG) == f"{USE_CASE_PREFIX}/{SLUG}/"
+    assert resolve_relative(name.removeprefix(f"{USE_CASE_PREFIX}/")) == name
 
 
 @pytest.mark.parametrize("entry", ["recipe_card_agent", "recipe_card_workflow"])
@@ -170,11 +182,11 @@ def test_both_entry_points_declare_the_same_prefix(entry):
     assert dict(spec.runtime_env)["RECIPE_CARD_PREFIX"] == "recipe-cards"
 
 
-def test_only_the_agent_gets_discovery_tools():
-    """A fixed pipeline cannot ask whether to reuse, so it has no discovery."""
+def test_only_the_agent_gets_browsing_tools():
+    """A fixed pipeline cannot ask whether to reuse, so it has no browsing."""
     agent = importlib.import_module("recipe_card_agent.agent")
     names = {getattr(tool, "__name__", "") for tool in agent.root_agent.tools if callable(tool)}
-    assert {"list_recipe_cards", "find_recipe_runs"} <= names
+    assert {"list_folders", "retrieve"} <= names
 
     workflow = importlib.import_module("recipe_card_workflow.workflow")
     staged = {
@@ -183,4 +195,4 @@ def test_only_the_agent_gets_discovery_tools():
         for tool in (stage.tools or [])
         if callable(tool)
     }
-    assert not ({"list_recipe_cards", "find_recipe_runs"} & staged)
+    assert not ({"list_folders", "retrieve"} & staged)

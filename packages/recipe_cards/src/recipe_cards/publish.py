@@ -27,8 +27,8 @@ def render_recipe_card(
 ) -> dict[str, object]:
     """Render recipe cards from structured JSON and store the PowerPoint deck.
 
-    Call this once the images exist, with their gs:// URIs already placed in
-    the JSON. The layout is fixed by a template, so supply content and image
+    Call this once the images exist, with their relative paths already placed
+    in the JSON. The layout is fixed by a template, so supply content and image
     locations only.
 
     Expected shape, as `{"recipes": [ ... ]}` or a single recipe object:
@@ -40,8 +40,9 @@ def render_recipe_card(
       hero_image_path, footer_image_path, decorative_image_path,
       variations_image_path.
 
-    Any image field may be a gs:// URI returned by generate_recipe_images. A
-    missing image renders as a placeholder rather than failing the deck.
+    Every image field takes a path exactly as generate_recipe_images or
+    retrieve returned it, relative to the card store. A missing image renders
+    as a placeholder rather than failing the deck.
 
     When a step's text does not fit its panel this returns
     `{"status": "needs_correction", ...}` naming the field and the edit to make,
@@ -71,11 +72,6 @@ def render_recipe_card(
     if run["slug"] != slug:
         raise ValueError("The run belongs to a different recipe.")
     run_id = run_id or new_run_id()
-    # A rehydrated run may reuse photography from an earlier run of this same
-    # dish, so anything under the dish's own prefix is renderable. The fence
-    # stays at the dish: a recipe payload must not pull in another dish's
-    # images, or arbitrary objects that happen to share the bucket.
-    allowed = set(run["images"].values()) | set(run.get("reusable_uris", ()))
 
     # Text that does not fit is the model's to fix, so it is answered rather
     # than raised: a raised error reaches the model as a generic failure with
@@ -87,7 +83,7 @@ def render_recipe_card(
     attempts = int(run.get("render_attempts", 0)) + 1
     save_run(tool_context, run_id, run)
     try:
-        deck = render_deck(data, PROJECT_ID, allowed_uris=allowed)
+        deck = render_deck(data, PROJECT_ID, bucket=OUTPUT_BUCKET)
     except ContentTooLong as too_long:
         run["render_attempts"] = attempts
         result = {**too_long.as_tool_result(attempts, max_attempts), "run_id": run_id}
