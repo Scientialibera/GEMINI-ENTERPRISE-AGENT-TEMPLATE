@@ -8,7 +8,7 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.plugins.base_plugin import BasePlugin
 from google.genai import types
 
-from .config.runtime_config import get_runtime_config
+from ..config.runtime_config import get_runtime_config
 
 
 class RuntimeLimitsPlugin(BasePlugin):

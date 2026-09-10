@@ -16,7 +16,6 @@ from .tools import (
     generate_recipe_images,
     list_folders,
     render_recipe_card,
-    report_runtime_config,
     retrieve,
 )
 
@@ -31,7 +30,6 @@ root_agent = Agent(
     instruction=runtime_instruction,
     before_model_callback=apply_runtime_model,
     tools=[
-        report_runtime_config,
         list_folders,
         retrieve,
         generate_recipe_images,

@@ -7,8 +7,8 @@ from google.adk.agents import BaseAgent
 from google.adk.models import Gemini
 from vertexai.agent_engines import AdkApp
 
-from .config.bootstrap import BootstrapSettings
-from .limits import RuntimeLimitsPlugin
+from ..config.bootstrap import BootstrapSettings
+from ..limits import RuntimeLimitsPlugin
 
 
 def create_model(settings: BootstrapSettings) -> Gemini:

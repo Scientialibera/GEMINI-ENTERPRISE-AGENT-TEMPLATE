@@ -503,12 +503,22 @@ def test_dev_configured_value_is_stripped(monkeypatch):
     assert not settings.is_missing_or_placeholder("DEV_TEST_VALUE")
 
 
-@pytest.mark.parametrize("agent", ALL_AGENTS)
-def test_config_status_tool_is_shared(agent):
+def test_config_status_tool_is_shared():
+    """Only the reference assistant exposes the runtime status tool.
+
+    It exists to demonstrate reading Parameter Manager settings, so the other
+    agents carry it as noise: a tool offered to the model on every request that
+    has nothing to do with the job they were deployed for.
+    """
     from gemini_shared.config.tools import report_runtime_config
 
-    module = importlib.import_module(f"{agent}.tools.runtime_config_status")
+    module = importlib.import_module("basic_assistant.tools.runtime_config_status")
     assert module.report_runtime_config is report_runtime_config
+
+    for agent in ALL_AGENTS:
+        tools = importlib.import_module(f"{agent}.tools")
+        has_status = "report_runtime_config" in getattr(tools, "__all__", ())
+        assert has_status == (agent == "basic_assistant"), agent
 
 
 def test_ensure_bucket_tolerates_a_writer_only_identity(monkeypatch):

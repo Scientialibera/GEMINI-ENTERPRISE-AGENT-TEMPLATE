@@ -383,8 +383,11 @@ AUTH_REFERENCE_AGENT_AGENT_IDENTITY_STORAGE_BUCKET_ROLES=gs://agent-test-bucket=
 Rerun the release or only `dev/iam/apply_agent_identity_iam.py`, then call
 list_storage_objects and check its reported identity and returned objects.
 
-Use report_runtime_config to check the active parameter, revision and model. It returns
-configuration metadata and excludes secrets and prompt text.
+basic_assistant exposes report_runtime_config, which returns the active parameter,
+revision and model as configuration metadata, excluding secrets and prompt text. Only
+that agent carries it: elsewhere it is a tool offered to the model on every request
+that has nothing to do with the job the agent was deployed for. Add it to another agent
+from `gemini_shared.config.tools` when diagnosing its configuration.
 
 The optional BigQuery fixture provides five sample orders. Run config/bootstrap_dev.py to
 prepare it, or use a dataset the test user can already query.
@@ -594,7 +597,9 @@ packages/gemini_shared/src/gemini_shared/
   auth/                      delegated credential provider and token readers
   config/                    bootstrap settings, live cache, callbacks and status tool
   connectors/                shared Google Cloud clients
+  limits/                    request, retry and compaction plugin
   media/                     batched image generation with pacing and retries
+  runtime/                   shared model and application factories
   mcp/mcp_auth/              authenticated Streamable HTTP toolsets
   mcp/mcp_google_cloud/      managed endpoints and BigQuery tool allowlist
 packages/recipe_cards/src/recipe_cards/
@@ -642,7 +647,8 @@ image batch and per-run limits still apply separately. It is not a dollar or tok
 Publish these fields in the existing Parameter Manager JSON. Old versions without
 them use the defaults. A request snapshots the model-call ceiling when it starts;
 later requests see refreshed settings after the cache expires. Attempt limits are
-read when each operation starts. `report_runtime_config` includes both settings.
+read when each operation starts. basic_assistant's `report_runtime_config` includes
+both settings.
 Local equivalents are `MAX_ATTEMPTS` and `MAX_MODEL_CALLS_PER_REQUEST`.
 
 Deploy this code once before expecting live parameter edits to enforce the new limits.
