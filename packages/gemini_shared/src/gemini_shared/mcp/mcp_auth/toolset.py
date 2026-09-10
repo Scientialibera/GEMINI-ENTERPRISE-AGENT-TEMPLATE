@@ -24,7 +24,8 @@ def delegated_mcp_toolset(
     """Return a toolset that calls an MCP server as the signed-in user.
 
     Args:
-        server_url: Streamable HTTP endpoint of the MCP server.
+        server_url: Trusted, operator-configured endpoint receiving the user token.
+            Never accept an endpoint supplied by the model or an end user.
         authorization_id: Gemini Enterprise authorization supplying the token.
         tool_filter: Client-side allowlist of tool names. ADK discards the rest
             before the model sees them. Omit and every server tool is exposed,

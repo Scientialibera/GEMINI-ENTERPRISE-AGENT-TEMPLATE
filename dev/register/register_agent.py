@@ -200,7 +200,7 @@ def _authorization_exists(project_id: str, authorization_id: str) -> bool:
 def ensure_authorization(
     project_id: str, authorization_id: str, agent_name: str, spec: AgentSpec
 ) -> None:
-    """Create the agent's authorization if it is missing."""
+    """Create a missing authorization; leave existing scopes and clients unchanged."""
     if _authorization_exists(project_id, authorization_id):
         print(f"AUTHORIZATION_EXISTS={authorization_id}")
         return

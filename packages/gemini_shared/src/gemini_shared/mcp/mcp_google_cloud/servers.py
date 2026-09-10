@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+# Endpoint constants do not imply a tested integration; verify service docs first.
 BIGQUERY = "https://bigquery.googleapis.com/mcp"
 CLOUD_LOGGING = "https://logging.googleapis.com/mcp"
 CLOUD_MONITORING = "https://monitoring.googleapis.com/mcp"

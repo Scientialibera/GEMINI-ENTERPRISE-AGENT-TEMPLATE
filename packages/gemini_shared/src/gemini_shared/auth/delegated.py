@@ -65,7 +65,11 @@ class GeminiEnterpriseDelegatedAuthProvider(BaseAuthProvider):
 
 
 def read_session_token(state: Mapping[str, Any], authorization_id: str | None) -> str | None:
-    """Read the named authorization token, with a single-entry session fallback."""
+    """Read the named token, or the sole state value for legacy sessions.
+
+    The fallback does not validate the key or value. It is not strict
+    authorization-ID matching; callers must not treat it as such.
+    """
     if authorization_id and authorization_id in state:
         return state[authorization_id]
     if len(state) == 1:

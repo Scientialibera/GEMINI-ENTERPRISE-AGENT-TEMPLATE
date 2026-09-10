@@ -365,7 +365,7 @@ def test_oauth_scopes_cover_only_delegated_services(agent):
     assert spec.delegated_oauth_scopes, f"{agent} takes a user token but requests no scope"
     for scope in registry.IDENTITY_OAUTH_SCOPES:
         assert scope in spec.oauth_scopes
-    # cloud-platform would grant far more than any one tool needs.
+    # Current agents use service-specific scopes; broader scopes need explicit review.
     assert registry.CLOUD_PLATFORM_SCOPE not in spec.delegated_oauth_scopes
 
 

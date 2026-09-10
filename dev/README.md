@@ -90,9 +90,12 @@ scripts can grant that baseline themselves; see below.
 | 4 | Project, staging bucket, optional fixture | `config/bootstrap_dev.py` | Once per developer sandbox |
 | 5 | Package, deploy, IAM, register | `release_dev.py --agent <name>` | Every release |
 
-Steps 2 and 3 have no API and must be done by hand; `register/register_agent.py`
-prints exactly what to create when an OAuth client is missing. Everything else is
-automated. Step 4 is optional when the project and bucket already exist, because
+This repository expects you to provision steps 2 and 3 through the console;
+the release helper does not create them. `register/register_agent.py` prints the
+client setup when credentials are missing. An existing authorization is not updated
+when its registry scopes change; plan that migration and renewed consent explicitly.
+For a new service, follow the [delegated MCP guide](../docs/adding-delegated-mcp-agent.md).
+Step 4 is optional when the project and bucket already exist, because
 `release_dev.py` runs the same preflight itself.
 
 To ship a change to one agent, only step 5 is needed:

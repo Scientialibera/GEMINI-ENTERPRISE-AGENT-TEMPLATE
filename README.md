@@ -573,6 +573,10 @@ publish 100 there to raise that value. No live parameters are changed by a code 
 
 ## Add an agent
 
+For a Google-managed MCP using the signed-in user's OAuth token, follow the
+[delegated MCP contributor guide](docs/adding-delegated-mcp-agent.md). Start from
+`bigquery_mcp_agent` for that case; the steps below describe the general scaffold.
+
 1. Copy agents/basic_assistant/. Rename the package directory, project name in
    pyproject.toml and wheel path. Set a stable agent name in agent.py.
 2. Write prompt.md. Keep instructions specific to the task and available tools.
