@@ -244,3 +244,33 @@ def test_identity_lookup_rejects_wrong_effective_identity(monkeypatch, identity_
     monkeypatch.setattr(agent_iam.vertexai, "Client", Mock(return_value=client))
     with pytest.raises(SystemExit, match="no matching Agent Identity"):
         agent_iam.agent_identity_principal("test-project", RESOURCE_NAME)
+
+
+def test_identity_lookup_accepts_the_unprefixed_form_the_api_returns(monkeypatch):
+    """The API omits the scheme; IAM --member= requires it.
+
+    effective_identity comes back as "agents.global.<domain>/resources/...",
+    without "principal://". Rejecting that shape refused every real runtime and
+    skipped both the IAM grants and registration, so the lookup normalises it
+    and returns the form the grants actually consume.
+    """
+    monkeypatch.setattr(agent_iam, "_project_number", lambda _: "123456789")
+
+    def run(args):
+        if args[:2] == ("projects", "describe"):
+            return SimpleNamespace(stdout="123456789\n")
+        if args[:2] == ("projects", "get-ancestors"):
+            return SimpleNamespace(stdout="project,123456789\n")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(agent_iam, "_run_gcloud", run)
+    bare = PRINCIPAL.replace("org-999", "proj-123456789").removeprefix("principal://")
+    assert not bare.startswith("principal://")
+    client = Mock()
+    client.agent_engines.get.return_value.api_resource.spec = SimpleNamespace(
+        identity_type="AGENT_IDENTITY", effective_identity=bare
+    )
+    monkeypatch.setattr(agent_iam.vertexai, "Client", Mock(return_value=client))
+
+    resolved = agent_iam.agent_identity_principal("test-project", RESOURCE_NAME)
+    assert resolved == f"principal://{bare}"

@@ -30,6 +30,7 @@ ROLE_PATTERN = re.compile(
     r"organizations/[0-9]+/roles/[A-Za-z0-9_.]+)$"
 )
 DISALLOWED_BASIC_ROLES = frozenset({"roles/owner", "roles/editor"})
+PRINCIPAL_SCHEME = "principal://"
 UNSUPPORTED_BUCKET_ROLES = frozenset(
     f"roles/storage.legacyBucket{suffix}" for suffix in ("Reader", "Writer", "Owner")
 )
@@ -185,14 +186,20 @@ def agent_identity_principal(project_id: str, resource_name: str) -> str:
     remote = client.agent_engines.get(name=resource_name)
     spec = remote.api_resource.spec
     identity_type = getattr(spec.identity_type, "value", spec.identity_type)
+    # The API reports effective_identity without the scheme, as
+    # "agents.global.<domain>/resources/...", while IAM --member= requires the
+    # "principal://" form. Normalise on read so the check below and the grants
+    # that consume this value agree on one representation.
     principal = spec.effective_identity or ""
+    if principal and not principal.startswith(PRINCIPAL_SCHEME):
+        principal = f"{PRINCIPAL_SCHEME}{principal}"
     expected_path = (
         f"/resources/aiplatform/projects/{project_number}/locations/{location}"
         f"/reasoningEngines/{engine_id}"
     )
     if (
         identity_type != "AGENT_IDENTITY"
-        or not principal.startswith("principal://agents.global.")
+        or not principal.startswith(f"{PRINCIPAL_SCHEME}agents.global.")
         or not principal.endswith(expected_path)
     ):
         raise SystemExit("The runtime has no matching Agent Identity; no IAM grants were made.")
