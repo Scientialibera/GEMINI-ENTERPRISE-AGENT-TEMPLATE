@@ -529,6 +529,9 @@ assembly. Lists longer than the first ingredient panel continue on additional pa
 including optional variation ingredients. Quantities and ingredient names are never
 silently shortened: text that cannot fit returns a correction request. Reuse its run_id
 when correcting a card; each new run has its own retry budget.
+After three failed render attempts, the tool returns `status: failed` with no deck
+URL. The model can explain the problem without the request ending in an unhandled
+layout exception. Further calls for that run return the same failure without rendering.
 
 ## Add an agent
 

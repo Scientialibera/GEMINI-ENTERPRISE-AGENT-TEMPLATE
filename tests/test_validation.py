@@ -840,9 +840,15 @@ def test_correction_attempts_are_bounded(monkeypatch):
         assert result["status"] == "needs_correction"
         run_id = result["run_id"]
 
-    # The last attempt raises rather than inviting another correction.
-    with pytest.raises(ContentTooLong):
-        publish.render_recipe_card(payload, context, run_id)
+    # Exhaustion is a tool response, not an exception terminating the turn.
+    result = publish.render_recipe_card(payload, context, run_id)
+    assert result["status"] == "failed"
+    assert result["retryable"] is False
+    assert result["attempts_remaining"] == 0
+    assert "deck_url" not in result
+    calls = publish.render_deck.call_count
+    assert publish.render_recipe_card(payload, context, run_id) == result
+    assert publish.render_deck.call_count == calls
 
     # A new recipe run in the same session receives its own correction budget.
     result = publish.render_recipe_card(payload, context)

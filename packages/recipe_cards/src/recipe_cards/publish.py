@@ -74,16 +74,19 @@ def render_recipe_card(
     # than raised: a raised error reaches the model as a generic failure with
     # nothing to act on. Attempts are counted per run so a recipe that
     # cannot be shortened enough stops rather than looping.
+    if run.get("render_failure"):
+        return dict(run["render_failure"])
     attempts = int(run.get("render_attempts", 0)) + 1
     save_run(tool_context, run_id, run)
     try:
         deck = render_deck(data, PROJECT_ID, allowed_uris=set(run["images"].values()))
     except ContentTooLong as too_long:
         run["render_attempts"] = attempts
-        save_run(tool_context, run_id, run)
+        result = {**too_long.as_tool_result(attempts, MAX_CORRECTION_ATTEMPTS), "run_id": run_id}
         if attempts >= MAX_CORRECTION_ATTEMPTS:
-            raise
-        return {**too_long.as_tool_result(attempts, MAX_CORRECTION_ATTEMPTS), "run_id": run_id}
+            run["render_failure"] = result
+        save_run(tool_context, run_id, run)
+        return result
 
     run["render_attempts"] = 0
     save_run(tool_context, run_id, run)

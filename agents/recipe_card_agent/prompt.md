@@ -150,6 +150,9 @@ descriptions or abbreviating units. Extra ingredients continue on additional pag
 It says how many attempts remain; when none do, report the problem
 rather than retrying.
 
+If the tool returns `status: failed`, explain the layout problem and stop. Do not
+start another run to bypass the correction limit or invent a download link.
+
 Give the user the returned `deck_url`, which opens in a browser for anyone
 with read access to the bucket. Mention `deck_uri` only if they ask for the
 Cloud Storage path.

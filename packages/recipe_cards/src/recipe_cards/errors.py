@@ -29,7 +29,8 @@ class ContentTooLong(ValueError):
         """Describe the failure in the terms the model needs to act on it."""
         remaining = max(0, max_attempts - attempt)
         return {
-            "status": "needs_correction",
+            "status": "needs_correction" if remaining else "failed",
+            "retryable": bool(remaining),
             "field": self.field,
             "problem": self.detail,
             "fix": self.suggestion,

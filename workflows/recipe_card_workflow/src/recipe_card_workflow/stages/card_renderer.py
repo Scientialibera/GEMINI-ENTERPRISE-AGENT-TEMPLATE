@@ -44,6 +44,10 @@ descriptions or abbreviating units. Extra ingredients continue on additional pag
 It says how many attempts remain; when none do, report the problem
 rather than retrying.
 
+If the tool returns `status: failed`, return that failure to the user and stop.
+Do not start a new run to bypass the correction limit or invent a download link.
+The success response below applies only when the tool returns a real deck URL.
+
 Then reply with a single JSON object and nothing else:
 
 {{"deck_url": "...", "deck_uri": "...", "run_id": "...", "title": "...",
