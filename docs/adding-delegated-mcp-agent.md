@@ -59,6 +59,11 @@ sessions with two accounts: unit tests use fake tokens and cannot prove it.
 3. Put service-specific tool construction under the agent's `tools/`. Use the shared
    delegated MCP helper with an explicit allowlist and a distinct tool-name prefix.
    Move reusable constants or factories into `gemini_shared/mcp/` only when needed.
+   Declare the endpoint and any other runtime settings in the spec's `runtime_env`.
+   Measure the server's `tools/list` response first: ADK sends each tool's
+   `outputSchema` to the model, and large response schemas can exceed the model's input
+   limit before any tool runs. `ADK_DISABLE_JSON_SCHEMA_FOR_FUNC_DECL=true` sends input
+   schemas only and keeps every tool.
 4. Add an `AgentSpec` in `dev/registry.py`, including the package/import paths,
    `AUTHORIZATION_ID_ENV` in required remote bootstrap settings and service OAuth scopes.
    Preserve the source-level delegated-auth declaration used by registry validation.
