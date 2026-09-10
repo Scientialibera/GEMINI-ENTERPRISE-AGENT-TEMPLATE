@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gemini_shared.config.bootstrap import AUTHORIZATION_ID_ENV
+from gemini_shared.mcp.mcp_google_cloud import BIGQUERY, CLOUD_MONITORING
 from paths import ROOT
 
 ENVIRONMENT_LABEL = "dev"
@@ -22,6 +23,10 @@ BIGQUERY_SCOPE = "https://www.googleapis.com/auth/bigquery"
 CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
 CLOUD_STORAGE_READONLY_SCOPE = "https://www.googleapis.com/auth/devstorage.read_only"
+
+# The Cloud Monitoring MCP guide names the read-write "monitoring" scope; the API's
+# own scope list defines this read-only one, which covers the selected tools.
+CLOUD_MONITORING_READONLY_SCOPE = "https://www.googleapis.com/auth/monitoring.read"
 
 STORAGE_OBJECT_VIEWER = "roles/storage.objectViewer"
 
@@ -72,6 +77,13 @@ class AgentSpec:
     # its tools require. The per-agent environment variables still override.
     agent_identity_project_roles: tuple[str, ...] = ()
     agent_identity_bucket_roles: tuple[BucketRoles, ...] = ()
+    # Runtime environment this entry needs, beyond the shared forwarding list.
+    # Declared here rather than in the environment because RUNTIME_ENV_KEYS is
+    # one shared value per key: a flag left in .env.dev for one agent would be
+    # baked into whichever agent is released next. These are per-entry and
+    # versioned, so a fresh clone deploys with the settings its tools require.
+    # The environment still wins, so a single run can override one.
+    runtime_env: tuple[tuple[str, str], ...] = ()
     # Gemini Enterprise registration metadata, used by register_agent.py.
     registration_description: str = ""
     invocation_description: str = ""
@@ -262,6 +274,9 @@ AGENTS: dict[str, AgentSpec] = {
         required_remote_bootstrap_env=(AUTHORIZATION_ID_ENV,),
         # The MCP server authenticates this same token on every tool call.
         delegated_oauth_scopes=(BIGQUERY_SCOPE,),
+        # The endpoint this agent's token is sent to, declared per entry so no
+        # other agent's value can retarget it.
+        runtime_env=(("MCP_SERVER_URL", BIGQUERY),),
         registration_description=(
             "Explore BigQuery with read-only tools from Google's managed MCP server, "
             "using the signed-in user's delegated credentials."
@@ -271,6 +286,42 @@ AGENTS: dict[str, AgentSpec] = {
             "List my BigQuery datasets using the MCP tools.",
             "Describe the schema of the sample orders table.",
             "Which MCP tools are available to you?",
+        ),
+    ),
+    "monitoring_mcp_agent": AgentSpec(
+        package_name="monitoring-mcp-agent",
+        module="monitoring_mcp_agent.agent",
+        display_name="Monitoring MCP Agent",
+        extra_packages=(
+            "agents/monitoring_mcp_agent/src/monitoring_mcp_agent",
+            "packages/gemini_shared/src/gemini_shared",
+        ),
+        required_remote_bootstrap_env=(AUTHORIZATION_ID_ENV,),
+        # The MCP server authenticates this same token on every tool call. The
+        # selected tools only read, so the authorization asks for the read scope
+        # rather than the read-write one the MCP guide shows.
+        delegated_oauth_scopes=(CLOUD_MONITORING_READONLY_SCOPE,),
+        runtime_env=(
+            # The endpoint this agent's token is sent to, declared per entry so
+            # no other agent's value can retarget it.
+            ("MCP_SERVER_URL", CLOUD_MONITORING),
+            # This server's nine tools publish ~79k tokens of response schemas.
+            # ADK sends those to the model as response_json_schema, which
+            # exceeds its input limit before any tool runs. Inputs only.
+            ("ADK_DISABLE_JSON_SCHEMA_FOR_FUNC_DECL", "true"),
+        ),
+        registration_description=(
+            "Inspect Cloud Monitoring metrics, alerts and dashboards with read-only tools "
+            "from Google's managed MCP server, using the signed-in user's delegated "
+            "credentials."
+        ),
+        invocation_description=(
+            "Read metric time series, alerting policies and dashboards through MCP."
+        ),
+        starter_prompts=(
+            "Which metric types does my project report?",
+            "Are there any alert violations right now? List the last five incidents.",
+            "Show CPU utilization for my VM instances over the last two hours.",
         ),
     ),
 }

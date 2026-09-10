@@ -6,12 +6,14 @@ from .servers import (
     BIGQUERY_SCOPE,
     CLOUD_LOGGING,
     CLOUD_MONITORING,
+    CLOUD_MONITORING_READONLY_SCOPE,
+    CLOUD_MONITORING_READONLY_TOOLS,
     CLOUD_PLATFORM_SCOPE,
     CLOUD_RUN,
     CLOUD_STORAGE,
     COMPUTE_ENGINE,
 )
-from .toolsets import bigquery_readonly_toolset
+from .toolsets import bigquery_readonly_toolset, monitoring_readonly_toolset
 
 __all__ = [
     "BIGQUERY",
@@ -19,9 +21,12 @@ __all__ = [
     "BIGQUERY_SCOPE",
     "CLOUD_LOGGING",
     "CLOUD_MONITORING",
+    "CLOUD_MONITORING_READONLY_SCOPE",
+    "CLOUD_MONITORING_READONLY_TOOLS",
     "CLOUD_PLATFORM_SCOPE",
     "CLOUD_RUN",
     "CLOUD_STORAGE",
     "COMPUTE_ENGINE",
     "bigquery_readonly_toolset",
+    "monitoring_readonly_toolset",
 ]

@@ -40,8 +40,6 @@ RUNTIME_ENV_KEYS = (
     "BOOTSTRAP_MODEL",
     "GEMINI_MODEL_LOCATION",
     AUTHORIZATION_ID_ENV,
-    # The toolset binds this endpoint at construction.
-    "MCP_SERVER_URL",
     # Recipe card agent: output bucket and image model.
     "RECIPE_CARD_BUCKET",
     "RECIPE_CARD_BUCKET_LOCATION",
@@ -108,6 +106,17 @@ def validate_agent_remote_environment(spec: AgentSpec) -> None:
         )
 
 
-def runtime_env() -> dict[str, str]:
+def runtime_env(spec: AgentSpec | None = None) -> dict[str, str]:
+    """Environment baked into one runtime: the agent's own settings, then the shell.
+
+    RUNTIME_ENV_KEYS is a shared forwarding list, so a value set for one agent
+    reaches whichever agent is released next. A spec's own ``runtime_env`` is
+    scoped to that entry. The environment is applied last so a single run can
+    still override a declared value.
+    """
     # require_dev_environment must resolve per-agent defaults first.
-    return {key: os.environ[key] for key in RUNTIME_ENV_KEYS if not is_missing_or_placeholder(key)}
+    declared = dict(spec.runtime_env) if spec else {}
+    forwarded = {
+        key: os.environ[key] for key in RUNTIME_ENV_KEYS if not is_missing_or_placeholder(key)
+    }
+    return declared | forwarded

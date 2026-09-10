@@ -14,6 +14,7 @@ recipe card exists in both forms so the two can be compared directly.
 | basic_assistant | Answer questions and report the active runtime settings. |
 | auth_reference_agent | Read Cloud Storage with Agent Identity and query BigQuery with the user's delegated token. |
 | bigquery_mcp_agent | Explore BigQuery through Google's managed MCP server using the user's delegated token. |
+| monitoring_mcp_agent | Inspect Cloud Monitoring metrics, alerts and dashboards through Google's managed MCP server using the user's delegated token. See its [README](agents/monitoring_mcp_agent/README.md). |
 | recipe_card_agent | Write a recipe, generate its photography and publish a PowerPoint recipe card to Cloud Storage. |
 
 | Workflow | Purpose |
@@ -131,6 +132,18 @@ Use --skip-register to stop after deployment. Registration is also skipped when 
 app ID is empty. For a delegated agent, registration prints OAuth setup details if its
 authorization is missing. Complete the setup below, then rerun register_agent.py.
 You do not need to redeploy code just to register a runtime.
+
+Splitting a first release into those two steps is worth doing for a delegated agent:
+deployment touches no OAuth resource, so the consent screen can be finished between
+them. **A deployed runtime does not appear in Gemini Enterprise until it is
+registered** — registration creates the app listing, and without it the agent exists in
+Vertex AI but is invisible in the UI.
+
+~~~bash
+uv run --group dev python dev/release_dev.py --agent <name> --skip-register
+# finish the consent screen, then:
+uv run --group dev python dev/register/register_agent.py --agent <name>
+~~~
 
 | Script in dev/ | Effect |
 |---|---|
@@ -261,6 +274,15 @@ Configure the project's OAuth consent screen, including the test users and scope
 needed for your test. In Google Auth Platform, create a **Web application** client with
 the name printed by register_agent.py. Add both callbacks used by this integration:
 
+> **The consent screen is console-only, per-project and easy to miss.** No API edits
+> its scope list, so `register_agent.py` prints the required scopes rather than
+> applying them. Add them under **Google Auth Platform → Data Access → Add or remove
+> scopes**, then **Update** and **Save**. The list is shared by every agent in the
+> project, so a second agent asking for a scope already there needs no console change —
+> which is why adding the first agent for a service feels like extra work and later
+> ones do not. See [service scopes may need an
+> administrator](#service-scopes-may-need-an-administrator).
+
 ~~~text
 https://vertexaisearch.cloud.google.com/static/oauth/oauth.html
 https://vertexaisearch.cloud.google.com/oauth-redirect
@@ -283,6 +305,7 @@ package name in uppercase with hyphens replaced by underscores.
 ~~~bash
 uv run --group dev python dev/register/register_agent.py --agent auth_reference_agent
 uv run --group dev python dev/register/register_agent.py --agent bigquery_mcp_agent
+uv run --group dev python dev/register/register_agent.py --agent monitoring_mcp_agent
 ~~~
 
 When the stored secret is missing, registration imports the initial secret into Secret
@@ -294,9 +317,50 @@ authorization. Existing authorizations are reused; rerunning registration does n
 change their OAuth settings. If the client or scopes change, review the authorization
 as a separate change and retest consent.
 
+Because an existing authorization is never reconciled, finish the consent screen
+**before** the first registration. An authorization created against a consent screen
+that is missing a scope is not repaired by fixing the screen afterwards: delete that
+authorization and register again.
+
+Verify what was created rather than assuming, since the authorization records the
+scopes at creation time:
+
+~~~bash
+TOKEN=$(gcloud auth print-access-token)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  -H "X-Goog-User-Project: <project-id>" \
+  "https://discoveryengine.googleapis.com/v1alpha/projects/<project-number>/locations/global/authorizations/<package-name>-authz"
+~~~
+
+The `authorizationUri` in the response carries the `scope` parameter the user will be
+asked to approve.
+
 Each agent declares delegated service scopes in AgentSpec.delegated_oauth_scopes.
 The BigQuery examples request the BigQuery scope plus the shared identity scopes.
 Agent Identity tools do not add delegated scopes.
+
+### Service scopes may need an administrator
+
+The Data Access scope picker only lists scopes for APIs already **enabled on the
+project**. Enable the service's API first and the scope becomes selectable; skip that
+and it appears only under **Manually add scopes** at the bottom of the panel, where it
+must be pasted verbatim. Enabling the API first is the shorter path.
+
+Some scopes need more than the project owner:
+
+- **Sensitive and restricted scopes** are flagged on the Data Access page. An app in
+  *Testing* works for listed test users, but publishing may require Google verification.
+- In a **Workspace or Cloud Identity organisation**, an admin can pre-authorize the
+  client ID and its scopes under Admin console → Security → API controls, which
+  suppresses the per-user prompt for internal users. Some organisations block user
+  consent entirely, and then an administrator must allow the client before any user can
+  authorize. This is an org-level change and is outside this repository.
+- A managed MCP service may document a **broader scope than its read-only tools need**.
+  Record the divergence in the agent README and request the narrower scope; do not widen
+  it silently. See [monitoring_mcp_agent](agents/monitoring_mcp_agent/README.md).
+
+An agent in *Testing* also needs its users listed under **Audience → Test users**, or
+consent fails with `access_denied` no matter which scopes are configured.
 
 The OAuth client's name identifies it in the console. The consent screen's app name
 is what users see during sign-in.
