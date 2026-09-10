@@ -20,6 +20,8 @@ def build_app(spec: AgentSpec) -> AdkApp:
 
 VERTEX_API_VERSION = "v1beta1"
 
+_STAGING_ROOT = "agent_engine"
+
 
 def build_client(project_id: str, location: str, staging_bucket: str) -> vertexai.Client:
     vertexai.init(project=project_id, location=location, staging_bucket=staging_bucket)
@@ -28,6 +30,17 @@ def build_client(project_id: str, location: str, staging_bucket: str) -> vertexa
         location=location,
         http_options={"api_version": VERTEX_API_VERSION},
     )
+
+
+def staging_prefix(spec: AgentSpec) -> str:
+    """Directory under the staging bucket holding this agent's artifacts.
+
+    The SDK defaults every deployment to a single ``agent_engine/`` directory,
+    so two agents sharing a staging bucket overwrite each other's pickle and
+    the last one deployed is served for both. The package name is unique per
+    registry entry, so scoping by it keeps each agent's artifacts separate.
+    """
+    return f"{_STAGING_ROOT}/{spec.package_name}"
 
 
 def deployment_config(
@@ -39,5 +52,6 @@ def deployment_config(
         "requirements": list(export_requirements(spec)),
         "extra_packages": list(extra_packages),
         "staging_bucket": staging_bucket,
+        "gcs_dir_name": staging_prefix(spec),
         "env_vars": runtime_env(),
     }

@@ -233,6 +233,19 @@ def test_workflow_validation_blocks_bad_recipe_before_images():
         validate_recipe_stage(context)
 
 
+@pytest.mark.parametrize("state", [{}, {"recipe": ""}, {"recipe": "   "}])
+def test_workflow_validation_reports_a_missing_recipe(state):
+    """An empty recipe means the writing stage produced nothing.
+
+    That reached load_recipes as "" and raised a JSONDecodeError naming this
+    file, which pointed at the wrong stage entirely.
+    """
+    from recipe_card_workflow.stages.validation import validate_recipe_stage
+
+    with pytest.raises(ValueError, match="recipe_writer"):
+        validate_recipe_stage(SimpleNamespace(state=state))
+
+
 def test_workflow_validation_normalizes_recipe():
     import json
 

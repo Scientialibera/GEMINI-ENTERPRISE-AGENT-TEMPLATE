@@ -12,7 +12,7 @@ import pytest
 import release_dev
 from config import bootstrap
 from conftest import requires_symlinks
-from deploy import package_agent, sources, state, update_dev
+from deploy import package_agent, runtime, sources, state, update_dev
 from deploy.dependencies import export_requirements
 from gemini_shared.config.runtime_config import RuntimeConfig
 from iam import apply_agent_identity_iam as iam
@@ -163,6 +163,27 @@ def test_archive_and_sdk_staging_have_identical_sources(monkeypatch, tmp_path):
         }
     assert Path.cwd() == original_cwd
     assert archived == staged == {"agent/agent.py": contents}
+
+
+def test_every_agent_stages_under_its_own_prefix():
+    """Two agents sharing one prefix overwrite each other's pickle.
+
+    The SDK stages every deployment under a single ``agent_engine/`` directory
+    unless told otherwise, so the last agent deployed was served for all of
+    them. Each spec must resolve to a distinct directory, and none may be the
+    bare default.
+    """
+    prefixes = {name: runtime.staging_prefix(spec) for name, spec in AGENTS.items()}
+    assert len(set(prefixes.values())) == len(AGENTS), prefixes
+    assert all(prefix != runtime._STAGING_ROOT for prefix in prefixes.values())
+
+
+def test_deployment_config_carries_the_scoped_prefix(monkeypatch):
+    """A dropped key silently reverts to the shared default."""
+    monkeypatch.setattr(runtime, "export_requirements", lambda _: ("test==1",))
+    config = runtime.deployment_config(SPEC, "gs://staging", ())
+    assert config["gcs_dir_name"] == runtime.staging_prefix(SPEC)
+    assert config["staging_bucket"] == "gs://staging"
 
 
 @pytest.mark.parametrize("name", sorted(AGENTS))
