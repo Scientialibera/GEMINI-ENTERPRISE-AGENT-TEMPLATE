@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import time
+
 from gemini_shared.config.runtime_config import get_runtime_config
 from gemini_shared.connectors.cloud_storage import upload_bytes
 from google.adk.tools import ToolContext
 
-from .config import OUTPUT_BUCKET, OUTPUT_BUCKET_ENV, PROJECT_ID
+from .config import OUTPUT_BUCKET, OUTPUT_BUCKET_ENV, PROJECT_ID, dish_prefix
 from .errors import ContentTooLong
 from .rendering.pages import render_deck
 from .runs import get_run, new_run_id, safe_slug, save_run
@@ -69,6 +71,11 @@ def render_recipe_card(
     if run["slug"] != slug:
         raise ValueError("The run belongs to a different recipe.")
     run_id = run_id or new_run_id()
+    # A rehydrated run may reuse photography from an earlier run of this same
+    # dish, so anything under the dish's own prefix is renderable. The fence
+    # stays at the dish: a recipe payload must not pull in another dish's
+    # images, or arbitrary objects that happen to share the bucket.
+    allowed = set(run["images"].values()) | set(run.get("reusable_uris", ()))
 
     # Text that does not fit is the model's to fix, so it is answered rather
     # than raised: a raised error reaches the model as a generic failure with
@@ -80,7 +87,7 @@ def render_recipe_card(
     attempts = int(run.get("render_attempts", 0)) + 1
     save_run(tool_context, run_id, run)
     try:
-        deck = render_deck(data, PROJECT_ID, allowed_uris=set(run["images"].values()))
+        deck = render_deck(data, PROJECT_ID, allowed_uris=allowed)
     except ContentTooLong as too_long:
         run["render_attempts"] = attempts
         result = {**too_long.as_tool_result(attempts, max_attempts), "run_id": run_id}
@@ -91,14 +98,14 @@ def render_recipe_card(
 
     run["render_attempts"] = 0
     save_run(tool_context, run_id, run)
-    # A fresh deck name also preserves previous renders of this run.
-    object_name = f"{slug}/{run_id}/{new_run_id()}-recipe-cards.pptx"
+    # A fresh timestamp also preserves previous renders of this run. Only the
+    # clock part is needed: run_id already carries this run's random suffix.
+    object_name = f"{dish_prefix(slug)}{run_id}/{time.strftime('%Y%m%d-%H%M%S')}-recipe-cards.pptx"
     uri = upload_bytes(
         PROJECT_ID, OUTPUT_BUCKET, object_name, deck, PPTX_CONTENT_TYPE, create_only=True
     )
     return {
         "bucket": OUTPUT_BUCKET,
-        "bucket_created": False,
         "run_id": run_id,
         "recipe_count": len(recipes),
         "size_bytes": len(deck),

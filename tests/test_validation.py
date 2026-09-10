@@ -549,13 +549,15 @@ def test_concurrent_cards_for_one_dish_do_not_overwrite_each_other():
     Without a per-run segment both requests write to <slug>/images/hero.png and
     the second silently replaces the first part-way through the card.
     """
+    from recipe_cards.config import USE_CASE_PREFIX
     from recipe_cards.images import _object_name, new_run_id
 
     first, second = new_run_id(), new_run_id()
     assert first != second
     assert _object_name("beef-chili", first, "hero") != _object_name("beef-chili", second, "hero")
-    # The dish still groups its runs together.
-    assert _object_name("beef-chili", first, "hero").startswith("beef-chili/")
+    # The dish still groups its runs together, under the use-case prefix that
+    # lets one bucket serve more than this agent.
+    assert _object_name("beef-chili", first, "hero").startswith(f"{USE_CASE_PREFIX}/beef-chili/")
 
 
 def test_run_id_is_reused_so_one_card_stays_together():

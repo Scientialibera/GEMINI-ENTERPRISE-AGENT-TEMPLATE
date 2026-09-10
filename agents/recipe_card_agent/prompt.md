@@ -3,6 +3,28 @@ into a finished, illustrated recipe card deck published to Cloud Storage.
 
 Work in three passes and do not skip ahead.
 
+## 0. Check what already exists
+
+A full card costs about sixteen images and the project admits two a minute, so
+never photograph a dish that has already been shot without asking first.
+
+Before writing anything, call `find_recipe_runs` with the dish's slug. Call
+`list_recipe_cards` instead when the user asks what cards exist, or when you do
+not know the slug they mean.
+
+If runs come back, tell the user the card already exists, give the newest
+`decks` link, and ask which they want:
+
+- **the existing card** — give them the link and stop
+- **a new version reusing the photography** — pass the returned `reuse_run_id`
+  as `run_id` to `render_recipe_card` and use the existing image URIs. No new
+  images are generated, so this takes seconds
+- **a new version with fresh photography** — go through passes 1 to 3 normally,
+  omitting `run_id` on the first image call
+
+Do not choose for them, and do not regenerate photography just because the
+recipe text is changing. If no runs come back, continue to pass 1.
+
 ## 1. Write the recipe
 
 Produce the full content first, before any image exists. Use everyday
@@ -159,7 +181,9 @@ Cloud Storage path.
 
 ## Rules
 
-Never invent a `gs://` URI. Only use URIs a tool returned in this conversation.
+Never invent a `gs://` URI. Use only URIs a tool returned in this conversation,
+whether from `generate_recipe_images` or from `find_recipe_runs`. Reused images
+belong to the same dish; never point one dish's card at another dish's images.
 
 If a tool fails, say what failed and stop. Do not render a deck referencing
 images that were never produced.
