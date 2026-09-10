@@ -212,6 +212,7 @@ scopes it asks the user for:
     agent_identity_bucket_roles=(         # writes to its own output bucket
         BucketRoles("${RECIPE_CARD_BUCKET}", (STORAGE_OBJECT_ADMIN, STORAGE_BUCKET_READER)),
     ),
+    runtime_env=(),                       # no runtime settings of its own
 )
 ~~~
 
@@ -475,7 +476,8 @@ look at the pages. Nothing is generated, and the whole loop takes seconds.
 | Setting | Location | How a change takes effect |
 |---|---|---|
 | Model, instructions, log level and tool limits | Parameter Manager | After the runtime cache expires. |
-| Parameter address, model location, authorization ID and MCP endpoint | Runtime environment | Update the deployed runtime. |
+| Parameter address, model location and authorization ID | Runtime environment | Update the deployed runtime. |
+| MCP endpoint and other per-agent runtime settings | AgentSpec.runtime_env | Update the deployed runtime. |
 | OAuth client secret | Secret Manager | Update the stored version and review any existing authorization that uses it. |
 | Workstation settings | Ignored dev/.env.local and dev/.env.dev | Reload the process; shell variables take precedence. |
 
@@ -534,17 +536,40 @@ CONFIG_REFRESH_SECONDS
 BOOTSTRAP_MODEL
 GEMINI_MODEL_LOCATION
 GEMINI_ENTERPRISE_AUTHORIZATION_ID
-MCP_SERVER_URL
 RECIPE_CARD_BUCKET
 RECIPE_CARD_BUCKET_LOCATION
 IMAGE_MODEL
 IMAGE_MODEL_LOCATION
 ~~~
 
-Add new bootstrap keys to RUNTIME_ENV_KEYS if they must reach the deployed agent.
 The platform supplies the deployed project and runtime location; keep reserved runtime
-variables out of the forwarded map. The MCP URL is resolved when constructing the
-toolset, so changing it requires a runtime update.
+variables out of the forwarded map.
+
+This list is one shared value per key: whatever is set when a release runs is baked
+into that runtime, whichever agent it is. A setting that belongs to one agent goes in
+its spec instead.
+
+### Per-agent runtime settings
+
+`AgentSpec.runtime_env` declares the runtime environment one entry needs, versioned
+beside its scopes and IAM, so a fresh clone deploys with it and no other agent's value
+can override it:
+
+~~~python
+"monitoring_mcp_agent": AgentSpec(
+    runtime_env=(
+        ("MCP_SERVER_URL", CLOUD_MONITORING),
+        ("ADK_DISABLE_JSON_SCHEMA_FOR_FUNC_DECL", "true"),
+    ),
+)
+~~~
+
+`runtime_env(spec)` merges these under the forwarded keys above, so the environment
+still wins and a single run can override a declared value. Setting one of these names
+in the shell or `.env.dev` applies it to every agent released while it is set, which is
+why each MCP agent declares its own endpoint rather than sharing one variable.
+
+Add a key to RUNTIME_ENV_KEYS only when every agent should share its value.
 
 Agent Identity IAM variables are deployment-time controls only. They are intentionally
 not forwarded into the runtime environment.
@@ -702,6 +727,19 @@ toolset = delegated_mcp_toolset(
 
 Use the server's actual tool names and required OAuth scopes. Configure a compatible
 authorization provider for that service; a Google token is not valid for every MCP server.
+
+Declare the endpoint in the spec's `runtime_env` as `MCP_SERVER_URL` rather than relying
+on the shared variable, so no other agent's value can retarget where the user's bearer
+token is sent.
+
+Check what the server's tools cost in tokens before deploying. ADK sends each tool's
+`outputSchema` to the model as `response_json_schema`, and a server publishing large
+response schemas can exceed the model's input limit before any tool runs, failing every
+request with `400 INVALID_ARGUMENT`. Cloud Monitoring's nine tools carry ~79k tokens of
+response schemas against ~7.7k for their inputs. Declare
+`ADK_DISABLE_JSON_SCHEMA_FOR_FUNC_DECL=true` in that agent's `runtime_env` to send input
+schemas only, keeping every tool. Read the sizes from the server's `tools/list` response
+rather than assuming.
 
 Always supply an explicit allowlist for application toolsets. tool_filter=None exposes
 all tools returned by the server, including future additions. The BigQuery allowlist

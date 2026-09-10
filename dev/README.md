@@ -59,7 +59,7 @@ publishing into an app.
 
 | Imported module | Purpose |
 |---|---|
-| registry.py | Agent and workflow metadata, source paths, OAuth scopes and exact identity grants. |
+| registry.py | Agent and workflow metadata, source paths, OAuth scopes, runtime settings and exact identity grants. |
 | paths.py, gcp.py | Repository paths and shared gcloud execution/project resolution. |
 | deploy/state.py | Project and region validation, state lookup and migration. |
 | deploy/sources.py | One validated source manifest for archives and SDK staging. |
