@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from gemini_shared.config.runtime_config import get_runtime_config
 from gemini_shared.connectors.cloud_storage import upload_bytes
 from google.adk.tools import ToolContext
 
@@ -15,7 +16,6 @@ PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationm
 # How many times the model may correct a recipe that does not fit before the
 # tool stops asking. Without a bound a model that cannot shorten enough would
 # retry until the request times out.
-MAX_CORRECTION_ATTEMPTS = 3
 # Authenticated browser download; the viewer still needs read access.
 CONSOLE_URL_PREFIX = "https://storage.cloud.google.com"
 
@@ -76,14 +76,15 @@ def render_recipe_card(
     # cannot be shortened enough stops rather than looping.
     if run.get("render_failure"):
         return dict(run["render_failure"])
+    max_attempts = get_runtime_config().max_attempts
     attempts = int(run.get("render_attempts", 0)) + 1
     save_run(tool_context, run_id, run)
     try:
         deck = render_deck(data, PROJECT_ID, allowed_uris=set(run["images"].values()))
     except ContentTooLong as too_long:
         run["render_attempts"] = attempts
-        result = {**too_long.as_tool_result(attempts, MAX_CORRECTION_ATTEMPTS), "run_id": run_id}
-        if attempts >= MAX_CORRECTION_ATTEMPTS:
+        result = {**too_long.as_tool_result(attempts, max_attempts), "run_id": run_id}
+        if attempts >= max_attempts:
             run["render_failure"] = result
         save_run(tool_context, run_id, run)
         return result

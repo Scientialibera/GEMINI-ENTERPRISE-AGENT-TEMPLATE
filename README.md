@@ -430,7 +430,9 @@ versions/latest. RuntimeConfig rejects unknown fields and invalid values.
   "log_level": "INFO",
   "agent_identity_bucket_name": null,
   "storage_object_limit": 10,
-  "bigquery_query_row_limit": 100
+  "bigquery_query_row_limit": 100,
+  "max_attempts": 3,
+  "max_model_calls_per_request": 20
 }
 ~~~
 
@@ -529,9 +531,32 @@ assembly. Lists longer than the first ingredient panel continue on additional pa
 including optional variation ingredients. Quantities and ingredient names are never
 silently shortened: text that cannot fit returns a correction request. Reuse its run_id
 when correcting a card; each new run has its own retry budget.
-After three failed render attempts, the tool returns `status: failed` with no deck
+After `max_attempts` failed render attempts, the tool returns `status: failed` with no deck
 URL. The model can explain the problem without the request ending in an unhandled
 layout exception. Further calls for that run return the same failure without rendering.
+
+### Request and retry limits
+
+`max_attempts` includes the initial attempt: the default of 3 permits two retries.
+It controls Gemini transport retries, transient image-generation retries and recipe
+layout correction attempts. Image generation disables SDK-internal retries to avoid
+multiplying its outer retry budget. Non-retryable errors are not retried.
+
+`max_model_calls_per_request` defaults to 20 and caps ADK model calls across the entire
+user request, including all workflow stages. The shared application factory installs
+the limit plugin. Callers may request a lower limit but cannot raise the server's cap.
+Exceeding it stops the request with ADK's `LlmCallsLimitExceededError`, not another model
+call. This counts orchestration calls, not individual image requests inside a tool;
+image batch and per-run limits still apply separately. It is not a dollar or token cap.
+
+Publish these fields in the existing Parameter Manager JSON. Old versions without
+them use the defaults. A request snapshots the model-call ceiling when it starts;
+later requests see refreshed settings after the cache expires. Attempt limits are
+read when each operation starts. `report_runtime_config` includes both settings.
+Local equivalents are `MAX_ATTEMPTS` and `MAX_MODEL_CALLS_PER_REQUEST`.
+
+Deploy this code once before expecting live parameter edits to enforce the new limits.
+Context compaction is separate and is not enabled by these settings.
 
 ## Add an agent
 

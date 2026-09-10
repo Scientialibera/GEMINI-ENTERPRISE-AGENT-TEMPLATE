@@ -26,6 +26,8 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 
+from ..config.runtime_config import get_runtime_config
+
 # The model accepts a bounded number of reference images per request, so a long
 # sequence keeps the most recent ones and drops the oldest.
 MAX_REFERENCE_IMAGES = 14
@@ -49,7 +51,6 @@ MIN_REQUEST_INTERVAL_SECONDS = 60.0 / IMAGE_REQUESTS_PER_MINUTE + 2.0
 # thing that exhausts it. Retrying with an exponential, jittered backoff is what
 # keeps a large card from failing halfway through and wasting the images that
 # already succeeded.
-MAX_ATTEMPTS = 8
 INITIAL_BACKOFF_SECONDS = 15.0
 BACKOFF_MULTIPLIER = 2.0
 MAX_BACKOFF_SECONDS = 90.0
@@ -120,6 +121,8 @@ def _client(location: str) -> genai.Client:
         vertexai=True,
         project=os.environ["GOOGLE_CLOUD_PROJECT"],
         location=location,
+        # The outer loop owns retries; do not multiply attempts inside the SDK.
+        http_options=types.HttpOptions(retry_options=types.HttpRetryOptions(attempts=1)),
     )
 
 
@@ -194,11 +197,12 @@ def _is_retryable(error: Exception) -> bool:
 def _with_retries(call, name: str):
     """Run ``call``, backing off exponentially while the failure is transient."""
     delay = INITIAL_BACKOFF_SECONDS
-    for attempt in range(1, MAX_ATTEMPTS + 1):
+    max_attempts = get_runtime_config().max_attempts
+    for attempt in range(1, max_attempts + 1):
         try:
             return call()
         except Exception as error:
-            if attempt == MAX_ATTEMPTS or not _is_retryable(error):
+            if attempt == max_attempts or not _is_retryable(error):
                 raise
             capped = min(delay, MAX_BACKOFF_SECONDS)
             # Equal jitter avoids both synchronized retries and near-zero waits.

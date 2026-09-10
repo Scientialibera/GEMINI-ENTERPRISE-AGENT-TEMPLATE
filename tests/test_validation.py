@@ -835,7 +835,7 @@ def test_correction_attempts_are_bounded(monkeypatch):
 
     context = SimpleNamespace(state={})
     run_id = ""
-    for _ in range(publish.MAX_CORRECTION_ATTEMPTS - 1):
+    for _ in range(publish.get_runtime_config().max_attempts - 1):
         result = publish.render_recipe_card(payload, context, run_id)
         assert result["status"] == "needs_correction"
         run_id = result["run_id"]
@@ -853,4 +853,4 @@ def test_correction_attempts_are_bounded(monkeypatch):
     # A new recipe run in the same session receives its own correction budget.
     result = publish.render_recipe_card(payload, context)
     assert result["run_id"] != run_id
-    assert result["attempts_remaining"] == publish.MAX_CORRECTION_ATTEMPTS - 1
+    assert result["attempts_remaining"] == publish.get_runtime_config().max_attempts - 1

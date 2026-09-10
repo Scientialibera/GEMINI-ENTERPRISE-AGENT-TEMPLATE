@@ -31,6 +31,8 @@ LOCAL_ENVIRONMENT = "local"
 DEFAULT_LOG_LEVEL = "DEBUG"
 DEFAULT_STORAGE_OBJECT_LIMIT = 10
 DEFAULT_BIGQUERY_QUERY_ROW_LIMIT = 100
+DEFAULT_MAX_ATTEMPTS = 3
+DEFAULT_MAX_MODEL_CALLS = 20
 LAST_KNOWN_GOOD_RETRY_SECONDS = 30
 PARAMETER_VERSION_SEGMENT = "/versions/"
 LATEST_VERSION = "latest"
@@ -49,6 +51,8 @@ class RuntimeConfig(BaseModel):
     agent_identity_bucket_name: str | None = None
     storage_object_limit: int = Field(default=DEFAULT_STORAGE_OBJECT_LIMIT, ge=1, le=100)
     bigquery_query_row_limit: int = Field(default=DEFAULT_BIGQUERY_QUERY_ROW_LIMIT, ge=1, le=10_000)
+    max_attempts: int = Field(default=DEFAULT_MAX_ATTEMPTS, ge=1, le=10)
+    max_model_calls_per_request: int = Field(default=DEFAULT_MAX_MODEL_CALLS, ge=1, le=100)
 
     @field_validator("model", "instruction", "config_revision", "environment")
     @classmethod
@@ -75,6 +79,10 @@ def _required_local_value(name: str) -> str:
 
 def _local_payload() -> dict[str, object]:
     return {
+        "max_attempts": os.getenv("MAX_ATTEMPTS", str(DEFAULT_MAX_ATTEMPTS)),
+        "max_model_calls_per_request": os.getenv(
+            "MAX_MODEL_CALLS_PER_REQUEST", str(DEFAULT_MAX_MODEL_CALLS)
+        ),
         "config_revision": os.getenv(CONFIG_REVISION_ENV, LOCAL_REVISION).strip() or LOCAL_REVISION,
         "model": _required_local_value(GEMINI_MODEL_ENV),
         "instruction": _required_local_value(AGENT_INSTRUCTION_ENV),
@@ -183,6 +191,8 @@ class RuntimeConfigStore:
             "cache_seconds": get_bootstrap_settings().refresh_seconds,
             "model": config.model,
             "environment": config.environment,
+            "max_attempts": config.max_attempts,
+            "max_model_calls_per_request": config.max_model_calls_per_request,
         }
 
     def reset(self) -> None:
