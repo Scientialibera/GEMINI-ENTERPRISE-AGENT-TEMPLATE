@@ -112,11 +112,11 @@ client ID override. Follow the root README for redirect URIs, consent setup and 
 per-agent Secret Manager secret. Never commit client secrets or token files.
 
 Declare the endpoint in the spec's `runtime_env` as `MCP_SERVER_URL`, so it is
-versioned and no other agent's value can retarget it. Check shell overrides as well as
-`dev/.env.dev` before releasing: setting that name in the environment overrides every
-agent released while it is set. Check authorization, runtime and parameter overrides
-too. Do not reuse another agent's authorization just because its ID is already
-configured.
+versioned and no other agent's value can retarget it. Keep it out of `RUNTIME_ENV_KEYS`:
+a name that is not forwarded cannot be overridden by a leftover shell value at deploy
+time, which is the whole point. Check authorization, runtime and parameter overrides
+before releasing, since those *are* forwarded. Do not reuse another agent's
+authorization just because its ID is already configured.
 
 `ensure_authorization` creates missing authorizations but does not reconcile existing
 ones. Editing `delegated_oauth_scopes` does not update an existing authorization or

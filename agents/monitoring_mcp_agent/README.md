@@ -72,13 +72,14 @@ MONITORING_MCP_AGENT_OAUTH_CLIENT_SECRET=<initial-secret>
 ~~~
 
 This agent declares its own `MCP_SERVER_URL` and
-`ADK_DISABLE_JSON_SCHEMA_FOR_FUNC_DECL` in `AgentSpec.runtime_env`, so both are
-versioned and cannot be retargeted by a value left over from another agent.
-Setting either name in the environment overrides it for every agent released
-while it is set, so leave them empty unless deliberately overriding one run.
-Check shell variables as well as `dev/.env.dev`, and check for stale
-`GEMINI_ENTERPRISE_AUTHORIZATION_ID`, `CONFIG_PARAMETER` and
-`DEV_REASONING_ENGINE` overrides before releasing.
+`ADK_DISABLE_JSON_SCHEMA_FOR_FUNC_DECL` in `AgentSpec.runtime_env`. Neither name
+is in `RUNTIME_ENV_KEYS`, so a shell or `dev/.env.dev` value is **not** forwarded
+to a deployed runtime: the spec's value always wins remotely, and no leftover
+from another agent can retarget this one. Those variables still affect a local
+run, where the agent reads them directly.
+
+Check for stale `GEMINI_ENTERPRISE_AUTHORIZATION_ID`, `CONFIG_PARAMETER` and
+`DEV_REASONING_ENGINE` overrides before releasing; those *are* forwarded.
 
 ## Consent
 

@@ -7,10 +7,12 @@ tests cover that structural guarantee rather than an allowlist comparison.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import Mock
 
 import pytest
@@ -75,7 +77,7 @@ def test_retrieve_returns_relative_paths_and_a_deck_link(monkeypatch):
     ]
     monkeypatch.setattr(discover, "list_objects", Mock(return_value=(names, [], False)))
 
-    result = discover.retrieve([FOLDER], SimpleNamespace(state={}))
+    result = asyncio.run(discover.retrieve([FOLDER], SimpleNamespace(state={})))
 
     assert result["image_count"] == 2
     assert [image["path"] for image in result["images"]] == [
@@ -91,7 +93,9 @@ def test_retrieve_accepts_several_folders(monkeypatch):
     listing = Mock(return_value=([], [], False))
     monkeypatch.setattr(discover, "list_objects", listing)
 
-    discover.retrieve([FOLDER, "tacos-al-pastor/20260908-x"], SimpleNamespace(state={}))
+    asyncio.run(
+        discover.retrieve([FOLDER, "tacos-al-pastor/20260908-x"], SimpleNamespace(state={}))
+    )
 
     assert [call.args[2] for call in listing.call_args_list] == [
         f"{USE_CASE_PREFIX}/{FOLDER}/",
@@ -101,7 +105,7 @@ def test_retrieve_accepts_several_folders(monkeypatch):
 
 def test_retrieve_needs_at_least_one_folder():
     with pytest.raises(ValueError, match="at least one folder"):
-        discover.retrieve([], SimpleNamespace(state={}))
+        asyncio.run(discover.retrieve([], SimpleNamespace(state={})))
 
 
 @pytest.mark.parametrize(
@@ -135,24 +139,32 @@ def test_a_traversing_folder_is_rejected_before_listing(monkeypatch):
     listing = Mock()
     monkeypatch.setattr(discover, "list_objects", listing)
     with pytest.raises(ValueError):
-        discover.retrieve(["../../etc"], SimpleNamespace(state={}))
+        asyncio.run(discover.retrieve(["../../etc"], SimpleNamespace(state={})))
     listing.assert_not_called()
 
 
-def test_preview_loads_one_image_the_model_can_see(monkeypatch):
+def test_preview_actually_saves_the_artifact(monkeypatch):
+    """save_artifact is a coroutine, so an unawaited call saves nothing.
+
+    The fake below is async for that reason: a synchronous stand-in accepts the
+    bare call happily and hides a preview that reports a filename it never
+    wrote.
+    """
     names = [f"{USE_CASE_PREFIX}/{FOLDER}/images/hero.png"]
     monkeypatch.setattr(discover, "list_objects", Mock(return_value=(names, [], False)))
     monkeypatch.setattr(discover, "download_bytes", Mock(return_value=b"\x89PNG"))
     saved = {}
 
-    context = SimpleNamespace(
-        state={},
-        save_artifact=lambda filename, artifact: saved.update(
-            {"filename": filename, "mime": artifact.inline_data.mime_type}
-        ),
-    )
-    result = discover.retrieve([FOLDER], context, preview_image=f"{FOLDER}/images/hero.png")
+    async def save_artifact(filename, artifact):
+        saved.update({"filename": filename, "mime": artifact.inline_data.mime_type})
+        return 1
 
+    context = SimpleNamespace(state={}, save_artifact=save_artifact)
+    result = asyncio.run(
+        discover.retrieve([FOLDER], context, preview_image=f"{FOLDER}/images/hero.png")
+    )
+
+    assert saved, "the preview reported success without saving anything"
     assert result["preview"] == saved["filename"]
     assert saved["mime"] == "image/png"
 
@@ -162,8 +174,39 @@ def test_only_an_image_can_be_previewed(monkeypatch):
     download = Mock()
     monkeypatch.setattr(discover, "download_bytes", download)
     with pytest.raises(ValueError, match="Only an image"):
-        discover.retrieve([FOLDER], SimpleNamespace(state={}), preview_image=f"{FOLDER}/deck.pptx")
+        asyncio.run(
+            discover.retrieve(
+                [FOLDER], SimpleNamespace(state={}), preview_image=f"{FOLDER}/deck.pptx"
+            )
+        )
     download.assert_not_called()
+
+
+def test_a_folder_listing_reports_truncation_from_prefixes(monkeypatch):
+    """max_results bounds objects, not prefixes.
+
+    A delimited listing returns its children as prefixes, so counting only
+    objects lets a folder listing omit folders while claiming completeness.
+    """
+    from gemini_shared.connectors import cloud_storage
+
+    class FakeIterator:
+        prefixes: ClassVar[set[str]] = {f"{USE_CASE_PREFIX}/dish-{i}/" for i in range(4)}
+
+        def __iter__(self):
+            return iter(())
+
+    client = Mock()
+    client.list_blobs.return_value = FakeIterator()
+    monkeypatch.setattr(cloud_storage.storage, "Client", lambda **kwargs: client)
+
+    names, prefixes, truncated = cloud_storage.list_objects(
+        "test-project", BUCKET, f"{USE_CASE_PREFIX}/", limit=1, delimiter="/"
+    )
+
+    assert names == []
+    assert len(prefixes) == 1, "prefixes must respect the limit"
+    assert truncated is True, "a partial folder listing must not claim to be complete"
 
 
 def test_generated_images_are_returned_as_relative_paths():

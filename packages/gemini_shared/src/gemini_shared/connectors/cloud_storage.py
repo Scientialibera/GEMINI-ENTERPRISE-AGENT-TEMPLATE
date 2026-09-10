@@ -147,8 +147,13 @@ def list_objects(
         bucket_name, prefix=prefix, delimiter=delimiter, max_results=limit + 1
     )
     names = [blob.name for blob in iterator]
-    truncated = len(names) > limit
-    return names[:limit], sorted(iterator.prefixes), truncated
+    # max_results bounds objects only. A delimited listing returns its children
+    # as prefixes, which are not counted against it and can arrive unbounded, so
+    # they are capped and counted here or a folder listing would silently claim
+    # to be complete while omitting folders.
+    prefixes = sorted(iterator.prefixes)
+    truncated = len(names) > limit or len(prefixes) > limit
+    return names[:limit], prefixes[:limit], truncated
 
 
 def parse_gs_uri(uri: str) -> tuple[str, str]:

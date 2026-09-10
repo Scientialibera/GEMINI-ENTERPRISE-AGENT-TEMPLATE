@@ -141,8 +141,12 @@ Vertex AI but is invisible in the UI.
 
 ~~~bash
 uv run --group dev python dev/release_dev.py --agent <name> --skip-register
-# finish the consent screen, then:
-uv run --group dev python dev/register/register_agent.py --agent <name>
+# finish the consent screen, then register. This runs register_agent.py as a
+# module: executing the file directly puts dev/register/ first on sys.path,
+# where its own http.py shadows the standard library's http package.
+uv run --group dev python -c "import sys; sys.path.insert(0,'dev'); \
+from register.register_agent import main; \
+sys.argv=['register_agent.py','--agent','<name>']; main()"
 ~~~
 
 | Script in dev/ | Effect |
@@ -567,10 +571,12 @@ can override it:
 )
 ~~~
 
-`runtime_env(spec)` merges these under the forwarded keys above, so the environment
-still wins and a single run can override a declared value. Setting one of these names
-in the shell or `.env.dev` applies it to every agent released while it is set, which is
-why each MCP agent declares its own endpoint rather than sharing one variable.
+`runtime_env(spec)` merges these under the forwarded keys above. A name that is also in
+RUNTIME_ENV_KEYS can still be overridden from the environment for a single run; a name
+that is not — as `MCP_SERVER_URL` and `ADK_DISABLE_JSON_SCHEMA_FOR_FUNC_DECL` are not —
+is never forwarded, so the spec's value always reaches the runtime. That is why each MCP
+agent declares its own endpoint instead of sharing one variable: no leftover shell value
+can retarget it. Those variables still affect local runs, which read them directly.
 
 Add a key to RUNTIME_ENV_KEYS only when every agent should share its value.
 

@@ -69,7 +69,7 @@ def list_folders() -> dict[str, object]:
     }
 
 
-def retrieve(
+async def retrieve(
     folders: list[str], tool_context: ToolContext, preview_image: str = ""
 ) -> dict[str, object]:
     """List the files in one or more card folders, ready to use in a recipe.
@@ -115,12 +115,17 @@ def retrieve(
         "truncated": truncated,
     }
     if preview_image:
-        result["preview"] = _preview(preview_image, tool_context)
+        result["preview"] = await _preview(preview_image, tool_context)
     return result
 
 
-def _preview(path: str, tool_context: ToolContext) -> str:
-    """Save one image as an artifact so the model can look at it."""
+async def _preview(path: str, tool_context: ToolContext) -> str:
+    """Save one image as an artifact so the model can look at it.
+
+    ``save_artifact`` is a coroutine: calling it without awaiting returns an
+    unstarted coroutine, so the image is never written while this reports a
+    filename as though it were.
+    """
     object_name = resolve_relative(path)
     if not object_name.lower().endswith(IMAGE_SUFFIXES):
         raise ValueError("Only an image can be previewed.")
@@ -130,5 +135,5 @@ def _preview(path: str, tool_context: ToolContext) -> str:
     suffix = object_name.rsplit(".", 1)[-1].lower()
     mime = "image/jpeg" if suffix in ("jpg", "jpeg") else f"image/{suffix}"
     filename = _relative(object_name).replace("/", "_")
-    tool_context.save_artifact(filename, types.Part.from_bytes(data=content, mime_type=mime))
+    await tool_context.save_artifact(filename, types.Part.from_bytes(data=content, mime_type=mime))
     return filename
