@@ -60,6 +60,17 @@ VARIATIONS_PANEL_OFFSET = 0.30
 VARIATIONS_PANEL_H = 1.35
 VARIATIONS_TAB_W = 2.60
 VARIATIONS_TAB_H = 0.36
+# The heading reverses out of a filled tab overlapping the panel's top edge.
+VARIATIONS_TAB_FILL = "1F497D"
+
+# "Getting Started" holds two labelled lists between the description and the
+# menu band. Each list flows across two columns so a long pantry list widens
+# rather than running into the band below it.
+GETTING_STARTED_COLUMNS = 2
+GETTING_STARTED_COL_W = 1.28
+GETTING_STARTED_COL_GAP = 0.06
+GETTING_STARTED_LIST_FONT_SIZE = 10.2
+GETTING_STARTED_LINE_H = 0.19
 VARIATIONS_SKETCH_X = 7.00
 BANNER_TEXT_X = 0.46
 BANNER_TEXT_W = 3.56

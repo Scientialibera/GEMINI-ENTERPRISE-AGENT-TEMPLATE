@@ -51,6 +51,7 @@ from .theme import (
     VARIATIONS_PANEL_H,
     VARIATIONS_PANEL_OFFSET,
     VARIATIONS_SKETCH_X,
+    VARIATIONS_TAB_FILL,
     VARIATIONS_TAB_H,
     VARIATIONS_TAB_W,
     VARIATIONS_TO_BANNER,
@@ -229,6 +230,17 @@ def add_variations_panel(slide, recipe, y):
     # panel starts lower and carries only the list.
     panel_y = y + VARIATIONS_PANEL_OFFSET
     add_box(slide, 0.34, panel_y, 9.22, VARIATIONS_PANEL_H, C["pale"], C["pale"], radius=True)
+    # A filled tab over the panel's corner, with the heading reversed out of it.
+    add_box(
+        slide,
+        0.34,
+        y,
+        VARIATIONS_TAB_W,
+        VARIATIONS_TAB_H,
+        VARIATIONS_TAB_FILL,
+        VARIATIONS_TAB_FILL,
+        radius=True,
+    )
     add_text(
         slide,
         clean(recipe.get("variations_title"), "Simple Variations"),
@@ -238,8 +250,10 @@ def add_variations_panel(slide, recipe, y):
         VARIATIONS_TAB_H,
         font_face=HEAD_FONT,
         font_size=22,
-        color=C["dark_blue"],
+        color=C["white"],
         bold=True,
+        align="center",
+        margin=0.01,
     )
     variations = list(recipe.get("variations") or [])[:3]
     for i, variation in enumerate(variations):

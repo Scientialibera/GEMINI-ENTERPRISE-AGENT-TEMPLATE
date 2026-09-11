@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from .content import title_font
 from .drawing import (
     add_box,
@@ -21,6 +23,11 @@ from .theme import (
     CHEF_NOTE_FONT_SIZE,
     DESCRIPTION_FONT_SIZE,
     DESCRIPTION_H,
+    GETTING_STARTED_COL_GAP,
+    GETTING_STARTED_COL_W,
+    GETTING_STARTED_COLUMNS,
+    GETTING_STARTED_LINE_H,
+    GETTING_STARTED_LIST_FONT_SIZE,
     HEAD_FONT,
     HEADER_PANEL_H,
     HEADER_POT_X,
@@ -96,6 +103,47 @@ def add_header_page1(slide, recipe):
     )
 
 
+def _add_getting_started_list(slide, label, items, y, min_height):
+    """Draw one labelled list across two columns, returning where it ends.
+
+    A single column made a long pantry list run into the seasonal menu band
+    below it, so the items are split down the middle: the block grows sideways
+    and its height follows the longer column rather than the whole list.
+    """
+    add_text(
+        slide,
+        label,
+        RIGHT_X + 0.04,
+        y,
+        2.30,
+        0.16,
+        font_size=8.5,
+        color=C["dark_blue"],
+        bold=True,
+    )
+    entries = [clean(item) for item in (items or []) if clean(item)]
+    list_y = y + 0.21
+    if not entries:
+        return list_y + min_height
+
+    # Balanced, with the extra entry in the first column when the count is odd.
+    per_column = math.ceil(len(entries) / GETTING_STARTED_COLUMNS)
+    columns = [entries[i : i + per_column] for i in range(0, len(entries), per_column)]
+    height = max(min_height, per_column * GETTING_STARTED_LINE_H)
+    for index, column in enumerate(columns):
+        add_text(
+            slide,
+            "\n".join(column),
+            RIGHT_X + 0.04 + index * (GETTING_STARTED_COL_W + GETTING_STARTED_COL_GAP),
+            list_y,
+            GETTING_STARTED_COL_W,
+            height,
+            font_size=GETTING_STARTED_LIST_FONT_SIZE,
+            valign="top",
+        )
+    return list_y + height
+
+
 def add_overview_right(slide, recipe):
     add_image(
         slide,
@@ -152,47 +200,11 @@ def add_overview_right(slide, recipe):
         color=C["dark_blue"],
         bold=True,
     )
-    add_text(
-        slide,
-        "COOKING TOOLS",
-        RIGHT_X + 0.04,
-        9.24,
-        2.30,
-        0.16,
-        font_size=8.5,
-        color=C["dark_blue"],
-        bold=True,
+    tools_bottom = _add_getting_started_list(
+        slide, "COOKING TOOLS", recipe.get("tools"), 9.24, 0.76
     )
-    add_text(
-        slide,
-        "\n".join(recipe.get("tools") or []),
-        RIGHT_X + 0.04,
-        9.45,
-        2.45,
-        0.76,
-        font_size=10.2,
-        valign="top",
-    )
-    add_text(
-        slide,
-        "FROM YOUR PANTRY",
-        RIGHT_X + 0.04,
-        10.35,
-        2.30,
-        0.16,
-        font_size=8.5,
-        color=C["dark_blue"],
-        bold=True,
-    )
-    add_text(
-        slide,
-        "\n".join(recipe.get("pantry") or []),
-        RIGHT_X + 0.04,
-        10.56,
-        2.45,
-        0.88,
-        font_size=10.2,
-        valign="top",
+    _add_getting_started_list(
+        slide, "FROM YOUR PANTRY", recipe.get("pantry"), tools_bottom + 0.14, 0.88
     )
 
     add_vrule(slide, RIGHT_X + 2.84, 8.75, 3.25, C["line"], 1.1)
