@@ -410,6 +410,15 @@ uv run --group dev python dev/release_dev.py --agent recipe_card_workflow
 
 Both need a bucket to publish into and write access to it:
 
+New cards express alternatives in `customizations`: each has a name, `replaces`
+(exact core ingredient names), full replacement `ingredients` with quantities and
+image paths, and `steps` containing a one-based step number and an `instructions`
+list. A half-pork/half-shrimp option replacing 1 lb pork lists both 8 oz pork and
+8 oz shrimp. The ingredient rail groups base and alternative quantities; affected
+steps point to named Customized Steps checklists, which continue on extra pages.
+Legacy `variations` and `variation_ingredients` remain readable. The first-page
+banner uses editable freeforms extracted from the user-edited potsticker deck.
+
 Image generation normally uses three calls: ingredient cutouts, a linked hero/step
 photography batch, then a separate sketch. The sketch uses `mode="parallel"` and
 `use_reference_images=false`, which sends no reference images. Larger batches may

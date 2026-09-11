@@ -31,7 +31,9 @@ sketch. Each call allows 24 images and each run allows 48. Split larger batches
 across additional calls with the same run_id rather than omitting images.
 
 **First the ingredients, with mode="parallel"**, one per entry in both
-`ingredients` and `variation_ingredients`, named `ingredient-<item>`. Every
+`ingredients` and each customization's `ingredients` (plus any legacy
+`variation_ingredients`), named `ingredient-<item>`. Deduplicate identical items
+and reuse their images across options. Every
 ingredient prompt ends with:
 
 > Single ingredient, isolated and centred on a pure white background, soft even

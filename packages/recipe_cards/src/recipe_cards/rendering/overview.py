@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
+
+from pptx.oxml import parse_xml
 
 from .content import title_font
 from .drawing import (
@@ -308,6 +312,13 @@ def add_overview_right(slide, recipe):
         crop=True,
         placeholder="FOOD",
     )
+    # Preserve the user's freeform geometry, gradient and stacking order.
+    for markup in json.loads(Path(__file__).with_name("banner_shapes.json").read_text()):
+        element = parse_xml(markup)
+        identity = element.xpath("./p:nvSpPr/p:cNvPr")[0]
+        identity.set("id", str(slide.shapes._next_shape_id))
+        identity.set("name", "Menu banner accent")
+        slide.shapes._spTree.insert_element_before(element, "p:extLst")
 
 
 def add_overview_slide(prs, recipe):

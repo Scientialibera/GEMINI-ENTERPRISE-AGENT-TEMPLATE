@@ -47,10 +47,10 @@ returned for correction rather than silently trimmed or shrunk. Use these budget
   done. A single string is accepted and appears on the first page only
 - steps — four to six, each a title under 30 characters and at most five
   instructions of roughly 100 characters each
-- `variations` — three, each under 90 characters
+- `customizations` — named alternatives with quantities and step-specific checklists.
 - `bottom_banner_text` — exactly two short lines, under 26 characters each
-- `variation_ingredients` — anything a variation needs that the core list does
-  not already carry, same shape as `ingredients`; omit when there is none
+- Put optional ingredients in each customization, not the core list. The old
+  `variations` and `variation_ingredients` fields are for legacy cards only.
 - `ingredients` — eight to twelve, `item` under 26 characters
 
 The ingredient list and the method must agree. Every ingredient you list has
@@ -65,6 +65,15 @@ exception: they belong there rather than in `ingredients`, and steps may use
 them freely.
 
 Set `slug` to a short lowercase hyphenated name, such as `ragu-spaghetti`.
+For each customization supply `name`, `replaces` (exact core ingredient names),
+`ingredients` (the full replacement quantities with item and image_path), and
+`steps` (objects with a one-based `step` and an `instructions` list).
+For Shrimp & Pork replacing 1 lb pork, list 8 oz pork AND 8 oz shrimp under that
+option, not shrimp alone. Name every affected step and give its actual changes,
+including preparation and cooking adjustments. A technique-only option may have
+empty replaces and ingredients. Never offer a substitution only in a short blurb.
+Generate or reuse images for every customization ingredient too. Reuse the core
+ingredient image when the item is unchanged; do not generate duplicate names.
 Set `servings` to the number alone, such as `4`, not `4 servings`.
 
 ## 2. Generate the images
@@ -80,7 +89,9 @@ is stored together and a card someone else is making at the same time cannot
 overwrite it.
 
 **First, the ingredients, with `mode="parallel"`.** One image per entry in both
-`ingredients` and `variation_ingredients`, named `ingredient-<item>`. These do not depend on each other, so they are
+`ingredients` and every customization's `ingredients` (plus legacy
+`variation_ingredients` if present), named `ingredient-<item>`. Deduplicate identical
+items and reuse their images. These do not depend on each other, so they are
 independent, though the tool paces requests to the quota. Every ingredient prompt must end with:
 
 > Single ingredient, isolated and centred on a pure white background, soft even
@@ -183,8 +194,8 @@ explain what is missing instead of presenting placeholders as a finished card.
 - `hero_image_path` is the hero image.
 - Each step's `image_path` is its own `step-N` image. Every step gets a
   different one; never point two steps at the same image.
-- Each ingredient's `image_path` is its `ingredient-<item>` image, in both
-  `ingredients` and `variation_ingredients`.
+- Each ingredient's `image_path` is its returned ingredient image, in the core
+  list and every customization's ingredients (plus any legacy variation_ingredients).
 - `decorative_image_path` and `variations_image_path` are both the `sketch`
   image.
 - `footer_image_path` may reuse the hero.

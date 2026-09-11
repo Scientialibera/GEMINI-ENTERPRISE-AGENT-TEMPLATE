@@ -256,7 +256,13 @@ def add_variations_panel(slide, recipe, y):
         align="center",
         margin=0.01,
     )
-    variations = list(recipe.get("variations") or [])[:3]
+    variations = [
+        option["name"]
+        + ": see Customized Steps "
+        + ", ".join(str(change["step"]) for change in option["steps"])
+        for option in recipe.get("customizations", [])
+    ] or list(recipe.get("variations") or [])
+    variations = variations[:3]
     for i, variation in enumerate(variations):
         by = panel_y + 0.30 + i * 0.29
         add_checkbox(slide, 0.60, by + 0.035, 0.12)
@@ -396,7 +402,25 @@ def add_steps_slide(
         add_vrule(slide, 4.98, top - 0.10, rule_bottom - top + 0.10, C["line"], 0.75)
 
     for i, step in enumerate(steps_on_page):
+        affected = any(
+            change["step"] == step_start + i + 1
+            for option in recipe.get("customizations", [])
+            for change in option["steps"]
+        )
+        if affected:
+            step = {**step, "title": clean(step.get("title")) + " *"}
         add_step_block(slide, step, step_start + i, *placed[i])
+    if recipe.get("customizations"):
+        add_text(
+            slide,
+            "* See Customized Steps for alternatives.",
+            0.4,
+            0.05,
+            8.8,
+            0.18,
+            font_size=8,
+            color=C["dark_blue"],
+        )
 
     if is_last:
         # The closing panels follow the steps rather than sitting at a fixed

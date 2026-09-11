@@ -38,7 +38,12 @@ def render_recipe_card(
       cooking_tip, steps [{title, body, image_path}], variations [],
       allergens [], possible_cross_contact [], bottom_banner_text, brand_line,
       hero_image_path, footer_image_path, decorative_image_path,
-    variations_image_path, variation_ingredients [{quantity, item, image_path}].
+    variations_image_path, variation_ingredients [{quantity, item, image_path}],
+    customizations [{name, replaces [core item names],
+      ingredients [{quantity, item, image_path}],
+      steps [{step: one-based number, instructions: [checkbox text]}]}].
+    Use customizations for new alternatives, including every replacement quantity
+    and every affected step. Legacy variations strings remain supported.
 
     Every image field takes a path exactly as generate_recipe_images or
     retrieve returned it, relative to the card store. Before publishing a finished

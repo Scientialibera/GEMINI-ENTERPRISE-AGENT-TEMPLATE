@@ -103,11 +103,33 @@ def add_ingredient_row(
 
 def ingredient_entries(recipe):
     """Keep core and optional ingredients ordered, with their correction paths."""
-    return [
+    entries = [
         (ingredient, key == "variation_ingredients", f"{key}[{index}]")
         for key in ("ingredients", "variation_ingredients")
         for index, ingredient in enumerate(recipe.get(key) or [])
     ]
+    options = recipe.get("customizations") or []
+    if not options:
+        return entries
+    replaced = {name.casefold() for option in options for name in option.get("replaces", [])}
+    grouped = [
+        ({**ing, "_option": "BASE OPTION"}, optional, field)
+        for ing, optional, field in entries
+        if ing["item"].casefold() in replaced
+    ]
+    for index, option in enumerate(options):
+        grouped.extend(
+            (
+                {
+                    **ing,
+                    "_option": ("OR: " if option.get("replaces") else "OPTION: ") + option["name"],
+                },
+                True,
+                f"customizations[{index}].ingredients[{i}]",
+            )
+            for i, ing in enumerate(option.get("ingredients", []))
+        )
+    return grouped + [entry for entry in entries if entry[0]["item"].casefold() not in replaced]
 
 
 def add_ingredient_rail(slide, recipe):
@@ -125,6 +147,10 @@ def add_ingredient_rail(slide, recipe):
         color=C["dark_blue"],
         align="center",
     )
+
+    if recipe.get("customizations"):
+        add_customized_rail(slide, recipe)
+        return
 
     core = list(recipe.get("ingredients") or [])
     # Ingredients a variation needs are listed too, under their own heading, so
@@ -201,6 +227,60 @@ def add_ingredient_rail(slide, recipe):
         )
 
 
+def add_customized_rail(slide, recipe):
+    """Show base and alternative quantities together, before shared ingredients."""
+    entries = ingredient_entries(recipe)
+    shown = entries[:INGREDIENT_MAX_ROWS]
+    top = INGREDIENT_PANEL_TOP
+    height = INGREDIENT_PANEL_MAX_BOTTOM - top
+    pitch = min(INGREDIENT_ROW_MAX_HEIGHT, (height - 0.45) / max(1, len(shown)))
+    panel_h = min(height, 0.40 + len(shown) * pitch)
+    add_box(slide, 0.27, top, LEFT_W - 0.54, panel_h, C["white"], C["border"], radius=True)
+    add_text(
+        slide,
+        "CUSTOMIZED OPTIONS",
+        0.42,
+        top + 0.05,
+        LEFT_W - 0.84,
+        0.18,
+        font_size=8.4,
+        bold=True,
+        color=C["dark_blue"],
+    )
+    for index, (ingredient, optional, field) in enumerate(shown):
+        y = top + 0.30 + index * pitch
+        label = ingredient.get("_option", "")
+        previous = shown[index - 1][0].get("_option", "") if index else None
+        if label and label != previous:
+            add_rule(slide, 0.42, y - 0.03, LEFT_W - 0.84, C["border"], 0.5)
+            add_text(
+                slide,
+                label.upper(),
+                0.42,
+                y,
+                LEFT_W - 0.84,
+                0.14,
+                font_size=7,
+                bold=True,
+                color=C["dark_blue"],
+            )
+        if not label and previous:
+            add_rule(slide, 0.42, y - 0.03, LEFT_W - 0.84, C["border"], 0.5)
+        add_ingredient_row(slide, ingredient, y + 0.15, pitch - 0.15, muted=optional, field=field)
+    if len(entries) > len(shown):
+        add_text(
+            slide,
+            "Ingredients continue on the next page",
+            0.35,
+            INGREDIENT_PANEL_MAX_BOTTOM + 0.03,
+            LEFT_W - 0.70,
+            0.12,
+            font_size=7,
+            color=C["muted"],
+            align="center",
+        )
+
+
 def add_ingredient_continuation_slides(prs, recipe) -> int:
     """Render every remaining ingredient in two readable columns per page."""
     remaining = ingredient_entries(recipe)[INGREDIENT_MAX_ROWS:]
@@ -234,10 +314,10 @@ def add_ingredient_continuation_slides(prs, recipe) -> int:
         for index, (ingredient, optional, field) in enumerate(entries):
             column, row = divmod(index, rows_per_column)
             x, y = 0.4 + column * 4.8, 1.9 + row * row_h
-            if optional:
+            if optional or ingredient.get("_option"):
                 add_text(
                     slide,
-                    "OPTIONAL VARIATION",
+                    ingredient.get("_option", "OPTIONAL VARIATION"),
                     x,
                     y,
                     4.3,

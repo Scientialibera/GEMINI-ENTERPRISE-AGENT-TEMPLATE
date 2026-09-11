@@ -30,10 +30,14 @@ returned for correction rather than silently trimmed or shrunk. Use these budget
   under 150 characters and concerns the steps on its own page
 - steps: four to six, each title under 30 characters, each with 2 to 5
   instructions of roughly 100 characters
-- variations: three, each under 90 characters
+- customizations: named alternatives with replacement ingredients and step checklists
 - bottom_banner_text: exactly two short lines, under 26 characters each
-- variation_ingredients: anything a variation needs that the core list does
-  not already carry, same shape as ingredients; omit when there is none
+- Each customization has name, replaces (exact core ingredient names), ingredients
+  (full replacement quantities) and steps (one-based step number and instructions list).
+  For a half-pork, half-shrimp option replacing 1 lb pork, list both 8 oz pork and
+  8 oz shrimp. Explain preparation and cooking changes for each affected step.
+  Technique-only options can have empty replaces and ingredients. Do not use legacy
+  variations or variation_ingredients for new cards.
 - ingredients: eight to twelve, each item under 26 characters
 
 The ingredient list and the method must agree. Every ingredient listed has to
@@ -60,8 +64,10 @@ Shape:
   "ingredients": [{"quantity": "12 oz", "item": "Spaghetti"}],
   "cooking_tip": ["One tip per step page."],
   "steps": [{"title": "Boil the pasta", "body": "One instruction.\\nAnother."}],
-  "variations": ["One variation."],
-  "variation_ingredients": [{"quantity": "1/2 cup", "item": "Manchego"}],
+  "customizations": [{"name": "Short pasta", "replaces": ["Spaghetti"],
+    "ingredients": [{"quantity": "12 oz", "item": "Penne"}],
+    "steps": [{"step": 1, "instructions": [
+      "Use penne instead of spaghetti; cook to the package's al dente timing."]}]}],
   "allergens": ["wheat/gluten"],
   "possible_cross_contact": ["depends on the pasta"],
   "bottom_banner_text": "Two short lines.",

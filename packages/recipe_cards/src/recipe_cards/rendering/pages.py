@@ -11,6 +11,7 @@ from pptx.util import Inches
 
 from ..schema import load_recipes
 from .assets import asset_context
+from .customizations import add_customization_slides
 from .drawing import (
     chunks,
 )
@@ -38,6 +39,7 @@ def add_recipe(prs, recipe):
             len(step_pages),
             page_offset=1 + ingredient_pages,
         )
+    add_customization_slides(prs, recipe)
 
 
 def build_pptx(data: dict[str, Any], output: str) -> None:

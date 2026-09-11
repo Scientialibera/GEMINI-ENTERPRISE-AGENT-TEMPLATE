@@ -49,6 +49,18 @@ class ChefNote(InputModel):
     text: Text = ""
 
 
+class CustomizedStep(InputModel):
+    step: int = Field(ge=1, le=24)
+    instructions: list[ShortText] = Field(min_length=1, max_length=12)
+
+
+class Customization(InputModel):
+    name: Annotated[str, StringConstraints(min_length=1, max_length=40)]
+    replaces: list[ShortText] = Field(default_factory=list, max_length=24)
+    ingredients: list[Ingredient] = Field(default_factory=list, max_length=12)
+    steps: list[CustomizedStep] = Field(min_length=1, max_length=24)
+
+
 class Recipe(InputModel):
     title: Annotated[str, StringConstraints(min_length=1, max_length=100)]
     slug: ShortText = ""
@@ -69,6 +81,7 @@ class Recipe(InputModel):
     steps: list[Step] = Field(min_length=1, max_length=24)
     cooking_tip: Text | Annotated[list[ShortText], Field(max_length=6)] = ""
     variations: list[ShortText] = Field(default_factory=list, max_length=6)
+    customizations: list[Customization] = Field(default_factory=list, max_length=6)
     variations_title: ShortText = ""
     allergens: list[ShortText] = Field(default_factory=list, max_length=20)
     possible_cross_contact: list[ShortText] = Field(default_factory=list, max_length=20)
@@ -78,6 +91,16 @@ class Recipe(InputModel):
     decorative_image_path: ImagePath = Field(default="", alias="decorativeImagePath")
     variations_image_path: ImagePath = ""
     footer_image_path: ImagePath = ""
+
+    @model_validator(mode="after")
+    def check_customization_references(self) -> Recipe:
+        items = {ingredient.item.casefold() for ingredient in self.ingredients}
+        for option in self.customizations:
+            if any(item.casefold() not in items for item in option.replaces):
+                raise ValueError("Customization replacements must name core ingredients.")
+            if any(change.step > len(self.steps) for change in option.steps):
+                raise ValueError("Customized steps must reference an existing recipe step.")
+        return self
 
 
 class RecipeDeck(InputModel):
