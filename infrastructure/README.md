@@ -101,11 +101,11 @@ A developer-created Agent Engine receives a separate Agent Identity. Developer A
 
 This stack pre-authorizes every Agent Runtime Agent Identity in the project for common platform roles, using Google's project Agent Identity principal-set format. Because the grant targets the trust domain rather than a named identity, an agent deployed later inherits it with no Terraform change. That is what keeps the agent repository extensible.
 
-Use an organization ID for organization projects, or `developer_agent_identity_orgless=true` for orgless projects. The default baseline covers Agent Platform use, Service Usage, Parameter Manager reads and project-wide Cloud Storage object reads, so the reference agents work on a fresh project without further configuration. Every role in that list reaches every current and future runtime, so add one only when that is intended; access to a particular bucket, dataset or secret belongs on the exact Agent Identity instead.
+Use an organization ID for organization projects, or `developer_agent_identity_orgless=true` for orgless projects. The default baseline covers Agent Platform use, Service Usage and Parameter Manager reads at project scope, plus Cloud Storage object reads on the staging bucket alone, so the reference agents can read their own configuration and source archives on a fresh project. Every project-scoped role in that list reaches every current and future runtime, so add one only when that is intended; access to a particular bucket, dataset or secret belongs on the exact Agent Identity instead.
 
 After a runtime exists, the agent helper reads its effective identity and verifies its project before adding resource-scoped roles. The helper is additive: removing a role from its configuration does not revoke existing access. Review and remove obsolete grants separately. Agent Identity does not support legacy bucket roles.
 
-Configure exactly one trust-domain option whenever developer or runtime IAM bindings are enabled, even with an empty developer member list. The Storage Object Viewer baseline deliberately reaches every bucket in the project; remove it from the baseline for a least-privilege deployment and grant each runtime access only to its required buckets.
+Configure exactly one trust-domain option whenever developer or runtime IAM bindings are enabled, even with an empty developer member list. Storage Object Viewer is granted on the staging bucket only, as a bucket-scoped binding, so a runtime can read its own source archive without gaining access to business data elsewhere in the project. Every other bucket a runtime needs belongs on its exact Agent Identity.
 
 Run `terraform test` to check trust-domain validation with mocked providers; these tests do not contact Google Cloud.
 

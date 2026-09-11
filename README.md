@@ -182,7 +182,7 @@ UI-only means the current Google/Gemini Enterprise workflow requires a console a
 | Baseline IAM shared by every Agent Identity | All deployed runtimes | Cloud/platform admin | Terraform principal-set bindings in the companion platform branch | No |
 | Extra project-scoped IAM for one Agent Identity | One deployed runtime | IAM admin or authorized automation identity | `<AGENT>_AGENT_IDENTITY_PROJECT_ROLES` consumed by `dev/iam/apply_agent_identity_iam.py` | No |
 | Cloud Storage access for one Agent Identity | One deployed runtime | Storage/IAM admin or authorized automation identity | `<AGENT>_AGENT_IDENTITY_STORAGE_BUCKET_ROLES` consumed by `dev/iam/apply_agent_identity_iam.py`; bucket scope preferred | No |
-| Read/create the agent runtime parameter and publish versions | Developer deployment flow; runtime reads it | Cloud or platform admin grants access; dev tooling creates agent-owned parameters | IAM plus `dev/config/bootstrap.py` / deployment preflight | No |
+| Read/create the agent runtime parameter and publish versions | Developer deployment flow; runtime reads it | Cloud or platform admin grants access; dev tooling creates agent-owned parameters | IAM plus `dev/config/bootstrap.py` / deployment preflight. The deploying identity **creates** parameters and publishes versions, so it needs write access such as `roles/parametermanager.parameterAdmin`; the baseline grants runtimes only `roles/parametermanager.parameterAccessor`, which reads. A first deployment fails at preflight without that grant. | No |
 | Enable required Google Cloud APIs | Project | Cloud or platform admin, or developer with Service Usage permission | Terraform or `dev/config/bootstrap_dev.py` when enabled | No |
 | Create/use the developer staging bucket | Developer deployment flow | Cloud or platform admin, or developer with Storage permission | Terraform/existing bucket or `dev/config/bootstrap_dev.py` when enabled | No |
 | Create the optional BigQuery fixture dataset/table | Developer | Data/cloud admin, or developer with BigQuery create permissions | `dev/config/bootstrap_dev.py`; unnecessary when suitable test data already exists | No |
@@ -308,9 +308,9 @@ BIGQUERY_MCP_AGENT_OAUTH_CLIENT_SECRET=<initial-secret>
 package name in uppercase with hyphens replaced by underscores.
 
 ~~~bash
-uv run --group dev python dev/register/register_agent.py --agent auth_reference_agent
-uv run --group dev python dev/register/register_agent.py --agent bigquery_mcp_agent
-uv run --group dev python dev/register/register_agent.py --agent monitoring_mcp_agent
+uv run --group dev python -c "import sys; sys.path.insert(0,'dev'); \
+from register.register_agent import main; \
+sys.argv=['register_agent.py','--agent','auth_reference_agent']; main()"
 ~~~
 
 When the stored secret is missing, registration imports the initial secret into Secret
