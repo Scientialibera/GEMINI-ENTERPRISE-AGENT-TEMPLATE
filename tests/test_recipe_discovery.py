@@ -240,3 +240,134 @@ def test_workflow_can_verify_assets_without_browsing_existing_dishes():
     }
     assert "list_folders" not in staged
     assert "retrieve" in staged
+
+
+def test_a_retrieved_run_can_be_topped_up_and_rendered(monkeypatch):
+    """The sequence a reuse request actually produces, end to end.
+
+    Asked to reuse existing photography and generate the few missing images,
+    the model retrieves a folder and passes that run id back. Session state
+    only knew runs this conversation created, so the id it had just been handed
+    was rejected and the request failed at the first image call.
+    """
+    from recipe_cards import images as images_module
+    from recipe_cards import publish
+
+    stored = [
+        f"{USE_CASE_PREFIX}/{FOLDER}/images/ingredient-pork.png",
+        f"{USE_CASE_PREFIX}/{FOLDER}/images/step-1.png",
+    ]
+    monkeypatch.setattr(discover, "list_objects", Mock(return_value=(stored, [], False)))
+    context = SimpleNamespace(state={})
+
+    asyncio.run(discover.retrieve([FOLDER], context))
+
+    # The run the bucket holds is now resolvable by run id, not only by slug.
+    assert RUN in context.state["recipe_card_runs"]
+    registered = context.state["recipe_card_runs"][RUN]
+    assert registered["slug"] == SLUG
+    assert set(registered["images"]) == {"ingredient-pork", "step-1"}
+
+    # Topping the run up with the hero it was missing now succeeds.
+    monkeypatch.setattr(images_module, "OUTPUT_BUCKET", BUCKET)
+    monkeypatch.setattr(
+        images_module,
+        "generate_images",
+        Mock(return_value=[SimpleNamespace(name="hero", data=b"\x89PNG", mime_type="image/png")]),
+    )
+    monkeypatch.setattr(images_module, "upload_bytes", Mock())
+    result = images_module.generate_recipe_images(
+        SLUG, ["A hero shot"], ["hero"], context, run_id=RUN
+    )
+
+    assert result["run_id"] == RUN
+    assert result["images"]["hero"].startswith(f"{SLUG}/{RUN}/images/")
+
+    # And the deck renders against that same run rather than starting a new one.
+    monkeypatch.setattr(publish, "OUTPUT_BUCKET", BUCKET)
+    monkeypatch.setattr(publish, "render_deck", Mock(return_value=b"deck"))
+    monkeypatch.setattr(publish, "upload_bytes", Mock(return_value=f"gs://{BUCKET}/deck.pptx"))
+    monkeypatch.setattr(publish, "load_recipes", lambda _: {"recipes": [{"slug": SLUG}]})
+
+    rendered = publish.render_recipe_card("{}", context, RUN)
+
+    assert rendered["run_id"] == RUN
+
+
+def test_an_invented_run_id_is_still_rejected(monkeypatch):
+    """Registering retrieved runs must not let the model conjure one.
+
+    The guard exists so a run id that was never produced by a tool cannot be
+    used to write into an arbitrary folder.
+    """
+    from recipe_cards import images as images_module
+
+    monkeypatch.setattr(discover, "list_objects", Mock(return_value=([], [], False)))
+    context = SimpleNamespace(state={})
+    asyncio.run(discover.retrieve([FOLDER], context))
+
+    monkeypatch.setattr(images_module, "OUTPUT_BUCKET", BUCKET)
+    monkeypatch.setattr(images_module, "generate_images", Mock())
+    with pytest.raises(ValueError, match="Unknown recipe run"):
+        images_module.generate_recipe_images(
+            SLUG, ["A hero shot"], ["hero"], context, run_id="20260101-000000-invented"
+        )
+
+
+def test_a_stored_photograph_is_not_silently_regenerated(monkeypatch):
+    """Registering a run makes its stored names count as taken.
+
+    Reusing a folder means its photographs are real files. The name guard and
+    the per-run image budget both read `images`, so a retrieved run refuses a
+    name the bucket already holds instead of overwriting it. The model is told
+    to generate only what is missing, so this is the boundary of that
+    instruction rather than an obstacle to it.
+    """
+    from recipe_cards import images as images_module
+
+    stored = [f"{USE_CASE_PREFIX}/{FOLDER}/images/hero.png"]
+    monkeypatch.setattr(discover, "list_objects", Mock(return_value=(stored, [], False)))
+    context = SimpleNamespace(state={})
+    asyncio.run(discover.retrieve([FOLDER], context))
+
+    monkeypatch.setattr(images_module, "OUTPUT_BUCKET", BUCKET)
+    generate = Mock()
+    monkeypatch.setattr(images_module, "generate_images", generate)
+    with pytest.raises(ValueError, match="already exists"):
+        images_module.generate_recipe_images(SLUG, ["Another hero"], ["hero"], context, run_id=RUN)
+    assert not generate.called, "a refused name must not reach the image model"
+
+
+def test_a_top_up_returns_only_what_it_generated(monkeypatch):
+    """The return value is this call's work; the run carries the whole set.
+
+    A top-up reports only the images it just made, so the recipe's remaining
+    image fields are filled from what `retrieve` listed rather than from here.
+    The stored paths are still added to the run, which is what the name guard,
+    the per-run budget and the renderer read.
+    """
+    from recipe_cards import images as images_module
+
+    stored = [
+        f"{USE_CASE_PREFIX}/{FOLDER}/images/ingredient-pork.png",
+        f"{USE_CASE_PREFIX}/{FOLDER}/images/step-1.png",
+    ]
+    monkeypatch.setattr(discover, "list_objects", Mock(return_value=(stored, [], False)))
+    context = SimpleNamespace(state={})
+    asyncio.run(discover.retrieve([FOLDER], context))
+
+    monkeypatch.setattr(images_module, "OUTPUT_BUCKET", BUCKET)
+    monkeypatch.setattr(
+        images_module,
+        "generate_images",
+        Mock(return_value=[SimpleNamespace(name="hero", data=b"\x89PNG", mime_type="image/png")]),
+    )
+    monkeypatch.setattr(images_module, "upload_bytes", Mock())
+
+    result = images_module.generate_recipe_images(
+        SLUG, ["A hero shot"], ["hero"], context, run_id=RUN
+    )
+
+    assert set(result["images"]) == {"hero"}, "the return value reports this call's work"
+    stored_run = context.state["recipe_card_runs"][RUN]["images"]
+    assert set(stored_run) == {"hero", "ingredient-pork", "step-1"}

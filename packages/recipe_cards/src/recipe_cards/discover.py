@@ -18,6 +18,7 @@ from google.adk.tools import ToolContext
 from google.genai import types
 
 from .config import OUTPUT_BUCKET, OUTPUT_BUCKET_ENV, PROJECT_ID, USE_CASE_PREFIX, resolve_relative
+from .runs import save_run
 
 # Bounded so listing stays cheap metadata calls rather than a walk of the bucket.
 MAX_DISHES = 100
@@ -108,6 +109,8 @@ async def retrieve(
             elif name.lower().endswith(IMAGE_SUFFIXES):
                 images.append(entry)
 
+    _register_runs(images, tool_context)
+
     result: dict[str, object] = {
         "image_count": len(images),
         "images": images,
@@ -117,6 +120,31 @@ async def retrieve(
     if preview_image:
         result["preview"] = await _preview(preview_image, tool_context)
     return result
+
+
+def _register_runs(images: list[dict[str, object]], tool_context: ToolContext) -> None:
+    """Make a retrieved run usable by the image and render tools.
+
+    Those tools resolve a run id through session state, which only knows runs
+    this conversation created. A run found in the bucket was therefore rejected
+    the moment the model did what it was told: reuse the photography and
+    generate the few images that were missing. Registering it here keeps the
+    guard meaningful — an invented run id still fails — while an id the model
+    was just handed resolves.
+    """
+    runs: dict[str, dict[str, object]] = {}
+    for image in images:
+        folder = str(image["folder"]).strip("/")
+        slug, _, run_id = folder.partition("/")
+        if not slug or not run_id:
+            continue
+        # The stem is the name the generator stored it under, which is how
+        # duplicate names and the per-run image budget are checked.
+        name = str(image["path"]).rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        run = runs.setdefault(run_id, {"slug": slug, "images": {}})
+        run["images"][name] = str(image["path"])
+    for run_id, run in runs.items():
+        save_run(tool_context, run_id, run)
 
 
 async def _preview(path: str, tool_context: ToolContext) -> str:
