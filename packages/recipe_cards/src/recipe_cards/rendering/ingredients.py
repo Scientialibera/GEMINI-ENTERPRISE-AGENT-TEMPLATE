@@ -25,6 +25,8 @@ from .theme import (
     INGREDIENT_ROW_MAX_HEIGHT,
     INGREDIENT_ROW_MIN_HEIGHT,
     LEFT_W,
+    SERVINGS_TEXT_OFFSET,
+    SERVINGS_Y,
     C,
 )
 
@@ -111,13 +113,13 @@ def ingredient_entries(recipe):
 
 
 def add_ingredient_rail(slide, recipe):
-    y0 = 3.86
+    y0 = SERVINGS_Y
     add_box(slide, 0.68, y0, 2.10, 0.38, C["yellow"], C["yellow"], radius=True)
     add_text(
         slide,
         servings_label(recipe.get("servings")),
         0.78,
-        y0 + 0.04,
+        y0 + SERVINGS_TEXT_OFFSET,
         1.90,
         0.26,
         font_size=15,

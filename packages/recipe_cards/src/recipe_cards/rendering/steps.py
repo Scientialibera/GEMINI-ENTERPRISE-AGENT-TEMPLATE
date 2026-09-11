@@ -21,6 +21,9 @@ from .drawing import (
 )
 from .footer import add_footer
 from .theme import (
+    BANNER_FONT_SIZE,
+    BANNER_TEXT_W,
+    BANNER_TEXT_X,
     BULLET_FONT_SIZE,
     BULLET_LINE_HEIGHT,
     BULLET_ROW_PADDING,
@@ -45,6 +48,11 @@ from .theme import (
     VARIATIONS_MAX_TOP,
     VARIATIONS_MIN_TOP,
     VARIATIONS_MIN_TOP_SHORT_PAGE,
+    VARIATIONS_PANEL_H,
+    VARIATIONS_PANEL_OFFSET,
+    VARIATIONS_SKETCH_X,
+    VARIATIONS_TAB_H,
+    VARIATIONS_TAB_W,
     VARIATIONS_TO_BANNER,
     WORDS_PER_BULLET_LINE,
     C,
@@ -217,14 +225,17 @@ def add_step_block(slide, step, idx, x, y, w, h):
 
 
 def add_variations_panel(slide, recipe, y):
-    add_box(slide, 0.34, y, 9.22, 1.50, C["pale"], C["pale"], radius=True)
+    # The heading sits above the panel as a tab rather than inside it, so the
+    # panel starts lower and carries only the list.
+    panel_y = y + VARIATIONS_PANEL_OFFSET
+    add_box(slide, 0.34, panel_y, 9.22, VARIATIONS_PANEL_H, C["pale"], C["pale"], radius=True)
     add_text(
         slide,
         clean(recipe.get("variations_title"), "Simple Variations"),
-        0.58,
-        y + 0.15,
-        4.0,
-        0.32,
+        0.34,
+        y,
+        VARIATIONS_TAB_W,
+        VARIATIONS_TAB_H,
         font_face=HEAD_FONT,
         font_size=22,
         color=C["dark_blue"],
@@ -232,18 +243,18 @@ def add_variations_panel(slide, recipe, y):
     )
     variations = list(recipe.get("variations") or [])[:3]
     for i, variation in enumerate(variations):
-        by = y + 0.63 + i * 0.29
-        add_checkbox(slide, 0.63, by + 0.035, 0.12)
+        by = panel_y + 0.30 + i * 0.29
+        add_checkbox(slide, 0.60, by + 0.035, 0.12)
         add_text(
-            slide, limit_text(variation, 118), 0.88, by, 6.30, 0.20, font_size=10.7, valign="top"
+            slide, limit_text(variation, 118), 0.85, by, 6.30, 0.20, font_size=10.7, valign="top"
         )
     add_ink_image(
         slide,
         recipe.get("variations_image_path") or recipe.get("decorative_image_path"),
-        7.52,
-        y + 0.08,
+        VARIATIONS_SKETCH_X,
+        panel_y + 0.16,
         2.00,
-        1.34,
+        1.09,
     )
 
 
@@ -254,12 +265,12 @@ def add_bottom_banner(slide, recipe, y):
         clean(
             recipe.get("bottom_banner_text"), f"{clean(recipe.get('title'))}\nfor a cozy evening."
         ),
-        0.60,
-        y + 0.14,
-        3.35,
-        0.82,
+        BANNER_TEXT_X,
+        y + 0.17,
+        BANNER_TEXT_W,
+        0.84,
         font_face=HEAD_FONT,
-        font_size=22,
+        font_size=BANNER_FONT_SIZE,
         color=C["dark_blue"],
         bold=True,
         valign="top",

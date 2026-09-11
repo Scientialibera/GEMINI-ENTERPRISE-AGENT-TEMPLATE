@@ -149,6 +149,11 @@ single-entry ambiguity described above. Keep existing agent tests passing. If a 
 service needs a scope prohibited by current tests, justify a service-specific exception
 rather than weakening the rule for every agent.
 
+To see which tools a deployed agent actually called, publish `tool_call_logging` in its
+Parameter Manager entry: ADK logs the model requests but never names a tool. `names` is
+enough to confirm a call sequence; `full` records argument values, which for a delegated
+tool is the signed-in user's own request text.
+
 Local execution with ADC and successful `tools/list` discovery do not establish
 delegated authorization. Google's remote MCP discovery can be unauthenticated.
 After approval, test a real tool call from Gemini Enterprise after user consent.

@@ -23,7 +23,47 @@ C = {
     "cream": "FBF8F0",
     "grey": "E8E8E8",
     "border": "D8D8D8",
+    "accent": "0070C0",
 }
+
+# Page 1 header block. The title sits lower and wider than the panel's centre,
+# so the panel ends above the servings pill rather than behind it.
+HEADER_PANEL_H = 3.82
+HEADER_TIME_ICON_X = 1.19
+HEADER_TIME_TEXT_X = 1.39
+HEADER_TIME_TEXT_W = 0.85
+HEADER_POT_X = 1.57
+HEADER_POT_Y = 1.25
+TITLE_X = 0.25
+TITLE_Y = 1.45
+TITLE_W = 3.04
+TITLE_H = 1.61
+SUBTITLE_Y = 3.03
+SUBTITLE_W = 2.84
+SUBTITLE_H = 0.64
+SERVINGS_Y = 3.95
+SERVINGS_TEXT_OFFSET = 0.08
+
+# Overview right column.
+CALLOUT_Y = 7.66
+DESCRIPTION_FONT_SIZE = 9.0
+DESCRIPTION_H = 0.42
+MENU_TITLE_FONT_SIZE = 10.5
+MENU_BLURB_W = 1.90
+MENU_BLURB_H = 0.34
+MENU_PICTURE_W = 2.33
+MENU_PICTURE_H = 0.84
+MENU_LABEL_OFFSET = 0.35
+
+# Closing panels on the last steps page.
+VARIATIONS_PANEL_OFFSET = 0.30
+VARIATIONS_PANEL_H = 1.35
+VARIATIONS_TAB_W = 2.60
+VARIATIONS_TAB_H = 0.36
+VARIATIONS_SKETCH_X = 7.00
+BANNER_TEXT_X = 0.46
+BANNER_TEXT_W = 3.56
+BANNER_FONT_SIZE = 20.0
 HEAD_FONT = "Georgia"
 BODY_FONT = "Aptos"
 # Conservative mean character widths and line heights for fixed-size text.

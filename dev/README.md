@@ -293,3 +293,17 @@ Other live settings remain unchanged when a prompt is published.
 To change model settings or limits without updating code, publish a Parameter Manager
 version and wait for the cache interval.
 See [configuration management](../README.md#manage-configuration).
+
+### Seeing which tools ran
+
+ADK logs nothing that names a called tool, so a deployed agent's logs show model
+requests but not the tools it chose. `tool_call_logging` in the agent's own parameter
+turns that on: `names` records the call sequence, `argument_keys` adds which parameters
+were supplied, and `full` adds their values. Publish a new version and it applies after
+the cache interval, with no redeployment.
+
+Raise it on one agent while investigating and leave the others at `off`, since each
+agent reads its own parameter. Keep `full` for a deliberate debugging session: a
+delegated tool's arguments are the signed-in user's own query text, and that level
+writes them to Cloud Logging. See
+[tool-call logging](../README.md#tool-call-logging).

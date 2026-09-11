@@ -482,7 +482,7 @@ look at the pages. Nothing is generated, and the whole loop takes seconds.
 
 | Setting | Location | How a change takes effect |
 |---|---|---|
-| Model, instructions, log level and tool limits | Parameter Manager | After the runtime cache expires. |
+| Model, instructions, log level, tool-call logging and tool limits | Parameter Manager | After the runtime cache expires. |
 | Parameter address, model location and authorization ID | Runtime environment | Update the deployed runtime. |
 | MCP endpoint and other per-agent runtime settings | AgentSpec.runtime_env | Update the deployed runtime. |
 | OAuth client secret | Secret Manager | Update the stored version and review any existing authorization that uses it. |
