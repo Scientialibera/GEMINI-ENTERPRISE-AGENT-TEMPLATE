@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from gemini_shared.runtime import create_model
 from google.adk.agents import LlmAgent
+from recipe_cards.discover import retrieve
 from recipe_cards.publish import render_recipe_card
 
 from ..config import BOOTSTRAP
@@ -22,7 +23,12 @@ Recipe:
 Images:
 {images}
 
-Merge the image URIs into the recipe and call `render_recipe_card` once,
+Use retrieve to confirm the supplied image paths exist in the run folder. Compare
+them with every core and variation ingredient, every step, the hero and sketch.
+If any are missing, report the incomplete image set and stop rather than publishing
+placeholders. File presence does not prove visual quality.
+
+Merge the relative image paths into the recipe and call `render_recipe_card` once,
 passing the run_id from the images object so the deck is stored beside the
 photographs it uses.
 
@@ -62,6 +68,6 @@ card_renderer = LlmAgent(
     model=create_model(BOOTSTRAP),
     description="Renders the recipe card deck and publishes it to Cloud Storage.",
     instruction=INSTRUCTION,
-    tools=[render_recipe_card],
+    tools=[render_recipe_card, retrieve],
     output_key=DECK_STATE_KEY,
 )

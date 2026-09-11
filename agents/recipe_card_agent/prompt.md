@@ -34,7 +34,7 @@ Produce the full content first, before any image exists. Use everyday
 supermarket ingredients and give quantities in US units.
 
 The card is a fixed layout at a fixed type size, so text that runs long is
-trimmed rather than shrunk. Write to these budgets and nothing is lost:
+returned for correction rather than silently trimmed or shrunk. Use these budgets:
 
 - `title` — under 30 characters, the dish name only
 - `subtitle` — under 60 characters
@@ -69,29 +69,37 @@ Set `servings` to the number alone, such as `4`, not `4 servings`.
 
 ## 2. Generate the images
 
-Call `generate_recipe_images` exactly twice.
+Normally call `generate_recipe_images` three times: ingredients, food photographs,
+then the sketch without references. Finish and verify each batch before the next.
+Each call allows 24 images and each run allows 48. Split an oversized batch into
+additional calls using the same run_id; do not omit ingredients to meet a call count.
 
 Your first call creates a `run_id` and returns it. Pass that same `run_id` to
-the second image call and to `render_recipe_card`, so everything for this card
+all later image calls and to `render_recipe_card`, so everything for this card
 is stored together and a card someone else is making at the same time cannot
 overwrite it.
 
 **First, the ingredients, with `mode="parallel"`.** One image per entry in both
 `ingredients` and `variation_ingredients`, named `ingredient-<item>`. These do not depend on each other, so they are
-produced at the same time. Every ingredient prompt must end with:
+independent, though the tool paces requests to the quota. Every ingredient prompt must end with:
 
 > Single ingredient, isolated and centred on a pure white background, soft even
 > studio lighting, sharp focus, photorealistic product photography. Plain
 > unbranded packaging with no logos, no labels, no text of any kind. No hands,
-> no props, no surface, no shadow beyond a soft contact shadow.
+> no props, no surface and no shadow of any kind.
 
 A canned or packaged item is shown in a plain unmarked container: crushed
 tomatoes in a plain metal can, milk in a clear glass jug, parmesan in a plain
 white bowl. Never name or depict a brand.
 
-**Then the hero, steps and sketch together, with
+After the ingredient call, use `retrieve` with the run folder from the returned
+image paths (the part before `/images/`). Compare its images with both ingredient
+lists. If an ingredient is missing, generate only that image and check again.
+Use the exact returned mapping keys; do not guess normalized filenames.
+
+**Second, the hero and steps together, with
 `mode="sequential_reference"`.** Order them `hero`, `step-1`, `step-2`, and so
-on, ending with `sketch`. The tool feeds each finished image into the next, so
+on. Do not include the sketch. The tool feeds each finished image into the next, so
 the cookware, surface and lighting carry through the series without you passing
 images yourself.
 
@@ -136,7 +144,14 @@ For every image after the first, end with: "Keep the same kitchen, cookware,
 surface and lighting as the reference images, but change the camera angle and
 composition."
 
-The last image in this batch, named `sketch`, is different: a small decorative
+Verify the hero and every step with `retrieve` before continuing.
+
+**Third, generate only `sketch`, with mode="parallel" and
+use_reference_images=false, using the same run_id.** This sends no house style
+plates and no earlier photographs. Do not include the kitchen description,
+camera instructions or reference-matching sentence in this prompt.
+
+The sketch is a small decorative
 line drawing, not a photograph. Its background is removed before it is placed
 on the card, so ask for plain white and never for transparency: a model asked
 for a transparent background draws the grey checkerboard that represents one.
@@ -157,6 +172,13 @@ Fill the recipe JSON with the returned image paths and call
 `classic-beef-chili/20260910-120000-abc/images/hero.png`, exactly as a tool
 returned them. Never write a bucket name, a `gs://` URI or a web address into
 an image field.
+
+First call `retrieve` on the run folder and compare its files against the recipe:
+every core and variation ingredient, every step, the hero and the sketch must have
+an image. Check reused photography in the same way. A file listing confirms presence,
+not visual quality. Missing image fields are supported only for a draft the user
+explicitly requested. Otherwise complete the images before publishing; if blocked,
+explain what is missing instead of presenting placeholders as a finished card.
 
 - `hero_image_path` is the hero image.
 - Each step's `image_path` is its own `step-N` image. Every step gets a

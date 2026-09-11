@@ -633,12 +633,12 @@ def test_workflow_reuses_agent_tools(workflow):
     Duplicating a tool would let the two entry points drift apart, so every
     tool a stage uses must be the very object the agent exposes.
     """
-    from recipe_card_agent.tools import generate_recipe_images, render_recipe_card
+    from recipe_card_agent.tools import generate_recipe_images, render_recipe_card, retrieve
 
     spec = registry.get_agent_spec(workflow)
     module = importlib.import_module(spec.module)
 
-    shared = {generate_recipe_images, render_recipe_card}
+    shared = {generate_recipe_images, render_recipe_card, retrieve}
     used = {
         tool
         for stage in module.root_agent.sub_agents

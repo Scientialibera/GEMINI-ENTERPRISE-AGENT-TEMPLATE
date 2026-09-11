@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
+import sys
 
 from config.settings import load_environment
 from deploy.runtime import build_app
@@ -37,6 +39,13 @@ def main() -> None:
 
     os.chdir(ROOT)
     load_environment(".env.local")
+    # Without a handler the shared plugins log into a void, so tool_call_logging
+    # shows nothing locally. The runtime configures its own; a local run does not.
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        stream=sys.stdout,
+        format="%(levelname)s %(name)s %(message)s",
+    )
     asyncio.run(_run(args.agent, args.message))
 
 

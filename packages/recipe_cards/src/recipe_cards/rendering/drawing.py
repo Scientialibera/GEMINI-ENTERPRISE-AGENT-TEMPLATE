@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
@@ -298,6 +298,14 @@ _INK_SOFT_EDGE = 45
 # ink from being erased along with the checkerboard.
 _INK_MAX_SATURATION = 26
 
+# A product photograph's backdrop is keyed by flooding in from the corners, so
+# these bound what counts as backdrop rather than what counts as white. The
+# floor stops a dark-cornered photograph being flooded at all; the tolerance
+# follows the gentle gradient of studio lighting without crossing the subject.
+_CUTOUT_WHITE_FLOOR = 225
+_CUTOUT_TOLERANCE = 18
+_CUTOUT_SOFT_EDGE = 1.2
+
 
 def _transparent_ink(path: str, directory: str) -> str:
     """Return a copy of a line drawing with its white background removed.
@@ -336,6 +344,62 @@ def _transparent_ink(path: str, directory: str) -> str:
     except Exception:
         # A drawing that cannot be keyed is still better placed than dropped.
         return resolved
+
+
+def _transparent_cutout(path: str, directory: str) -> str:
+    """Return a copy of a product photograph with its backdrop removed.
+
+    A photograph cannot be keyed the way a line drawing is. Thresholding every
+    near-white pixel would hollow out the subject itself: a salsa in a white
+    ramekin reads as 84% near-white, and most of that is the bowl. So the
+    backdrop is found by flooding inwards from the four corners and only
+    pixels reachable from an edge are cleared, which leaves an enclosed white
+    subject intact.
+    """
+    resolved = _resolve(path)
+    assets = CURRENT_ASSETS.get()
+    if assets is None:
+        return ""
+    if not resolved or not os.path.exists(resolved):
+        return resolved
+    if resolved in assets.transparent:
+        return assets.transparent[resolved]
+
+    try:
+        with Image.open(resolved) as source:
+            image = source.convert("RGBA")
+        width, height = image.size
+        # Flooding a scratch copy marks the backdrop; the image is untouched.
+        scratch = image.convert("L")
+        for seed in ((0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)):
+            if scratch.getpixel(seed) >= _CUTOUT_WHITE_FLOOR:
+                ImageDraw.floodfill(scratch, seed, 0, thresh=_CUTOUT_TOLERANCE)
+        backdrop = scratch.point(lambda value: 0 if value == 0 else 255)
+        # Feather the boundary so the subject keeps a soft edge rather than a
+        # hard stair-stepped one against the panel.
+        alpha = backdrop.filter(ImageFilter.GaussianBlur(_CUTOUT_SOFT_EDGE))
+        image.putalpha(ImageChops.multiply(alpha, image.split()[3]))
+        target = Path(directory) / f"cut-{hashlib.sha256(resolved.encode()).hexdigest()[:12]}.png"
+        image.save(target)
+        assets.transparent[resolved] = str(target)
+        assets.local_paths.add(str(target))
+        return str(target)
+    except Exception:
+        # An unkeyable photograph is still better placed than dropped.
+        return resolved
+
+
+def add_cutout_image(slide, path, x, y, w, h, *, placeholder="", quiet=True):
+    """Place a product photograph with its backdrop keyed out."""
+    assets = CURRENT_ASSETS.get()
+    if exists(path) and assets is not None:
+        keyed = _transparent_cutout(path, assets.directory)
+        if keyed and os.path.exists(keyed):
+            try:
+                return add_picture_contain(slide, keyed, x, y, w, h)
+            except Exception:
+                pass
+    return add_image(slide, path, x, y, w, h, crop=False, placeholder=placeholder, quiet=quiet)
 
 
 def add_ink_image(slide, path, x, y, w, h, *, placeholder="SKETCH"):

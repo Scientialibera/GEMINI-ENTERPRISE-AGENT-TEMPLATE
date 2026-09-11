@@ -38,11 +38,13 @@ def render_recipe_card(
       cooking_tip, steps [{title, body, image_path}], variations [],
       allergens [], possible_cross_contact [], bottom_banner_text, brand_line,
       hero_image_path, footer_image_path, decorative_image_path,
-      variations_image_path.
+    variations_image_path, variation_ingredients [{quantity, item, image_path}].
 
     Every image field takes a path exactly as generate_recipe_images or
-    retrieve returned it, relative to the card store. A missing image renders
-    as a placeholder rather than failing the deck.
+    retrieve returned it, relative to the card store. Before publishing a finished
+    card, use retrieve to check every ingredient, step, hero and sketch path.
+    Missing image fields produce placeholders for explicitly requested drafts;
+    do not treat such a draft as a complete illustrated card.
 
     When a step's text does not fit its panel this returns
     `{"status": "needs_correction", ...}` naming the field and the edit to make,
@@ -51,8 +53,9 @@ def render_recipe_card(
     Args:
         recipe_json: The recipe payload as a JSON string.
         run_id: The `run_id` returned by generate_recipe_images, so the deck is
-            stored beside the images it uses. For a card without images, omit on
-            the first call and reuse the returned ID for any corrections.
+            stored beside the images it uses. When reusing existing photography
+            or making an explicitly requested draft, omit on the first call and
+            reuse the returned ID for corrections.
     """
     if not OUTPUT_BUCKET:
         raise RuntimeError(

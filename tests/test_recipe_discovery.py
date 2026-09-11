@@ -225,8 +225,8 @@ def test_both_entry_points_declare_the_same_prefix(entry):
     assert dict(spec.runtime_env)["RECIPE_CARD_PREFIX"] == "recipe-cards"
 
 
-def test_only_the_agent_gets_browsing_tools():
-    """A fixed pipeline cannot ask whether to reuse, so it has no browsing."""
+def test_workflow_can_verify_assets_without_browsing_existing_dishes():
+    """Both paths inspect files; only the conversational agent offers reuse."""
     agent = importlib.import_module("recipe_card_agent.agent")
     names = {getattr(tool, "__name__", "") for tool in agent.root_agent.tools if callable(tool)}
     assert {"list_folders", "retrieve"} <= names
@@ -238,4 +238,5 @@ def test_only_the_agent_gets_browsing_tools():
         for tool in (stage.tools or [])
         if callable(tool)
     }
-    assert not ({"list_folders", "retrieve"} & staged)
+    assert "list_folders" not in staged
+    assert "retrieve" in staged

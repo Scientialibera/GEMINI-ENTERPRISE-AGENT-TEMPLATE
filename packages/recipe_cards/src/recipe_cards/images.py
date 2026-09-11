@@ -45,8 +45,9 @@ def generate_recipe_images(
     tool_context: ToolContext,
     mode: str = MODE_PARALLEL,
     run_id: str = "",
+    use_reference_images: bool = True,
 ) -> dict[str, object]:
-    """Generate recipe photographs and store them, returning their gs:// URIs.
+    """Generate recipe images and return paths relative to the card store.
 
     Use `parallel` for images that do not depend on each other, such as the
     ingredient cutouts. Use `sequential_reference` for a series that must look
@@ -55,12 +56,18 @@ def generate_recipe_images(
     lighting stay the same without you passing images yourself.
 
     Write the full art direction into every prompt. Nothing is added for you.
+    Generate ingredients first, then hero and steps, then a separate sketch.
+    Use retrieve to check the stored files between batches and before rendering.
 
     Args:
         recipe_slug: Identifier for the recipe, used as the storage prefix.
         prompts: One prompt per image, in the order they should be produced.
         names: One short name per image, positionally matching `prompts`.
             Used as the stored file name, for example `hero` or `step-1`.
+        use_reference_images: Include house style plates and, in sequential mode,
+            preceding images. For the sketch set False with mode="parallel";
+            no reference images will be sent. Each batch accepts at most 24
+            images and each run at most 48.
         mode: `parallel` or `sequential_reference`.
         run_id: Pass the `run_id` returned by your first call so every image
             for one card is stored together. Omit it on the first call and one
@@ -70,6 +77,8 @@ def generate_recipe_images(
         raise RuntimeError(
             f"{OUTPUT_BUCKET_ENV} is not set, so there is nowhere to publish the images."
         )
+    if not use_reference_images and mode != MODE_PARALLEL:
+        raise ValueError('No-reference generation requires mode="parallel".')
     if len(prompts) != len(names):
         raise ValueError(
             f"Received {len(prompts)} prompts and {len(names)} names. "
@@ -102,7 +111,7 @@ def generate_recipe_images(
     run_id = run_id or new_run_id()
     # Every image carries the house style plates. In sequential mode the batch's
     # own earlier images are appended to these by the shared helper.
-    plates = _style_plates()
+    plates = _style_plates() if use_reference_images else ()
     images = generate_images(
         [
             ImageRequest(prompt=prompt, name=name, reference_images=plates)

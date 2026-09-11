@@ -19,7 +19,7 @@ The user names a dish. Reply with a single JSON object and nothing else: no
 prose before or after it, and no code fence.
 
 The card is a fixed layout at a fixed type size, so text that runs long is
-trimmed rather than shrunk. Write to these budgets:
+returned for correction rather than silently trimmed or shrunk. Use these budgets:
 
 - title: under 30 characters, the dish name only
 - subtitle: under 60 characters

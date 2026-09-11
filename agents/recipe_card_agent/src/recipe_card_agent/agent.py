@@ -1,8 +1,7 @@
 """Agent that turns a dish into a finished, illustrated recipe card deck.
 
-Two tools do the work: one generates every photograph in a single batch and
-publishes it, the other renders the fixed card template and publishes the deck.
-Both write to the agent's own Cloud Storage bucket under its Agent Identity.
+Tools browse stored cards, generate images and publish the fixed card template.
+Storage calls use the agent's own Cloud Storage bucket under its Agent Identity.
 """
 
 from __future__ import annotations

@@ -5,7 +5,7 @@ from __future__ import annotations
 from ..errors import ContentTooLong
 from .drawing import (
     add_box,
-    add_image,
+    add_cutout_image,
     add_rule,
     add_text,
     add_vrule,
@@ -65,16 +65,14 @@ def add_ingredient_row(
     # The reference cards set the ingredient as a cutout on the panel with no
     # ring around it, so the photograph reads as the ingredient itself rather
     # than as an avatar of one.
-    add_image(
+    add_cutout_image(
         slide,
         ing.get("image_path") or ing.get("imagePath"),
         x,
         y + row_h * 0.10,
         0.62 * scale,
         row_h * 0.80,
-        crop=False,
         placeholder=clean(ing.get("item"), "?")[:1].upper(),
-        quiet=True,
     )
     add_text(
         slide,

@@ -410,6 +410,13 @@ uv run --group dev python dev/release_dev.py --agent recipe_card_workflow
 
 Both need a bucket to publish into and write access to it:
 
+Image generation normally uses three calls: ingredient cutouts, a linked hero/step
+photography batch, then a separate sketch. The sketch uses `mode="parallel"` and
+`use_reference_images=false`, which sends no reference images. Larger batches may
+be split within the tool's limits. The agent uses `retrieve` to check stored files
+between batches and before rendering; this is agent-directed, not a fixed execution
+gate. Missing-image placeholders are reserved for explicitly requested drafts.
+
 ~~~text
 RECIPE_CARD_BUCKET=<project>-recipe-cards
 RECIPE_CARD_BUCKET_LOCATION=
@@ -475,7 +482,7 @@ mistaken for a required one.
 A card needs about sixteen images and the project admits two a minute, so generating
 one to check a layout change is slow and wasteful. Render instead from images a
 previous run already published: point `render_deck` at a recipe payload whose image
-fields are the gs:// URIs of an earlier run, convert the .pptx with LibreOffice and
+fields are the relative asset paths of an earlier run, convert the .pptx with LibreOffice and
 look at the pages. Nothing is generated, and the whole loop takes seconds.
 
 ## Manage configuration

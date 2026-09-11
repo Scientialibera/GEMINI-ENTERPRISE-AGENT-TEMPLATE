@@ -184,6 +184,49 @@ def test_image_names_cannot_collide_after_normalization(monkeypatch):
         )
 
 
+@pytest.mark.parametrize("use_references", [True, False])
+def test_reference_free_sketch_omits_style_plates(monkeypatch, use_references):
+    from recipe_cards import images
+
+    monkeypatch.setattr(images, "OUTPUT_BUCKET", "output")
+    plates = Mock(return_value=(b"style-photo",))
+    monkeypatch.setattr(images, "_style_plates", plates)
+    generate = Mock(
+        return_value=[SimpleNamespace(name="sketch", data=png(), mime_type="image/png")]
+    )
+    monkeypatch.setattr(images, "generate_images", generate)
+    monkeypatch.setattr(images, "upload_bytes", Mock())
+    images.generate_recipe_images(
+        "soup",
+        ["Navy ink sketch"],
+        ["sketch"],
+        SimpleNamespace(state={}),
+        use_reference_images=use_references,
+    )
+    request = generate.call_args.args[0][0]
+    assert request.reference_images == ((b"style-photo",) if use_references else ())
+    assert generate.call_args.kwargs["mode"] == "parallel"
+    assert plates.call_count == int(use_references)
+
+
+def test_no_references_cannot_enable_photo_chaining(monkeypatch):
+    from recipe_cards import images
+
+    monkeypatch.setattr(images, "OUTPUT_BUCKET", "output")
+    generate = Mock()
+    monkeypatch.setattr(images, "generate_images", generate)
+    with pytest.raises(ValueError, match="No-reference"):
+        images.generate_recipe_images(
+            "soup",
+            ["sketch"],
+            ["sketch"],
+            SimpleNamespace(state={}),
+            mode="sequential_reference",
+            use_reference_images=False,
+        )
+    generate.assert_not_called()
+
+
 def test_generated_assets_are_owned_by_session(monkeypatch):
     from recipe_cards import images, publish
 

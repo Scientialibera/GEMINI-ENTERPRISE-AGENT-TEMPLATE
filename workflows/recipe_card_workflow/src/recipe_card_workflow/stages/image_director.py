@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from gemini_shared.runtime import create_model
 from google.adk.agents import LlmAgent
+from recipe_cards.discover import retrieve
 from recipe_cards.images import generate_recipe_images
 
 from ..config import BOOTSTRAP
@@ -19,13 +20,15 @@ IMAGES_STATE_KEY = "images"
 INSTRUCTION = """You art-direct the photography for a recipe card.
 
 The recipe is below. Produce every image it needs, then reply with a single
-JSON object mapping each image name to the gs:// URI the tool returned, plus
+JSON object mapping each image name to the relative path the tool returned, plus
 the run_id. No prose, no code fence.
 
 Recipe:
 {recipe}
 
-Call `generate_recipe_images` exactly twice.
+Normally make three image calls: ingredients, food photography, then an independent
+sketch. Each call allows 24 images and each run allows 48. Split larger batches
+across additional calls with the same run_id rather than omitting images.
 
 **First the ingredients, with mode="parallel"**, one per entry in both
 `ingredients` and `variation_ingredients`, named `ingredient-<item>`. Every
@@ -34,14 +37,18 @@ ingredient prompt ends with:
 > Single ingredient, isolated and centred on a pure white background, soft even
 > studio lighting, sharp focus, photorealistic product photography. Plain
 > unbranded packaging with no logos, no labels, no text of any kind. No hands,
-> no props, no surface, no shadow beyond a soft contact shadow.
+> no props, no surface and no shadow of any kind.
 
 A canned or packaged item appears in a plain unmarked container. Never name or
 depict a brand.
 
-**Then the hero, steps and sketch together, with
+After ingredients, call retrieve on the run folder (the path before /images/).
+Compare the stored files with both ingredient lists. Generate only missing images
+and check again before moving on. Use the exact returned image mapping keys.
+
+**Second, the hero and steps together, with
 mode="sequential_reference"**, passing the run_id the first call returned.
-Order them `hero`, `step-1`, `step-2`, ..., ending with `sketch`. The tool
+Order them `hero`, `step-1`, `step-2`, ... without a sketch. The tool
 feeds each finished image into the next, so the kitchen carries through.
 
 Open each prompt with a named camera angle, then the action, then this scene:
@@ -70,7 +77,12 @@ food at the stage that step describes, not the finished dish. For every image
 after the first, end with: "Keep the same kitchen, cookware, surface and
 lighting as the reference images, but change the camera angle and composition."
 
-The final image, `sketch`, is a line drawing rather than a photograph:
+Verify the hero and every step with retrieve.
+
+Third, call generate_recipe_images for `sketch` alone with mode="parallel",
+use_reference_images=false and the same run_id. No house style plates or previous
+photographs are sent. Omit kitchen, camera and reference-matching instructions.
+The sketch is a line drawing rather than a photograph:
 
 > A delicate single-colour navy blue ink line drawing of [two or three of the
 > dish's signature ingredients], in the style of a vintage botanical engraving.
@@ -79,11 +91,18 @@ The final image, `sketch`, is a line drawing rather than a photograph:
 > frame, no shadow, no checkerboard and no text. The strokes sit alone on
 > plain white.
 
+Call retrieve again to confirm all ingredient, step, hero and sketch files exist.
+Do not hand off an incomplete image set as finished. If a tool fails, report the
+failure rather than inventing paths. A listing verifies presence, not visual style.
+
 Reply with:
 
-{{"run_id": "...", "images": {{"hero": "gs://...", "step-1": "gs://..."}}}}
+{{"run_id": "...", "images": {{"hero": "dish/run/images/hero.png",
+"step-1": "dish/run/images/step-1.png", "ingredient-salmon":
+"dish/run/images/ingredient-salmon.png", "sketch": "dish/run/images/sketch.png"}}}}
 
-Never invent a URI. Use only what a tool returned.
+Include every generated image in the mapping, not just the example entries.
+Never invent a path or convert one to gs://. Use only what a tool returned.
 """
 
 image_director = LlmAgent(
@@ -92,6 +111,6 @@ image_director = LlmAgent(
     model=create_model(BOOTSTRAP),
     description="Generates and publishes every photograph a recipe card needs.",
     instruction=INSTRUCTION,
-    tools=[generate_recipe_images],
+    tools=[generate_recipe_images, retrieve],
     output_key=IMAGES_STATE_KEY,
 )
