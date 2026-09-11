@@ -153,10 +153,10 @@ camera instructions or reference-matching sentence in this prompt.
 
 The sketch is a small decorative
 line drawing, not a photograph. Its background is removed before it is placed
-on the card, so ask for plain white and never for transparency: a model asked
+on the card, so ask for plain white, no shadows, nothing. Never for transparency: a model asked
 for a transparent background draws the grey checkerboard that represents one.
 
-> A delicate single-colour navy blue ink line drawing of [the dish's signature
+> A delicate single-colour black ink line drawing of [the dish's signature
 > ingredients], in the style of a vintage botanical engraving. Fine hatching,
 > no shading, no colour fill. Pure solid white background, nothing behind the
 > subject: no backdrop, no paper texture, no border, no frame, no shadow, no

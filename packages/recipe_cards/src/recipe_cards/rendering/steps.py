@@ -35,6 +35,7 @@ from .theme import (
     STEP_BLOCK_GAP,
     STEP_BLOCK_MAX_SCALE,
     STEP_BLOCK_MIN_HEIGHT,
+    STEP_COLUMN_SPARE_SHARE,
     STEP_IMAGE_MIN_ASPECT,
     STEP_IMAGE_WIDTH_FRACTION,
     STEP_TITLE_BOX_HEIGHT,
@@ -301,17 +302,16 @@ def add_bottom_banner(slide, recipe, y):
     )
 
 
-def add_steps_slide(
-    prs, recipe, page_index, step_start, steps_on_page, total_step_pages, *, page_offset=1
-):
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    rule_y = add_top_tip(slide, cooking_tip_for_page(recipe, page_index))
+def place_step_blocks(
+    steps_on_page: list[dict[str, Any]], *, top: float, bottom: float
+) -> list[tuple[float, float, float, float]]:
+    """Lay out one page of steps, returning each block as (x, y, w, h).
 
-    # The grid starts below the banner, which grows when the tip wraps.
-    top = rule_y + 0.18
-    is_last = page_index == total_step_pages - 1
-    bottom = STEPS_LAST_PAGE_BOTTOM if is_last else STEPS_PAGE_BOTTOM
-
+    Separate from drawing so the arithmetic can be checked without building a
+    slide: what a block ends up measuring is the whole of this layout's
+    behaviour, and it is not observable from the rendered shapes when a step
+    has no photograph to place.
+    """
     # Two independent columns rather than a fixed grid. Each step is given the
     # height its own text and photograph need, so a three-bullet step does not
     # reserve the same block as a six-bullet one and leave a gap under it. This
@@ -361,23 +361,39 @@ def add_steps_slide(
         column_y[column] += height + STEP_BLOCK_GAP
         last_in_column[column] = index
 
-    # A column of short steps still ends level with the longest column, and the
-    # room left over goes to its final block. Otherwise a step with one
-    # instruction keeps a small photograph beside a column of tall ones, which
-    # reads as a mistake rather than as a short step.
+    # A column of short steps would otherwise end well above the longest one,
+    # leaving a band of white, so its final block takes up part of the slack.
+    # Only part: absorbing all of it made a short block end up taller than the
+    # longer block beside it, which inverted the very difference the measured
+    # heights had established and made every row look uniform.
     tallest_column_end = max(column_y)
     for column, index in last_in_column.items():
-        spare = tallest_column_end - column_y[column]
+        spare = (tallest_column_end - column_y[column]) * STEP_COLUMN_SPARE_SHARE
         if spare <= 0:
             continue
         x, y, width, height = placed[index]
         placed[index] = (x, y, width, height + spare)
         column_y[column] += spare
 
-    if len(columns) > 1:
-        add_vrule(
-            slide, 4.98, top - 0.10, max(column_y) - top - STEP_BLOCK_GAP + 0.10, C["line"], 0.75
-        )
+    return placed
+
+
+def add_steps_slide(
+    prs, recipe, page_index, step_start, steps_on_page, total_step_pages, *, page_offset=1
+):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    rule_y = add_top_tip(slide, cooking_tip_for_page(recipe, page_index))
+
+    # The grid starts below the banner, which grows when the tip wraps.
+    top = rule_y + 0.18
+    is_last = page_index == total_step_pages - 1
+    bottom = STEPS_LAST_PAGE_BOTTOM if is_last else STEPS_PAGE_BOTTOM
+
+    placed = place_step_blocks(steps_on_page, top=top, bottom=bottom)
+
+    if len(steps_on_page) > 1:
+        rule_bottom = max(y + h for _, y, _, h in placed)
+        add_vrule(slide, 4.98, top - 0.10, rule_bottom - top + 0.10, C["line"], 0.75)
 
     for i, step in enumerate(steps_on_page):
         add_step_block(slide, step, step_start + i, *placed[i])
@@ -386,7 +402,7 @@ def add_steps_slide(
         # The closing panels follow the steps rather than sitting at a fixed
         # line, so short steps do not leave a band of empty page above the
         # variations. They are held within the space the footer leaves.
-        steps_end = max(column_y) - STEP_BLOCK_GAP
+        steps_end = max(y + h for _, y, _, h in placed)
         # A trailing page with one or two steps ends high, so the panels are
         # allowed to rise with it rather than leaving a band of empty page.
         floor = VARIATIONS_MIN_TOP_SHORT_PAGE if len(steps_on_page) <= 2 else VARIATIONS_MIN_TOP

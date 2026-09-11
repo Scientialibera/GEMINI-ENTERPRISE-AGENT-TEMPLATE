@@ -327,3 +327,32 @@ def test_image_client_is_closed_after_attempt(monkeypatch):
     result = media._generate_one("global", "test-model", media.ImageRequest("photo", "hero"), ())
     assert result.name == "hero"
     manager.__exit__.assert_called_once_with(None, None, None)
+
+
+def test_a_short_step_stays_shorter_than_the_step_beside_it():
+    """Levelling columns must not invert a row's measured difference.
+
+    Each block is sized from its own text, so two steps in a row differ. Handing
+    a short column's whole leftover height to its last block made that block
+    taller than the longer one beside it, so every row looked the same height
+    whatever it carried. The block height is asserted rather than the
+    photograph's, because a step without an image draws a placeholder and there
+    is no picture to measure.
+    """
+    from recipe_cards.rendering.steps import place_step_blocks
+
+    long_step = {"title": "Longer one", "bullets": ["Stir the pot gently for a minute."] * 4}
+    short_step = {"title": "Short", "bullets": ["Brief."]}
+    steps = [
+        {"title": "First", "bullets": ["Stir the pot gently for a minute."] * 2},
+        {"title": "Second", "bullets": ["Stir the pot gently for a minute."] * 2},
+        long_step,
+        short_step,
+    ]
+
+    placed = place_step_blocks(steps, top=1.30, bottom=10.90)
+    bottom_row = [placed[2][3], placed[3][3]]
+
+    assert bottom_row[0] > bottom_row[1], (
+        "the shorter step's block is at least as tall as the longer step's"
+    )

@@ -32,13 +32,17 @@ HEADER_PANEL_H = 3.82
 HEADER_TIME_ICON_X = 1.19
 HEADER_TIME_TEXT_X = 1.39
 HEADER_TIME_TEXT_W = 0.85
-HEADER_POT_X = 1.57
+# Centred on the title below it rather than on the panel: the title box is
+# inset slightly right of the panel, and the pot reads as its mark.
+HEADER_POT_X = 1.77
 HEADER_POT_Y = 1.25
 TITLE_X = 0.25
 TITLE_Y = 1.45
 TITLE_W = 3.04
 TITLE_H = 1.61
-SUBTITLE_Y = 3.03
+# A three-line title fills its box to 3.06, so the old 3.03 overlapped it. The
+# subtitle clears the title and still ends inside the panel at 3.82.
+SUBTITLE_Y = 3.16
 SUBTITLE_W = 2.84
 SUBTITLE_H = 0.64
 SERVINGS_Y = 3.95
@@ -112,6 +116,10 @@ STEP_BLOCK_MIN_HEIGHT = 2.60
 # Bound expansion so photographs do not dominate short instruction pages.
 STEP_BLOCK_MAX_SCALE = 1.85
 STEP_BLOCK_COLUMN_SHARE = 0.58
+# How much of a short column's leftover height its last block absorbs. Giving
+# back all of it made the shorter block of a row end up taller than its
+# neighbour, erasing the difference the measured heights had established.
+STEP_COLUMN_SPARE_SHARE = 0.5
 STEPS_PAGE_BOTTOM = 12.60
 STEPS_LAST_PAGE_BOTTOM = 8.90
 STEP_TITLE_FONT_SIZE = 20.0
