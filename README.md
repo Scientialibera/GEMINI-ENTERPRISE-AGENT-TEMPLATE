@@ -506,7 +506,8 @@ versions/latest. RuntimeConfig rejects unknown fields and invalid values.
   "bigquery_query_row_limit": 100,
   "max_attempts": 3,
   "max_model_calls_per_request": 100,
-  "context_compaction_threshold_tokens": 100000
+  "context_compaction_threshold_tokens": 100000,
+  "tool_call_logging": "off"
 }
 ~~~
 
@@ -518,6 +519,29 @@ Settings are cached for CONFIG_REFRESH_SECONDS. After a successful load, a faile
 refresh retains the last valid settings for that same parameter and retries within
 30 seconds or the configured refresh interval, whichever is shorter. The first failed
 load raises an error. Switching parameters requires a successful read of the new one.
+
+### Tool-call logging
+
+ADK logs nothing that names a called tool, so which tools ran, and in what order, is
+invisible by default. `tool_call_logging` turns that on through the shared limits
+plugin, so it covers every agent and needs no per-agent change:
+
+| Value | Recorded | Contains user data |
+|---|---|---|
+| `off` (default) | nothing | — |
+| `names` | tool name, completion, error type | No |
+| `argument_keys` | also which parameters were supplied | No — names only |
+| `full` | also argument values, results and error messages | **Yes** |
+
+A tool's arguments are whatever the signed-in user asked for: BigQuery SQL, monitoring
+filters, storage paths. `full` writes those to Cloud Logging, so treat it as a
+deliberate debugging step on one agent rather than a setting to leave on. The lower
+levels answer "which tools ran" without disclosing what was asked.
+
+Because each agent reads its own `<package-name>-config`, this can be raised for one
+agent while the others stay quiet, and it takes effect after the cache interval with no
+redeployment. An invalid value fails at config load rather than logging nothing
+silently. The local equivalent is `TOOL_CALL_LOGGING`.
 
 The instruction and model callbacks use this cache for each request. Publish a new
 parameter version to change live settings without redeploying code.

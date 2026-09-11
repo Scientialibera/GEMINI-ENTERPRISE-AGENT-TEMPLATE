@@ -25,10 +25,27 @@ LOG_LEVEL_ENV = "LOG_LEVEL"
 AGENT_IDENTITY_BUCKET_ENV = "AGENT_IDENTITY_BUCKET_NAME"
 STORAGE_OBJECT_LIMIT_ENV = "STORAGE_OBJECT_LIMIT"
 BIGQUERY_QUERY_ROW_LIMIT_ENV = "BIGQUERY_QUERY_ROW_LIMIT"
+TOOL_CALL_LOGGING_ENV = "TOOL_CALL_LOGGING"
+
+# How much of a tool call reaches the logs. ADK logs nothing naming a called
+# tool, so without this the call sequence is invisible. "full" records the
+# arguments a signed-in user's request produced, so it is a deliberate
+# debugging choice rather than a default.
+TOOL_LOGGING_OFF = "off"
+TOOL_LOGGING_NAMES = "names"
+TOOL_LOGGING_ARGUMENT_KEYS = "argument_keys"
+TOOL_LOGGING_FULL = "full"
+TOOL_CALL_LOGGING_LEVELS = (
+    TOOL_LOGGING_OFF,
+    TOOL_LOGGING_NAMES,
+    TOOL_LOGGING_ARGUMENT_KEYS,
+    TOOL_LOGGING_FULL,
+)
 
 LOCAL_REVISION = "local"
 LOCAL_ENVIRONMENT = "local"
 DEFAULT_LOG_LEVEL = "DEBUG"
+DEFAULT_TOOL_CALL_LOGGING = TOOL_LOGGING_OFF
 DEFAULT_STORAGE_OBJECT_LIMIT = 10
 DEFAULT_BIGQUERY_QUERY_ROW_LIMIT = 100
 DEFAULT_MAX_ATTEMPTS = 3
@@ -57,6 +74,7 @@ class RuntimeConfig(BaseModel):
     context_compaction_threshold_tokens: int = Field(
         default=DEFAULT_COMPACTION_THRESHOLD, ge=1000, le=1_000_000
     )
+    tool_call_logging: str = Field(default=DEFAULT_TOOL_CALL_LOGGING, min_length=1)
 
     @field_validator("model", "instruction", "config_revision", "environment")
     @classmethod
@@ -71,6 +89,17 @@ class RuntimeConfig(BaseModel):
         value = value.upper()
         if value not in logging.getLevelNamesMapping():
             raise ValueError("log_level must be a Python logging level name.")
+        return value
+
+    @field_validator("tool_call_logging")
+    @classmethod
+    def validate_tool_call_logging(cls, value: str) -> str:
+        # Reject a typo at load rather than silently logging nothing.
+        value = value.strip().lower()
+        if value not in TOOL_CALL_LOGGING_LEVELS:
+            raise ValueError(
+                f"tool_call_logging must be one of: {', '.join(TOOL_CALL_LOGGING_LEVELS)}."
+            )
         return value
 
 
@@ -104,6 +133,8 @@ def _local_payload() -> dict[str, object]:
             BIGQUERY_QUERY_ROW_LIMIT_ENV,
             str(DEFAULT_BIGQUERY_QUERY_ROW_LIMIT),
         ),
+        "tool_call_logging": os.getenv(TOOL_CALL_LOGGING_ENV, DEFAULT_TOOL_CALL_LOGGING).strip()
+        or DEFAULT_TOOL_CALL_LOGGING,
     }
 
 
