@@ -26,6 +26,7 @@ AGENT_IDENTITY_BUCKET_ENV = "AGENT_IDENTITY_BUCKET_NAME"
 STORAGE_OBJECT_LIMIT_ENV = "STORAGE_OBJECT_LIMIT"
 BIGQUERY_QUERY_ROW_LIMIT_ENV = "BIGQUERY_QUERY_ROW_LIMIT"
 TOOL_CALL_LOGGING_ENV = "TOOL_CALL_LOGGING"
+STAGE_INSTRUCTIONS_ENV = "STAGE_INSTRUCTIONS"
 
 # How much of a tool call reaches the logs. ADK logs nothing naming a called
 # tool, so without this the call sequence is invisible. "full" records the
@@ -68,6 +69,11 @@ class RuntimeConfig(BaseModel):
     image_model: str = Field(default=DEFAULT_IMAGE_MODEL, min_length=1)
     max_reference_images: int = Field(default=DEFAULT_MAX_REFERENCE_IMAGES, ge=1, le=14)
     instruction: str = Field(min_length=1)
+    # Per-stage instructions for a workflow, keyed by stage name. A workflow
+    # has no single instruction to publish: its stages each carry their own,
+    # and SequentialAgent takes none. Empty means every stage uses the text
+    # compiled into its module, so publishing nothing changes nothing.
+    stage_instructions: dict[str, str] = Field(default_factory=dict)
     environment: str = Field(default="dev", min_length=1)
     log_level: str = Field(default="INFO", min_length=1)
     agent_identity_bucket_name: str | None = None
@@ -130,6 +136,9 @@ def _local_payload() -> dict[str, object]:
             "MAX_REFERENCE_IMAGES", str(DEFAULT_MAX_REFERENCE_IMAGES)
         ),
         "instruction": _required_local_value(AGENT_INSTRUCTION_ENV),
+        # Local runs exercise the compiled-in stage text unless a JSON mapping
+        # is supplied, so a workstation matches an unpublished deployment.
+        "stage_instructions": json.loads(os.getenv(STAGE_INSTRUCTIONS_ENV, "") or "{}"),
         "environment": os.getenv(ENVIRONMENT_ENV, LOCAL_ENVIRONMENT).strip() or LOCAL_ENVIRONMENT,
         "log_level": os.getenv(LOG_LEVEL_ENV, DEFAULT_LOG_LEVEL).strip() or DEFAULT_LOG_LEVEL,
         "agent_identity_bucket_name": os.getenv(AGENT_IDENTITY_BUCKET_ENV, "").strip() or None,
@@ -238,6 +247,9 @@ class RuntimeConfigStore:
             "model": config.model,
             "image_model": config.image_model,
             "max_reference_images": config.max_reference_images,
+            # Names only: the texts are long, and what matters operationally is
+            # which stages are being overridden rather than what they say.
+            "stage_instructions": sorted(config.stage_instructions),
             "environment": config.environment,
             "max_attempts": config.max_attempts,
             "context_compaction_threshold_tokens": config.context_compaction_threshold_tokens,

@@ -6,6 +6,7 @@ produce byte-identical cards from the same template.
 
 from __future__ import annotations
 
+from gemini_shared import stage_instruction
 from gemini_shared.runtime import create_model
 from google.adk.agents import LlmAgent
 from recipe_cards.discover import retrieve
@@ -68,7 +69,7 @@ card_renderer = LlmAgent(
     name="card_renderer",
     model=create_model(BOOTSTRAP),
     description="Renders the recipe card deck and publishes it to Cloud Storage.",
-    instruction=INSTRUCTION,
+    instruction=stage_instruction("card_renderer", INSTRUCTION),
     tools=[render_recipe_card, retrieve],
     output_key=DECK_STATE_KEY,
 )

@@ -7,6 +7,7 @@ of batching, pacing and publishing rather than two that can drift apart.
 
 from __future__ import annotations
 
+from gemini_shared import stage_instruction
 from gemini_shared.runtime import create_model
 from google.adk.agents import LlmAgent
 from recipe_cards.discover import retrieve
@@ -112,7 +113,7 @@ image_director = LlmAgent(
     before_agent_callback=validate_recipe_stage,
     model=create_model(BOOTSTRAP),
     description="Generates and publishes every photograph a recipe card needs.",
-    instruction=INSTRUCTION,
+    instruction=stage_instruction("image_director", INSTRUCTION),
     tools=[generate_recipe_images, retrieve],
     output_key=IMAGES_STATE_KEY,
 )

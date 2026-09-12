@@ -15,6 +15,7 @@ from .config import (
     get_runtime_config,
     get_runtime_config_status,
     runtime_instruction,
+    stage_instruction,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "read_delegated_token",
     "read_session_token",
     "runtime_instruction",
+    "stage_instruction",
 ]

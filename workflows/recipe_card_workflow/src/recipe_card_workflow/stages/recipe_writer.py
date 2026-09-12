@@ -6,6 +6,7 @@ nothing but a model call and the expensive stages never run on a bad recipe.
 
 from __future__ import annotations
 
+from gemini_shared import stage_instruction
 from gemini_shared.runtime import create_model
 from google.adk.agents import LlmAgent
 
@@ -82,6 +83,6 @@ recipe_writer = LlmAgent(
     name="recipe_writer",
     model=create_model(BOOTSTRAP),
     description="Writes the structured recipe content for a card.",
-    instruction=INSTRUCTION,
+    instruction=stage_instruction("recipe_writer", INSTRUCTION),
     output_key=RECIPE_STATE_KEY,
 )

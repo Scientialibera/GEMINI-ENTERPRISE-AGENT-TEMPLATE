@@ -862,8 +862,13 @@ Declare that package in `[tool.uv.sources]` and include its source path in each 
 conversational agent. Packaging tests check that its tools and style images ship
 without the agent package.
 
-The recipe workflow keeps stage instructions in code, so changing those requires
-deployment. All stages use its live `model` parameter through the shared plugin.
+The recipe workflow publishes its stage instructions as `stage_instructions`, a
+mapping keyed by stage name (`recipe_writer`, `image_director`, `card_renderer`).
+A stage with no entry, or a blank one, uses the text compiled into its module, so
+an empty mapping changes nothing and deleting a key reverts that stage without a
+deployment. Each text keeps its `{recipe}` and `{images}` placeholders, which are
+filled from session state. All stages use its live `model` parameter through the
+shared plugin.
 Image generation uses `image_model`. `max_reference_images` defaults to five, including
 style plates and earlier photographs combined, and accepts 1–14. A no-reference sketch
 still sends zero references. A validation callback checks the writer's
