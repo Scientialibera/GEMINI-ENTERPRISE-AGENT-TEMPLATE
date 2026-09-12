@@ -356,3 +356,54 @@ def test_a_short_step_stays_shorter_than_the_step_beside_it():
     assert bottom_row[0] > bottom_row[1], (
         "the shorter step's block is at least as tall as the longer step's"
     )
+
+
+@pytest.mark.parametrize("state", [{}, {"images": ""}, {"images": "   "}])
+def test_workflow_validation_reports_missing_images(state):
+    """An absent mapping killed the run with no usable error.
+
+    card_renderer interpolates {images} from state, so a missing key raised a
+    KeyError while the instruction was built, before any tool ran. Gemini
+    Enterprise reported only FAILED_PRECONDITION with empty error details,
+    naming neither the stage nor the cause.
+    """
+    from recipe_card_workflow.stages.validation import validate_images_stage
+
+    with pytest.raises(ValueError, match="image_director"):
+        validate_images_stage(SimpleNamespace(state=state))
+
+
+def test_workflow_validation_rejects_an_empty_image_mapping():
+    """A mapping with no paths would render a deck of placeholders."""
+    import json
+
+    from recipe_card_workflow.stages.validation import validate_images_stage
+
+    context = SimpleNamespace(state={"images": json.dumps({"run_id": "r", "images": {}})})
+    with pytest.raises(ValueError, match="no image paths"):
+        validate_images_stage(context)
+
+
+def test_workflow_validation_reports_unparsable_images():
+    from recipe_card_workflow.stages.validation import validate_images_stage
+
+    context = SimpleNamespace(state={"images": "Here are your images!"})
+    with pytest.raises(ValueError, match="JSON object"):
+        validate_images_stage(context)
+
+
+def test_workflow_validation_accepts_a_real_image_mapping():
+    import json
+
+    from recipe_card_workflow.stages.validation import validate_images_stage
+
+    mapping = {"run_id": "20260912-200323-abc", "images": {"hero": "dish/run/images/hero.png"}}
+    validate_images_stage(SimpleNamespace(state={"images": json.dumps(mapping)}))
+
+
+def test_the_renderer_stage_guards_its_input():
+    """The guard only helps if it is actually wired onto the stage."""
+    from recipe_card_workflow.stages import card_renderer
+    from recipe_card_workflow.stages.validation import validate_images_stage
+
+    assert card_renderer.before_agent_callback is validate_images_stage

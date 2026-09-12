@@ -13,6 +13,7 @@ from recipe_cards.discover import retrieve
 from recipe_cards.publish import render_recipe_card
 
 from ..config import BOOTSTRAP
+from .validation import validate_images_stage
 
 DECK_STATE_KEY = "deck"
 
@@ -67,6 +68,7 @@ taking `deck_url`, `deck_uri` and `run_id` from what the tool returned, and
 
 card_renderer = LlmAgent(
     name="card_renderer",
+    before_agent_callback=validate_images_stage,
     model=create_model(BOOTSTRAP),
     description="Renders the recipe card deck and publishes it to Cloud Storage.",
     instruction=stage_instruction("card_renderer", INSTRUCTION),
