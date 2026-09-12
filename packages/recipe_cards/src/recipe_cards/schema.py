@@ -5,13 +5,38 @@ from __future__ import annotations
 import json
 from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 MAX_PAYLOAD_BYTES = 128 * 1024
 MAX_IMAGES_PER_BATCH = 24
 MAX_IMAGES_PER_RUN = 48
 Text = Annotated[str, StringConstraints(max_length=1200)]
 ShortText = Annotated[str, StringConstraints(max_length=160)]
+
+
+def _text_from_number(value: Any) -> Any:
+    """Accept a number where the card displays text.
+
+    A quantity or a serving count is a number to the model and a caption to the
+    layout, so it arrives as often as `4` as it does as `"4"`. Strict validation
+    rejected the integer outright, which failed the whole render for a value
+    that needed no interpretation. Only int and float convert; a bool is not a
+    quantity, and None stays a missing value rather than becoming "None".
+    """
+    if isinstance(value, bool):
+        return value
+    return str(value) if isinstance(value, int | float) else value
+
+
+# Text the model may reasonably send as a number.
+NumericText = Annotated[str, BeforeValidator(_text_from_number), StringConstraints(max_length=160)]
 # Relative to the use-case root, exactly as a listing tool returned it. A
 # bucket, a URL or a traversal segment is rejected before anything is fetched.
 _SEGMENT = r"[A-Za-z0-9][A-Za-z0-9._-]*"
@@ -24,7 +49,7 @@ class InputModel(BaseModel):
 
 
 class Ingredient(InputModel):
-    quantity: ShortText = ""
+    quantity: NumericText = ""
     item: ShortText
     note: ShortText = ""
     image_path: ImagePath = Field(default="", alias="imagePath")
@@ -65,8 +90,8 @@ class Recipe(InputModel):
     title: Annotated[str, StringConstraints(min_length=1, max_length=100)]
     slug: ShortText = ""
     subtitle: ShortText = ""
-    servings: ShortText = ""
-    total_time: ShortText = ""
+    servings: NumericText = ""
+    total_time: NumericText = ""
     region: ShortText = ""
     season: ShortText = ""
     card_title: ShortText = ""

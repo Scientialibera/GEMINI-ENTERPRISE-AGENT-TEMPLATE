@@ -407,3 +407,59 @@ def test_the_renderer_stage_guards_its_input():
     from recipe_card_workflow.stages.validation import validate_images_stage
 
     assert card_renderer.before_agent_callback is validate_images_stage
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(4, "4"), ("4", "4"), (4.5, "4.5"), ("4 servings", "4 servings")],
+)
+def test_servings_accepts_a_number_or_a_string(value, expected):
+    """A count is a number to the model and a caption to the layout.
+
+    Strict validation rejected the integer, which failed an entire render over
+    a value needing no interpretation, after the photography was already paid
+    for.
+    """
+    from recipe_cards.schema import load_recipes
+
+    recipe = {**RECIPE, "servings": value}
+    assert load_recipes(recipe)["recipes"][0]["servings"] == expected
+
+
+@pytest.mark.parametrize("value", [True, None, {"n": 4}])
+def test_servings_still_rejects_what_is_not_a_count(value):
+    """Coercion covers numbers, not everything that is not a string."""
+    from pydantic import ValidationError
+    from recipe_cards.schema import load_recipes
+
+    with pytest.raises((ValidationError, ValueError)):
+        load_recipes({**RECIPE, "servings": value})
+
+
+def test_a_numeric_quantity_is_accepted():
+    from recipe_cards.schema import load_recipes
+
+    recipe = {**RECIPE, "ingredients": [{"item": "Eggs", "quantity": 2}]}
+    assert load_recipes(recipe)["recipes"][0]["ingredients"][0]["quantity"] == "2"
+
+
+def test_an_invalid_payload_is_returned_for_correction(monkeypatch):
+    """A bad payload must reach the model, not kill the invocation.
+
+    load_recipes ran outside the try block that answers ContentTooLong, so a
+    ValidationError escaped render_recipe_card entirely and Gemini Enterprise
+    reported an opaque stream failure naming neither field nor recipe.
+    """
+    import json
+
+    from recipe_cards import publish
+
+    monkeypatch.setattr(publish, "OUTPUT_BUCKET", "test-bucket")
+    context = SimpleNamespace(state={})
+    bad = json.dumps({**RECIPE, "steps": [{"title": "No instructions here"}]})
+
+    result = publish.render_recipe_card(bad, context)
+
+    assert result["status"] in {"needs_correction", "failed"}
+    assert "steps" in result["field"]
+    assert result["problem"]

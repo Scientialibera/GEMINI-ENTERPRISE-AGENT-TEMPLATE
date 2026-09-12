@@ -7,6 +7,7 @@ import time
 from gemini_shared.config.runtime_config import get_runtime_config
 from gemini_shared.connectors.cloud_storage import upload_bytes
 from google.adk.tools import ToolContext
+from pydantic import ValidationError
 
 from .config import OUTPUT_BUCKET, OUTPUT_BUCKET_ENV, PROJECT_ID, dish_prefix
 from .errors import ContentTooLong
@@ -67,7 +68,30 @@ def render_recipe_card(
             f"{OUTPUT_BUCKET_ENV} is not set, so there is nowhere to publish the deck."
         )
 
-    data = load_recipes(recipe_json)
+    try:
+        data = load_recipes(recipe_json)
+    except ValidationError as invalid:
+        # A malformed payload is the model's to fix, exactly like text that does
+        # not fit, so it is answered rather than raised. Raising killed the whole
+        # invocation: the traceback reached the caller as an opaque stream
+        # failure naming neither the field nor the recipe, and the photography
+        # already paid for went unused.
+        #
+        # The payload has not parsed yet, so there is no run to count this
+        # against: a payload the schema rejects never reached a render attempt.
+        # The caller's run_id is carried back so the correction lands on the
+        # same run rather than starting a new one.
+        problem = invalid.errors()[0]
+        field = ".".join(str(part) for part in problem.get("loc", ())) or "recipes"
+        too_long = ContentTooLong(
+            field,
+            f"The recipe payload is not valid: {problem.get('msg', 'invalid value')} at {field}.",
+            "Correct that field and call render_recipe_card again. Send every value as "
+            "the type the field expects, such as text for a servings count.",
+        )
+        result = too_long.as_tool_result(1, get_runtime_config().max_attempts)
+        return {**result, "run_id": run_id} if run_id else result
+
     recipes = data.get("recipes") or []
     if not recipes:
         raise ValueError("The payload contains no recipes.")
