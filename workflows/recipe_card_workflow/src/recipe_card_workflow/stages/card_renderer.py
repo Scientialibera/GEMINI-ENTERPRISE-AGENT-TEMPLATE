@@ -58,8 +58,8 @@ The success response below applies only when the tool returns a real deck URL.
 
 Then reply with a single JSON object and nothing else:
 
-{{"deck_url": "...", "deck_uri": "...", "run_id": "...", "title": "...",
-  "recipe_count": 1}}
+{"deck_url": "...", "deck_uri": "...", "run_id": "...", "title": "...",
+  "recipe_count": 1}
 
 taking `deck_url`, `deck_uri` and `run_id` from what the tool returned, and
 `title` from the recipe. Never invent a URI.

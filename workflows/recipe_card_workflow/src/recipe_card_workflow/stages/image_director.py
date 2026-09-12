@@ -100,9 +100,9 @@ failure rather than inventing paths. A listing verifies presence, not visual sty
 
 Reply with:
 
-{{"run_id": "...", "images": {{"hero": "dish/run/images/hero.png",
+{"run_id": "...", "images": {"hero": "dish/run/images/hero.png",
 "step-1": "dish/run/images/step-1.png", "ingredient-salmon":
-"dish/run/images/ingredient-salmon.png", "sketch": "dish/run/images/sketch.png"}}}}
+"dish/run/images/ingredient-salmon.png", "sketch": "dish/run/images/sketch.png"}}
 
 Include every generated image in the mapping, not just the example entries.
 Never invent a path or convert one to gs://. Use only what a tool returned.
