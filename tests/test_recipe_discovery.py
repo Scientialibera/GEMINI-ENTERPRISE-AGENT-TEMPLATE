@@ -192,6 +192,9 @@ def test_a_folder_listing_reports_truncation_from_prefixes(monkeypatch):
 
     class FakeIterator:
         prefixes: ClassVar[set[str]] = {f"{USE_CASE_PREFIX}/dish-{i}/" for i in range(4)}
+        pages = ((),)
+        next_page_token = None
+        page_number = 1
 
         def __iter__(self):
             return iter(())

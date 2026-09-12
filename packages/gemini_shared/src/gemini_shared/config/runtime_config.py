@@ -51,6 +51,8 @@ DEFAULT_BIGQUERY_QUERY_ROW_LIMIT = 100
 DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_MAX_MODEL_CALLS = 100
 DEFAULT_COMPACTION_THRESHOLD = 100_000
+DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image"
+DEFAULT_MAX_REFERENCE_IMAGES = 5
 LAST_KNOWN_GOOD_RETRY_SECONDS = 30
 PARAMETER_VERSION_SEGMENT = "/versions/"
 LATEST_VERSION = "latest"
@@ -63,6 +65,8 @@ class RuntimeConfig(BaseModel):
 
     config_revision: str = Field(min_length=1)
     model: str = Field(min_length=1)
+    image_model: str = Field(default=DEFAULT_IMAGE_MODEL, min_length=1)
+    max_reference_images: int = Field(default=DEFAULT_MAX_REFERENCE_IMAGES, ge=1, le=14)
     instruction: str = Field(min_length=1)
     environment: str = Field(default="dev", min_length=1)
     log_level: str = Field(default="INFO", min_length=1)
@@ -76,7 +80,7 @@ class RuntimeConfig(BaseModel):
     )
     tool_call_logging: str = Field(default=DEFAULT_TOOL_CALL_LOGGING, min_length=1)
 
-    @field_validator("model", "instruction", "config_revision", "environment")
+    @field_validator("model", "image_model", "instruction", "config_revision", "environment")
     @classmethod
     def validate_required_text(cls, value: str) -> str:
         if not value.strip() or "REPLACE" in value or value.startswith("<"):
@@ -121,6 +125,10 @@ def _local_payload() -> dict[str, object]:
         ),
         "config_revision": os.getenv(CONFIG_REVISION_ENV, LOCAL_REVISION).strip() or LOCAL_REVISION,
         "model": _required_local_value(GEMINI_MODEL_ENV),
+        "image_model": os.getenv("IMAGE_MODEL", "").strip() or DEFAULT_IMAGE_MODEL,
+        "max_reference_images": os.getenv(
+            "MAX_REFERENCE_IMAGES", str(DEFAULT_MAX_REFERENCE_IMAGES)
+        ),
         "instruction": _required_local_value(AGENT_INSTRUCTION_ENV),
         "environment": os.getenv(ENVIRONMENT_ENV, LOCAL_ENVIRONMENT).strip() or LOCAL_ENVIRONMENT,
         "log_level": os.getenv(LOG_LEVEL_ENV, DEFAULT_LOG_LEVEL).strip() or DEFAULT_LOG_LEVEL,
@@ -228,6 +236,8 @@ class RuntimeConfigStore:
             "loaded_at": self._loaded_at.isoformat() if self._loaded_at else None,
             "cache_seconds": get_bootstrap_settings().refresh_seconds,
             "model": config.model,
+            "image_model": config.image_model,
+            "max_reference_images": config.max_reference_images,
             "environment": config.environment,
             "max_attempts": config.max_attempts,
             "context_compaction_threshold_tokens": config.context_compaction_threshold_tokens,

@@ -7,7 +7,8 @@ from pathlib import Path
 
 from gemini_shared.connectors.cloud_storage import upload_bytes
 from gemini_shared.media import ImageRequest, generate_images
-from gemini_shared.media.images import MODE_PARALLEL, MODE_SEQUENTIAL_REFERENCE
+from gemini_shared.media.images import MODE_PARALLEL, MODE_SEQUENTIAL_REFERENCE, image_model_name
+from gemini_shared.media.pacing import acquire_slot
 from google.adk.tools import ToolContext
 
 from .config import OUTPUT_BUCKET, OUTPUT_BUCKET_ENV, PROJECT_ID, USE_CASE_PREFIX
@@ -58,6 +59,8 @@ def generate_recipe_images(
     Write the full art direction into every prompt. Nothing is added for you.
     Generate ingredients first, then hero and steps, then a separate sketch.
     Use retrieve to check the stored files between batches and before rendering.
+    A partial result preserves successful uploads and supplies remaining_names.
+    Retrieve the run folder, then retry only missing names with the same run_id.
 
     Args:
         recipe_slug: Identifier for the recipe, used as the storage prefix.
@@ -109,19 +112,15 @@ def generate_recipe_images(
     if len(existing) + len(names) > MAX_IMAGES_PER_RUN:
         raise ValueError(f"At most {MAX_IMAGES_PER_RUN} images may be generated per recipe run.")
     run_id = run_id or new_run_id()
+    save_run(tool_context, run_id, run)
     # Every image carries the house style plates. In sequential mode the batch's
     # own earlier images are appended to these by the shared helper.
     plates = _style_plates() if use_reference_images else ()
-    images = generate_images(
-        [
-            ImageRequest(prompt=prompt, name=name, reference_images=plates)
-            for prompt, name in zip(prompts, names, strict=True)
-        ],
-        mode=mode,
-    )
-
     uris = {}
-    for image in images:
+
+    def checkpoint(image):
+        if image.name in uris:
+            return
         if image.mime_type not in IMAGE_EXTENSIONS:
             raise ValueError("Unsupported generated image type.")
         object_name = _object_name(slug, run_id, image.name, IMAGE_EXTENSIONS[image.mime_type])
@@ -139,7 +138,35 @@ def generate_recipe_images(
         uris[image.name] = relative
         existing[safe_slug(image.name)] = relative
         save_run(tool_context, run_id, {**run, "images": existing})
+
+    failure = None
+    model = image_model_name()
+    try:
+        images = generate_images(
+            [
+                ImageRequest(
+                    prompt=prompt,
+                    name=name,
+                    reference_images=plates,
+                    request_slot=functools.partial(acquire_slot, PROJECT_ID, OUTPUT_BUCKET, model),
+                )
+                for prompt, name in zip(prompts, names, strict=True)
+            ],
+            mode=mode,
+            on_image=checkpoint,
+            model=model,
+        )
+        for image in images:
+            checkpoint(image)
+    except Exception as error:
+        failure = type(error).__name__
     return {
+        "status": "partial" if failure else "complete",
+        "error_type": failure,
+        "remaining_names": [name for name in names if name not in uris],
+        "next_action": "Use retrieve, then retry only missing images with this run_id."
+        if failure
+        else "Continue with the next batch.",
         "bucket": OUTPUT_BUCKET,
         "mode": mode,
         # Pass this back on the next call and to render_recipe_card, so one

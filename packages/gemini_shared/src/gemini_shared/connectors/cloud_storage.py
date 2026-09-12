@@ -130,9 +130,8 @@ def list_objects(
 ) -> tuple[list[str], list[str], bool]:
     """List object names under a prefix, and the sub-prefixes beneath it.
 
-    A delimiter makes this one cheap metadata call per level rather than a walk
-    of every object: Cloud Storage returns the immediate children as prefixes
-    instead of expanding them.
+    A delimiter lists immediate child prefixes without expanding their objects.
+    Stop at the result budget or ten pages, including empty service pages.
 
     Returns:
         The object names, the child prefixes, and whether the limit truncated
@@ -144,15 +143,21 @@ def list_objects(
     client = storage.Client(project=project_id)
     # One past the limit distinguishes "exactly full" from "there is more".
     iterator = client.list_blobs(
-        bucket_name, prefix=prefix, delimiter=delimiter, max_results=limit + 1
+        bucket_name,
+        prefix=prefix,
+        delimiter=delimiter,
+        max_results=limit + 1,
+        page_size=limit + 1,
     )
-    names = [blob.name for blob in iterator]
-    # max_results bounds objects only. A delimited listing returns its children
-    # as prefixes, which are not counted against it and can arrive unbounded, so
-    # they are capped and counted here or a folder listing would silently claim
-    # to be complete while omitting folders.
-    prefixes = sorted(iterator.prefixes)
-    truncated = len(names) > limit or len(prefixes) > limit
+    names = []
+    prefixes = []
+    truncated = False
+    for page in iterator.pages:
+        names.extend(blob.name for blob in page)
+        prefixes = sorted(iterator.prefixes)
+        truncated = bool(iterator.next_page_token) or len(names) > limit or len(prefixes) > limit
+        if len(names) + len(prefixes) >= limit or iterator.page_number >= 10:
+            break
     return names[:limit], prefixes[:limit], truncated
 
 

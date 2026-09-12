@@ -2,9 +2,8 @@
 
 The model never handles a bucket name or a ``gs://`` URI. ``list_folders``
 returns paths relative to the use-case root and ``retrieve`` resolves them back
-against that same root, so a recipe can only ever name an asset a listing
-already offered. Authorization is therefore structural: there is no allowlist to
-compare against and no absolute location for a payload to point elsewhere.
+against that same root. Any valid relative asset path under this root is accepted;
+listing is discovery, not authorization or per-user isolation.
 
 Session state is per conversation and keeps only the most recent runs, so it
 cannot answer "does a chili card already exist?" in a fresh chat. The bucket
@@ -18,12 +17,13 @@ from google.adk.tools import ToolContext
 from google.genai import types
 
 from .config import OUTPUT_BUCKET, OUTPUT_BUCKET_ENV, PROJECT_ID, USE_CASE_PREFIX, resolve_relative
-from .runs import save_run
+from .runs import RUNS_KEY, save_run
 
 # Bounded so listing stays cheap metadata calls rather than a walk of the bucket.
 MAX_DISHES = 100
 MAX_RUNS_PER_DISH = 50
 MAX_OBJECTS_PER_FOLDER = 400
+MAX_RETRIEVE_FOLDERS = 8
 # One preview only, and small: pixels in a prompt are expensive and a card is
 # rendered from bytes the renderer fetches itself, not from what the model sees.
 MAX_PREVIEW_BYTES = 4 * 1024 * 1024
@@ -41,10 +41,11 @@ def _relative(object_name: str) -> str:
 
 
 def list_folders() -> dict[str, object]:
-    """List every published recipe card folder, newest run first.
+    """List a bounded set of recipe folders, with returned runs newest first.
 
     Call this before generating a card, so a dish that already has one can be
-    offered for reuse instead of being photographed again. Paths are relative
+    offered for reuse instead of being photographed again. Folders may contain
+    unfinished runs; use retrieve to check for a deck. Paths are relative
     to the card store; pass them to `retrieve` to see or use a folder's files.
     """
     _require_bucket()
@@ -81,7 +82,7 @@ async def retrieve(
     images itself.
 
     Args:
-        folders: Relative folder paths, for example
+        folders: At most eight relative folder paths, for example
             `classic-beef-chili/20260910-120000-abc`.
         preview_image: Optionally, the relative path of one image to look at.
             Use it only when the user asks about how a photograph looks; it is
@@ -90,6 +91,8 @@ async def retrieve(
     _require_bucket()
     if not folders:
         raise ValueError("Name at least one folder from list_folders.")
+    if len(folders) > MAX_RETRIEVE_FOLDERS:
+        raise ValueError(f"Retrieve at most {MAX_RETRIEVE_FOLDERS} folders per call.")
 
     images: list[dict[str, object]] = []
     decks: list[dict[str, str]] = []
@@ -144,7 +147,14 @@ def _register_runs(images: list[dict[str, object]], tool_context: ToolContext) -
         run = runs.setdefault(run_id, {"slug": slug, "images": {}})
         run["images"][name] = str(image["path"])
     for run_id, run in runs.items():
-        save_run(tool_context, run_id, run)
+        previous = tool_context.state.get(RUNS_KEY, {}).get(run_id, {})
+        if previous and previous["slug"] != run["slug"]:
+            raise ValueError("Retrieved run conflicts with a different recipe.")
+        save_run(
+            tool_context,
+            run_id,
+            {**previous, **run, "images": {**previous.get("images", {}), **run["images"]}},
+        )
 
 
 async def _preview(path: str, tool_context: ToolContext) -> str:

@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from gcp import run_gcloud as _run
 from gemini_shared.config.bootstrap import DEFAULT_BOOTSTRAP_MODEL, DEFAULT_PARAMETER_LOCATION
+from gemini_shared.config.runtime_config import DEFAULT_IMAGE_MODEL, DEFAULT_MAX_REFERENCE_IMAGES
 
 from config.environment import configured_value, env_bool
 
@@ -220,6 +221,8 @@ def _create_runtime_parameter(project_id: str, parameter: str, location: str, pr
         {
             "config_revision": "bootstrap-v1",
             "model": os.getenv("BOOTSTRAP_MODEL", "").strip() or DEFAULT_BOOTSTRAP_MODEL,
+            "image_model": os.getenv("IMAGE_MODEL", "").strip() or DEFAULT_IMAGE_MODEL,
+            "max_reference_images": DEFAULT_MAX_REFERENCE_IMAGES,
             "instruction": (
                 prompt
                 or os.getenv("AGENT_INSTRUCTION", "").strip()

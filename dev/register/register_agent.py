@@ -21,8 +21,8 @@ from gemini_shared.config.bootstrap import AUTHORIZATION_ID_ENV
 from paths import ROOT
 from registry import AgentSpec, detect_delegated_auth, get_agent_spec
 
-from register.http import REQUEST_TIMEOUT_SECONDS, iter_resources
-from register.http import request as _request
+from register.api_http import REQUEST_TIMEOUT_SECONDS, iter_resources
+from register.api_http import request as _request
 from register.oauth import OAUTH_CLIENTS_ENV, oauth_client_id_for
 
 DISCOVERY_ENGINE_HOST = "https://discoveryengine.googleapis.com"

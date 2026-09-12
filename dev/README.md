@@ -66,7 +66,7 @@ publishing into an app.
 | deploy/dependencies.py | Export runtime requirements from uv.lock. |
 | deploy/runtime.py | SDK client, existing app and deployment configuration. |
 | config/settings.py | Local and remote environment contract. |
-| register/http.py, register/oauth.py | Paginated JSON API access and OAuth client configuration. |
+| register/api_http.py, register/oauth.py | Paginated JSON API access and OAuth client configuration. |
 | config/environment.py | Boolean and placeholder parsing. |
 | config/bootstrap.py | Authentication, project, API, bucket and parameter checks. |
 | fixtures/bigquery_fixture.py | Sample dataset creation, schema validation and seeding. |
@@ -106,12 +106,9 @@ an administrator to allow the OAuth client or its scopes; see
 
 ### Running a step script directly
 
-`release_dev.py` and `run_local.py` run as files. The step scripts under `deploy/`,
-`register/`, `iam/` and `config/` are imported by it as modules, and one of them must
-be run the same way: executing `register/register_agent.py` directly puts
-`dev/register/` first on `sys.path`, where its own `http.py` shadows the standard
-library's `http` package and `google.auth` fails to import. Run it as a module from the
-repository root:
+All entry-point scripts support direct file execution. The registration HTTP helper
+is named `api_http.py` so it cannot shadow Python's `http` package. Registration can
+also be invoked as a module from the repository root:
 
 ~~~bash
 uv run --group dev python -c "import sys; sys.path.insert(0,'dev'); \
@@ -190,7 +187,8 @@ An empty staging location uses GOOGLE_CLOUD_LOCATION.
 
 The CLI account needs permission for enabled setup operations. Python clients use ADC
 for Parameter Manager and the fixture. Bootstrap reuses existing resources without
-assigning IAM or changing billing on an existing project.
+changing billing on an existing project. IAM changes require the explicit baseline
+flag or configured per-agent grants and an already-authorized caller.
 
 These are two different identities, and they are granted separately. A deployment can
 succeed through ADC while `gcloud parametermanager parameters list` returns
@@ -250,9 +248,9 @@ runtime exists. You can also rerun only IAM after changing these settings:
 uv run --group dev python dev/iam/apply_agent_identity_iam.py --agent auth_reference_agent
 ~~~
 
-If none of the per-agent IAM variables is set, the helper makes no IAM calls. The
-Agent Identity still exists and receives only the common principal-set roles from the
-Terraform platform stack.
+Without environment overrides, the helper applies grants declared in AgentSpec.
+It makes no IAM calls only when neither the resolved spec nor overrides declare grants.
+The Agent Identity also receives the common principal-set roles from Terraform.
 
 The identity running this helper must already be allowed to change IAM on the target
 project or bucket. The helper does not grant permissions to itself and rejects

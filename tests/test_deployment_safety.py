@@ -16,7 +16,8 @@ from deploy import package_agent, runtime, sources, state, update_dev
 from deploy.dependencies import export_requirements
 from gemini_shared.config.runtime_config import RuntimeConfig
 from iam import apply_agent_identity_iam as iam
-from register import http, register_agent
+from register import api_http as http
+from register import register_agent
 from registry import AGENTS
 
 RESOURCE = "projects/123/locations/us-central1/reasoningEngines/engine"

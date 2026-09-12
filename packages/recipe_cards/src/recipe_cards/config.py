@@ -29,9 +29,8 @@ SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$")
 def resolve_relative(path: str) -> str:
     """Turn a caller-supplied relative path into an object name under the root.
 
-    The model only ever names paths a listing tool handed it, and this is what
-    makes that guarantee hold: every segment must be an ordinary name, so a
-    path cannot traverse upwards or absolutize itself out of the prefix.
+    Each segment must be an ordinary name. This confines access to the prefix,
+    but does not require prior listing or membership in a particular run.
     """
     cleaned = path.strip()
     # An absolute path is refused rather than quietly stripped to a relative

@@ -20,6 +20,7 @@ import os
 import random
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from google import genai
@@ -30,9 +31,6 @@ from ..config.runtime_config import get_runtime_config
 
 # The model accepts a bounded number of reference images per request, so a long
 # sequence keeps the most recent ones and drops the oldest.
-MAX_REFERENCE_IMAGES = 14
-DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image"
-IMAGE_MODEL_ENV = "IMAGE_MODEL"
 IMAGE_MODEL_LOCATION_ENV = "IMAGE_MODEL_LOCATION"
 DEFAULT_IMAGE_MODEL_LOCATION = "global"
 DEFAULT_MIME_TYPE = "image/png"
@@ -75,6 +73,7 @@ class ImageRequest:
     prompt: str
     name: str
     reference_images: tuple[bytes, ...] = field(default=())
+    request_slot: Callable[[], None] | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,8 +125,8 @@ def _client(location: str) -> genai.Client:
     )
 
 
-def _model_name() -> str:
-    return os.getenv(IMAGE_MODEL_ENV, "").strip() or DEFAULT_IMAGE_MODEL
+def image_model_name() -> str:
+    return get_runtime_config().image_model
 
 
 def _model_location() -> str:
@@ -221,13 +220,15 @@ def _generate_one(
     references = (*request.reference_images, *extra_references)
     # Keep the most recent references when a long sequence exceeds the limit:
     # the nearest neighbours carry the style that must not drift.
-    for reference in references[-MAX_REFERENCE_IMAGES:]:
+    for reference in references[-get_runtime_config().max_reference_images :]:
         parts.append(
             types.Part(inline_data=types.Blob(mime_type=_sniff_mime(reference), data=reference))
         )
 
     def call():
         _wait_for_slot()
+        if request.request_slot is not None:
+            request.request_slot()
         # Each attempt owns and closes its client.
         with _client(location) as client:
             response = client.models.generate_content(
@@ -252,6 +253,8 @@ def generate_images(
     requests: list[ImageRequest],
     *,
     mode: str = MODE_PARALLEL,
+    on_image: Callable[[GeneratedImage], None] | None = None,
+    model: str | None = None,
 ) -> list[GeneratedImage]:
     """Generate every requested image, returning them in the requested order.
 
@@ -260,6 +263,7 @@ def generate_images(
         mode: ``parallel`` when the prompts are independent, or
             ``sequential_reference`` when each image should inherit the look of
             the ones before it.
+        on_image: Checkpoint each success on the calling thread before returning.
 
     Raises:
         ValueError: The mode is not one of the two supported values.
@@ -273,13 +277,15 @@ def generate_images(
         return []
 
     location = _model_location()
-    model = _model_name()
+    model = model or image_model_name()
 
     if mode == MODE_SEQUENTIAL_REFERENCE:
         produced: list[GeneratedImage] = []
         for request in requests:
             image = _generate_one(location, model, request, tuple(item.data for item in produced))
             produced.append(image)
+            if on_image is not None:
+                on_image(image)
         return produced
 
     # Pace independent requests and return results in input order.
@@ -290,7 +296,17 @@ def generate_images(
             for index, request in enumerate(requests)
         }
         results: list[GeneratedImage | None] = [None] * len(requests)
+        failure = None
         for future in concurrent.futures.as_completed(futures):
-            results[futures[future]] = future.result()
+            try:
+                results[futures[future]] = future.result()
+                if on_image is not None:
+                    on_image(results[futures[future]])
+            except Exception as error:
+                failure = failure or error
+                for pending in futures:
+                    pending.cancel()
+        if failure is not None:
+            raise failure
 
     return [image for image in results if image is not None]

@@ -1,6 +1,6 @@
 # Gemini Enterprise ADK agents and workflows
 
-This repository contains four Python agents, one workflow and the scripts to run them
+This repository contains five Python agents, one workflow and the scripts to run them
 locally, deploy them to Agent Engine and register them in Gemini Enterprise.
 
 An **agent** is conversational: it holds tools and decides which to call as the
@@ -51,6 +51,7 @@ uv run --group dev pytest
 
 These tests use mocks for cloud calls. They do not replace testing the deployed agent
 and its consent flow in Gemini Enterprise.
+Dependency review and audit instructions are in [dependency security](docs/dependency-security.md).
 
 ## Run an agent locally
 
@@ -64,7 +65,7 @@ uv run --group dev python dev/run_local.py --agent basic_assistant
 Replace basic_assistant with another registered agent to run it. The local runner calls
 real model and service APIs, so usage can incur charges.
 
-Leave CONFIG_PARAMETER unset to read settings from the local environment. Both
+Leave CONFIG_PARAMETER unset to read settings from the local environment. All three
 delegated agents need an authorization ID to construct their tools, but user
 authentication must be tested through Gemini Enterprise, which supplies the session
 token. Local ADC does not reproduce that flow. Cloud Storage calls made locally use
@@ -141,9 +142,7 @@ Vertex AI but is invisible in the UI.
 
 ~~~bash
 uv run --group dev python dev/release_dev.py --agent <name> --skip-register
-# finish the consent screen, then register. This runs register_agent.py as a
-# module: executing the file directly puts dev/register/ first on sys.path,
-# where its own http.py shadows the standard library's http package.
+# Finish the consent screen, then register. Direct file execution also works.
 uv run --group dev python -c "import sys; sys.path.insert(0,'dev'); \
 from register.register_agent import main; \
 sys.argv=['register_agent.py','--agent','<name>']; main()"
@@ -179,7 +178,7 @@ UI-only means the current Google/Gemini Enterprise workflow requires a console a
 | Access to the target GCP project | Developer / deployment identity | Cloud or platform admin | IAM, normally through the platform stack in infrastructure/ | No |
 | Create/update Agent Engine resources | Developer / deployment identity | Cloud or platform admin | IAM grant; `dev/deploy/deploy_dev.py` and `dev/deploy/update_dev.py` consume it | No |
 | Create the Agent Identity for a runtime | Agent Engine deployment | Google Agent Engine | `identity_type=AGENT_IDENTITY` in `dev/deploy/deploy_dev.py`; Google provisions the identity | No |
-| Baseline IAM shared by every Agent Identity | All deployed runtimes | Cloud/platform admin | Terraform principal-set bindings in the companion platform branch | No |
+| Baseline IAM shared by every Agent Identity | All deployed runtimes | Cloud/platform admin | Terraform principal-set bindings in infrastructure/ | No |
 | Extra project-scoped IAM for one Agent Identity | One deployed runtime | IAM admin or authorized automation identity | `<AGENT>_AGENT_IDENTITY_PROJECT_ROLES` consumed by `dev/iam/apply_agent_identity_iam.py` | No |
 | Cloud Storage access for one Agent Identity | One deployed runtime | Storage/IAM admin or authorized automation identity | `<AGENT>_AGENT_IDENTITY_STORAGE_BUCKET_ROLES` consumed by `dev/iam/apply_agent_identity_iam.py`; bucket scope preferred | No |
 | Read/create the agent runtime parameter and publish versions | Developer deployment flow; runtime reads it | Cloud or platform admin grants access; dev tooling creates agent-owned parameters | IAM plus `dev/config/bootstrap.py` / deployment preflight. The deploying identity **creates** parameters and publishes versions, so it needs write access such as `roles/parametermanager.parameterAdmin`; the baseline grants runtimes only `roles/parametermanager.parameterAccessor`, which reads. A first deployment fails at preflight without that grant. | No |
@@ -265,7 +264,8 @@ the runtime exists. To change only IAM later:
 uv run --group dev python dev/iam/apply_agent_identity_iam.py --agent auth_reference_agent
 ~~~
 
-If no per-agent IAM settings are present, this helper makes no IAM calls. The runtime
+If neither the resolved AgentSpec nor environment overrides declare grants, this helper
+makes no IAM calls. The runtime
 still has its unique Agent Identity and receives only the common project principal-set
 roles from Terraform.
 
@@ -399,8 +399,8 @@ See [fixture settings](dev/README.md#bigquery-fixture).
 
 ## Produce a recipe card
 
-Both recipe entry points build the same artefact from the same tools: a two- or
-three-page PowerPoint deck published to Cloud Storage, returned as a link that opens
+Both recipe entry points build the same artefact from the same tools: a paginated
+PowerPoint deck published to Cloud Storage, returned as a link that opens
 in a browser for anyone the bucket's IAM already allows.
 
 ~~~bash
@@ -446,13 +446,22 @@ separately from `GOOGLE_CLOUD_LOCATION`.
 
 ### Card production is quota-bound
 
-A full card needs roughly sixteen images and the default project quota is **two image
-requests a minute** (`Generate content with image generation requests quota`,
-1/min/project/model). One card therefore takes eight to ten minutes and only one can
-run at a time. `gemini_shared.media` paces requests to that limit across the whole
-process and retries throttling, empty responses and transient auth failures with
-exponential backoff. Concurrency cannot beat a per-minute cap, so the pool is
-deliberately small. Request a quota increase before demonstrating this live.
+A full card often needs about sixteen images. Recipe generation spaces request starts
+by at least 32 seconds using conditional writes under `_coordination/images/` in
+RECIPE_CARD_BUCKET. Both recipe runtimes and all their workers must use the same bucket
+to share this pacing, keyed by project and image model. Their existing bucket-scoped
+objectAdmin grant covers the coordinator; no project-wide Storage grant is needed.
+Keep coordination objects out of lifecycle deletion rules and use synchronized clocks.
+This coordinates participating code, not other applications using the project's quota.
+Check the actual quota before a demo; concurrent cards share throughput and take longer.
+
+Coordination failures stop the image call rather than bypassing pacing. Contention waits
+are bounded to roughly two minutes plus a Storage request timeout. Every saved image is
+checkpointed before the next sequential image. A failed batch returns `status=partial`,
+its `run_id`, saved paths and `remaining_names`. Use `retrieve` before retrying only the
+missing names. An upload interrupted after the server accepted it may need retrieval
+to reconcile. Failed sequential batches do not retain reference bytes across calls;
+describe the scene again when continuing. The agent still chooses which batch runs next.
 
 ### How the card is laid out
 
@@ -462,8 +471,12 @@ Both entry points call the same shared tools.
 
 Image generation records its output URIs in session state. Pass the returned `run_id`
 to subsequent image calls and to the render tool in the same session. The renderer
-rejects local paths and images that are absent from that run's manifest, even if the
-runtime could read them. A session retains its eight most recent runs.
+rejects local paths and paths outside the configured use-case prefix. It allows reuse
+across runs within that prefix; it does not enforce a per-run asset allowlist or
+per-user isolation. Use separate storage boundaries for separate trust domains.
+A session retains up to eight runs. Retrieval preserves existing retry state and assets.
+Retrieve at most eight folders per call. Listings stop at their result budget or ten
+service pages and report truncation; a truncated listing is not the whole library.
 
 Inputs are limited to three recipes per deck, 24 steps per recipe and 128 KiB of JSON.
 Image batches allow 24 images with up to 48 per run. Downloads are limited to 12 MiB
@@ -473,7 +486,8 @@ If cooking instructions do not fit, rendering fails with a request to split the 
 It never truncates those instructions. A failed render does not publish a deck.
 
 Steps paginate in fours. Four or fewer steps give a two-page deck whose second page
-carries the steps and the closing panels. Five to eight steps give three pages, where
+carries the steps and the closing panels, before any ingredient or customization
+continuation pages. Five to eight steps give three base pages, where
 the middle page is steps only and the closing panels move to the last. `cooking_tip`
 accepts a list, one tip per step page, each about the steps on its own page; a page
 without a tip closes the gap rather than drawing an empty banner.
@@ -499,6 +513,7 @@ look at the pages. Nothing is generated, and the whole loop takes seconds.
 | Setting | Location | How a change takes effect |
 |---|---|---|
 | Model, instructions, log level, tool-call logging and tool limits | Parameter Manager | After the runtime cache expires. |
+| Image model and reference-image limit | Parameter Manager: image_model, max_reference_images | Next batch/call after cache expiry. |
 | Parameter address, model location and authorization ID | Runtime environment | Update the deployed runtime. |
 | MCP endpoint and other per-agent runtime settings | AgentSpec.runtime_env | Update the deployed runtime. |
 | OAuth client secret | Secret Manager | Update the stored version and review any existing authorization that uses it. |
@@ -514,6 +529,8 @@ versions/latest. RuntimeConfig rejects unknown fields and invalid values.
 {
   "config_revision": "example-v1",
   "model": "<approved-model-id>",
+  "image_model": "gemini-3.1-flash-image",
+  "max_reference_images": 5,
   "instruction": "Answer using the available tools. Ask when the request is unclear.",
   "environment": "dev",
   "log_level": "INFO",
@@ -526,6 +543,17 @@ versions/latest. RuntimeConfig rejects unknown fields and invalid values.
   "tool_call_logging": "off"
 }
 ~~~
+
+Each agent/workflow reads its own parameter. `model` selects its text model, including
+all workflow stages and compaction. `image_model` selects image generation. Choose
+compatible Gemini models supported in the configured locations. Model locations remain
+bootstrap settings and require redeployment to change.
+
+Deploy this code once before publishing the new fields: older runtimes reject unknown
+keys. Parameters without the new fields use the defaults above. If IMAGE_MODEL previously
+selected another model, copy it to `image_model` before the first image request after
+upgrading. IMAGE_MODEL now only seeds new parameters or supplies the local fallback.
+Later parameter edits take effect after CONFIG_REFRESH_SECONDS without deployment.
 
 Replace the model placeholder before publishing. Storage limits allow 1–100 objects;
 BigQuery row limits allow 1–10,000 rows. These limits apply to the custom tools.
@@ -834,9 +862,11 @@ Declare that package in `[tool.uv.sources]` and include its source path in each 
 conversational agent. Packaging tests check that its tools and style images ship
 without the agent package.
 
-The recipe workflow uses stage instructions and the bootstrap model from code and
-environment settings; changing its Parameter Manager entry does not change those
-stages. Update the deployment to change them. A validation callback checks the writer's
+The recipe workflow keeps stage instructions in code, so changing those requires
+deployment. All stages use its live `model` parameter through the shared plugin.
+Image generation uses `image_model`. `max_reference_images` defaults to five, including
+style plates and earlier photographs combined, and accepts 1–14. A no-reference sketch
+still sends zero references. A validation callback checks the writer's
 recipe before image generation. Shared tool validation and deployment checks cover
 both entry points.
 

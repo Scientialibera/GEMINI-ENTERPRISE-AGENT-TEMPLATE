@@ -7,12 +7,15 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.agents.run_config import RunConfig
 from google.adk.apps.app import EventsCompactionConfig
+from google.adk.apps.llm_event_summarizer import LlmEventSummarizer
+from google.adk.models import Gemini
 from google.adk.models.llm_request import LlmRequest
 from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 
+from ..config.bootstrap import get_bootstrap_settings
 from ..config.runtime_config import (
     TOOL_LOGGING_ARGUMENT_KEYS,
     TOOL_LOGGING_FULL,
@@ -112,6 +115,12 @@ class RuntimeLimitsPlugin(BasePlugin):
         invocation_context.events_compaction_config = EventsCompactionConfig(
             token_threshold=settings.context_compaction_threshold_tokens,
             event_retention_size=6,
+            summarizer=LlmEventSummarizer(
+                llm=Gemini(
+                    model=settings.model,
+                    client_kwargs={"location": get_bootstrap_settings().model_location},
+                )
+            ),
         )
 
     async def before_model_callback(
@@ -119,9 +128,9 @@ class RuntimeLimitsPlugin(BasePlugin):
     ) -> None:
         """Limit transport retries independently from the agent's model-call count."""
         del callback_context
+        settings = get_runtime_config()
+        llm_request.model = settings.model
         options = llm_request.config.http_options or types.HttpOptions()
         llm_request.config.http_options = options.model_copy(
-            update={
-                "retry_options": types.HttpRetryOptions(attempts=get_runtime_config().max_attempts)
-            }
+            update={"retry_options": types.HttpRetryOptions(attempts=settings.max_attempts)}
         )

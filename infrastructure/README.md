@@ -1,8 +1,8 @@
 # Gemini Enterprise Terraform template
 
-Infrastructure template for the Google Cloud runtime used by the companion ADK agent repository.
+Infrastructure template for the Google Cloud runtime used by this repository's ADK agents.
 
-This branch owns shared, agent-agnostic platform state: APIs, IAM, secrets and observability. It contains no agent prompts, tools or business logic, and it deploys no agents.
+This directory owns shared, agent-agnostic platform state: APIs, IAM, secrets and observability. It contains no agent prompts, tools or business logic, and it deploys no agents.
 
 ## Repository layout
 
