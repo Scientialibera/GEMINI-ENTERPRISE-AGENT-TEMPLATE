@@ -25,8 +25,16 @@ class ContentTooLong(ValueError):
         self.detail = detail
         self.suggestion = suggestion
 
-    def as_tool_result(self, attempt: int, max_attempts: int) -> dict[str, object]:
-        """Describe the failure in the terms the model needs to act on it."""
+    def as_tool_result(
+        self, attempt: int, max_attempts: int, *, action: str = "Shorten"
+    ) -> dict[str, object]:
+        """Describe the failure in the terms the model needs to act on it.
+
+        ``action`` is the verb for the edit being asked for. Text that does not
+        fit is shortened; a payload the schema rejects is corrected, and telling
+        a model to shorten a field it simply mistyped sends it to rewrite prose
+        that was never the problem.
+        """
         remaining = max(0, max_attempts - attempt)
         return {
             "status": "needs_correction" if remaining else "failed",
@@ -36,7 +44,7 @@ class ContentTooLong(ValueError):
             "fix": self.suggestion,
             "attempts_remaining": remaining,
             "next_step": (
-                f"Shorten {self.field} as described and call render_recipe_card again "
+                f"{action} {self.field} as described and call render_recipe_card again "
                 "with the corrected recipe and the same run_id returned in this result."
                 if remaining
                 else "No attempts remain. Report the problem rather than retrying."

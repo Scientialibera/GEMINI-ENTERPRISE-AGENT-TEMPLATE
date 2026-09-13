@@ -68,33 +68,43 @@ def render_recipe_card(
             f"{OUTPUT_BUCKET_ENV} is not set, so there is nowhere to publish the deck."
         )
 
+    # A payload the model can repair is answered rather than raised. Raising
+    # killed the whole invocation: the traceback reached the caller as an opaque
+    # stream failure naming neither the field nor the recipe, and the
+    # photography already paid for went unused. Every way the payload can be
+    # wrong is handled, not only the schema's: unparsable JSON and a payload
+    # that is not an object reach load_recipes before pydantic ever runs.
+    #
+    # Nothing here is counted against the run's render attempts, because a
+    # payload that never parsed never reached a render. The caller's run_id is
+    # carried back so the correction lands on the same run.
     try:
         data = load_recipes(recipe_json)
-    except ValidationError as invalid:
-        # A malformed payload is the model's to fix, exactly like text that does
-        # not fit, so it is answered rather than raised. Raising killed the whole
-        # invocation: the traceback reached the caller as an opaque stream
-        # failure naming neither the field nor the recipe, and the photography
-        # already paid for went unused.
-        #
-        # The payload has not parsed yet, so there is no run to count this
-        # against: a payload the schema rejects never reached a render attempt.
-        # The caller's run_id is carried back so the correction lands on the
-        # same run rather than starting a new one.
-        problem = invalid.errors()[0]
-        field = ".".join(str(part) for part in problem.get("loc", ())) or "recipes"
-        too_long = ContentTooLong(
-            field,
-            f"The recipe payload is not valid: {problem.get('msg', 'invalid value')} at {field}.",
-            "Correct that field and call render_recipe_card again. Send every value as "
-            "the type the field expects, such as text for a servings count.",
+        recipes = data.get("recipes") or []
+        if not recipes:
+            raise ValueError("The payload contains no recipes.")
+    except (ValidationError, ValueError) as invalid:
+        if isinstance(invalid, ValidationError):
+            problem = invalid.errors()[0]
+            field = ".".join(str(part) for part in problem.get("loc", ())) or "recipes"
+            detail = f"The recipe payload is not valid: {problem.get('msg', 'invalid')} at {field}."
+            fix = (
+                "Correct that field and call render_recipe_card again. Send every value "
+                "as the type the field expects, such as text for a servings count."
+            )
+        else:
+            # JSONDecodeError is a ValueError, so a payload that is not JSON at
+            # all arrives here too rather than escaping as a bare traceback.
+            field = "recipes"
+            detail = f"The recipe payload could not be read: {invalid}"
+            fix = (
+                "Send the recipe as a single JSON object containing a non-empty "
+                "`recipes` list, with no prose or code fence around it."
+            )
+        correction = ContentTooLong(field, detail, fix).as_tool_result(
+            1, get_runtime_config().max_attempts, action="Correct"
         )
-        result = too_long.as_tool_result(1, get_runtime_config().max_attempts)
-        return {**result, "run_id": run_id} if run_id else result
-
-    recipes = data.get("recipes") or []
-    if not recipes:
-        raise ValueError("The payload contains no recipes.")
+        return {**correction, "run_id": run_id} if run_id else correction
 
     first = recipes[0]
     slug = safe_slug(str(first.get("slug") or first.get("title") or "recipe"))

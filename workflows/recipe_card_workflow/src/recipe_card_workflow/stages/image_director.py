@@ -54,6 +54,10 @@ mode="sequential_reference"**, passing the run_id the first call returned.
 Order them `hero`, `step-1`, `step-2`, ... without a sketch. The tool
 feeds each finished image into the next, so the kitchen carries through.
 
+The hero opens the series and is generated from its prompt alone, so describe
+the finished dish fully there. Every later image is anchored by the photographs
+ahead of it.
+
 Open each prompt with a named camera angle, then the action, then this scene:
 
 > Editorial food photography for a premium cooking magazine, shot on a 50mm

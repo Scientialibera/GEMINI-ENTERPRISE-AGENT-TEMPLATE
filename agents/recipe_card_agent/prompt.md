@@ -114,6 +114,12 @@ on. Do not include the sketch. The tool feeds each finished image into the next,
 the cookware, surface and lighting carry through the series without you passing
 images yourself.
 
+The hero opens the series, so it is generated from its prompt alone: the house
+style plates are photographs of finished cards, and an image with nothing else
+to look at copies their content rather than their light. Describe the dish
+fully in the hero prompt. Every later image in the batch is anchored by the
+photographs ahead of it.
+
 This is editorial photography for a cooking magazine, not a snapshot. Every
 prompt in this batch must carry the same scene description:
 

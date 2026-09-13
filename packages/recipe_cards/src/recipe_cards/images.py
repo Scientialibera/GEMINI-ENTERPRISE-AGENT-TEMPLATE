@@ -113,9 +113,16 @@ def generate_recipe_images(
         raise ValueError(f"At most {MAX_IMAGES_PER_RUN} images may be generated per recipe run.")
     run_id = run_id or new_run_id()
     save_run(tool_context, run_id, run)
-    # Every image carries the house style plates. In sequential mode the batch's
-    # own earlier images are appended to these by the shared helper.
+    # The style plates are photographs of finished cards, so an image with
+    # nothing else to look at imitates their content rather than their light: a
+    # hero generated against them came back as a spaghetti step-card, numbered
+    # panels and all. They help only where a photograph of this dish already
+    # anchors the subject, which in sequential mode is every image after the
+    # first — the shared helper appends the batch's own earlier images to these.
+    # The rule is positional rather than by name, so it cannot be defeated by
+    # what the model happens to call the opening image.
     plates = _style_plates() if use_reference_images else ()
+    opens_series = mode == MODE_SEQUENTIAL_REFERENCE
     uris = {}
 
     def checkpoint(image):
@@ -147,10 +154,12 @@ def generate_recipe_images(
                 ImageRequest(
                     prompt=prompt,
                     name=name,
-                    reference_images=plates,
+                    # The image that opens a series has no earlier photograph to
+                    # anchor it, so it is generated from its prompt alone.
+                    reference_images=() if (opens_series and index == 0) else plates,
                     request_slot=functools.partial(acquire_slot, PROJECT_ID, OUTPUT_BUCKET, model),
                 )
-                for prompt, name in zip(prompts, names, strict=True)
+                for index, (prompt, name) in enumerate(zip(prompts, names, strict=True))
             ],
             mode=mode,
             on_image=checkpoint,

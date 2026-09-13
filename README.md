@@ -213,7 +213,7 @@ scopes it asks the user for:
     delegated_oauth_scopes=(),            # nothing runs as the signed-in user
     agent_identity_project_roles=(),      # nothing project-wide
     agent_identity_bucket_roles=(         # writes to its own output bucket
-        BucketRoles("${RECIPE_CARD_BUCKET}", (STORAGE_OBJECT_ADMIN, STORAGE_BUCKET_READER)),
+        BucketRoles("${RECIPE_CARD_BUCKET}", (STORAGE_OBJECT_ADMIN,)),
     ),
     runtime_env=(),                       # no runtime settings of its own
 )
@@ -681,7 +681,7 @@ packages/recipe_cards/src/recipe_cards/
   runs.py                    session-owned runs and asset manifests
   images.py, publish.py       shared ADK tools
   rendering/                 asset handling, drawing primitives and page layouts
-  style/                     bundled reference images
+  style/                     finished cards passed as style references
 dev/                         local, packaging, deployment, IAM and registration scripts
 tests/                       import, validation and behavior tests
 ~~~
@@ -870,7 +870,10 @@ deployment. Each text keeps its `{recipe}` and `{images}` placeholders, which ar
 filled from session state. All stages use its live `model` parameter through the
 shared plugin.
 Image generation uses `image_model`. `max_reference_images` defaults to five, including
-style plates and earlier photographs combined, and accepts 1–14. A no-reference sketch
+style plates and earlier photographs combined, and accepts 1–14. The image that opens
+a sequential batch is generated from its prompt alone: the plates are photographs of
+finished cards, so an image with nothing else to look at copies their content rather
+than their light. A no-reference sketch
 still sends zero references. A validation callback checks the writer's
 recipe before image generation. Shared tool validation and deployment checks cover
 both entry points.

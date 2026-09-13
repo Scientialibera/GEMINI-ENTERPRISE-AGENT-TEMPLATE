@@ -119,3 +119,59 @@ def test_runtime_exports_exclude_unused_extensions():
         assert not any(
             line.startswith(("nltk==", "pytest==", "llama-index-")) for line in requirements
         )
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [("sequential_reference", [0, 2, 2]), ("parallel", [2, 2, 2])],
+)
+def test_the_image_opening_a_series_gets_no_style_plates(monkeypatch, mode, expected):
+    """The plates are finished cards, so they need a subject to defer to.
+
+    A hero generated against them alone copied their content rather than their
+    light and came back as a spaghetti step-card, numbered panels and all. Every
+    later image in a sequential batch is anchored by the photographs ahead of
+    it, so the plates help there.
+    """
+    from recipe_cards import images as recipe_images
+
+    monkeypatch.setattr(recipe_images, "OUTPUT_BUCKET", "test-bucket")
+    monkeypatch.setattr(recipe_images, "_style_plates", lambda: (b"plate-1", b"plate-2"))
+    monkeypatch.setattr(recipe_images, "upload_bytes", Mock())
+    monkeypatch.setattr(recipe_images, "image_model_name", lambda: "test-image-model")
+    seen = []
+
+    def capture(requests, *, mode, on_image=None, model=None):
+        seen.extend(len(request.reference_images) for request in requests)
+        return []
+
+    monkeypatch.setattr(recipe_images, "generate_images", capture)
+    recipe_images.generate_recipe_images(
+        "tacos", ["a", "b", "c"], ["hero", "step-1", "step-2"], SimpleNamespace(state={}), mode=mode
+    )
+
+    assert seen == expected
+
+
+@pytest.mark.parametrize(
+    "payload", ["{", "[]", "hello", '{"recipes": []}', '{"recipes": [{"title": "T"}]}']
+)
+def test_an_unreadable_payload_is_corrected_not_raised(monkeypatch, payload):
+    """Every way a payload can be wrong reaches the model, not just the schema's.
+
+    json.loads raises before pydantic ever runs, so unparsable JSON and a
+    payload that is not an object used to escape the tool as a bare traceback
+    and end the invocation.
+    """
+    from recipe_cards import publish
+
+    monkeypatch.setattr(publish, "OUTPUT_BUCKET", "test-bucket")
+    monkeypatch.setattr(publish, "get_runtime_config", lambda: SimpleNamespace(max_attempts=3))
+
+    result = publish.render_recipe_card(payload, SimpleNamespace(state={}))
+
+    assert result["status"] == "needs_correction"
+    assert result["retryable"] is True
+    # The edit asked for must match the failure: nothing here is too long.
+    assert result["next_step"].startswith("Correct")
+    assert result["problem"]

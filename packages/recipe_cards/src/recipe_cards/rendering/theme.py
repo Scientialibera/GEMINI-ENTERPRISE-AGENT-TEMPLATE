@@ -62,7 +62,10 @@ MENU_LABEL_OFFSET = 0.35
 # Closing panels on the last steps page.
 VARIATIONS_PANEL_OFFSET = 0.30
 VARIATIONS_PANEL_H = 1.35
-VARIATIONS_TAB_W = 2.60
+# Wide enough that PowerPoint's own font metrics cannot wrap the heading. At
+# 2.60 the default title left 0.17in of slack, and a second line needs 0.73in
+# in a 0.46in tab, so it spilled over the panel below it.
+VARIATIONS_TAB_W = 3.00
 # A line of the heading at its type size needs more than the hand-drawn box
 # gave it: at 0.36in the text wrapped to two lines and spilled below the tab.
 VARIATIONS_TAB_H = 0.46
