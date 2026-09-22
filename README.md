@@ -830,9 +830,13 @@ Headers use the current session token for each request. Tool descriptions are ca
 for five minutes by default. Keep shared endpoints, scopes and tool lists under
 gemini_shared/mcp/ when multiple agents use them.
 
-## Add a workflow
+## Add a Python ADK workflow
 
-A workflow is deployed exactly like an agent: the same runtime, the same Agent
+An ADK workflow is not a native Workflow Builder entry. The release script registers
+its Python backend as an ADK agent. To add the native workflow experience while
+retaining Python tools, follow [Create a native recipe workflow](docs/native-workflows.md).
+
+An ADK workflow is deployed exactly like an agent: the same runtime, the same Agent
 Identity, the same Parameter Manager entry and the same registration. Only two things
 differ, so most of this repository does not distinguish them.
 

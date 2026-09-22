@@ -16,6 +16,9 @@ the spec is the only thing that tells them apart, and only the prompt path and t
 delegated-auth source scan consult it.
 
 The local runner reads dev/.env.local; remote commands read dev/.env.dev.
+These commands deploy ADK backends, including Python workflows. They do not create
+native Workflow Builder wrappers. Complete the [native setup](../docs/native-workflows.md)
+after registration if the app should expose a native workflow.
 Copy the matching example file and fill in the required values. Shell variables take
 precedence. Both files and dev/.state/ are ignored by Git.
 

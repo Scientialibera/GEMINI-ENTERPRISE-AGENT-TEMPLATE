@@ -241,6 +241,27 @@ def test_registration_updates_an_agent_found_on_the_second_page(monkeypatch):
     assert parse_qs(urlsplit(pages.call_args.args[1]).query)["pageToken"] == ["next/+="]
 
 
+def test_registration_does_not_overwrite_a_native_workflow(monkeypatch):
+    monkeypatch.setattr(
+        register_agent,
+        "iter_resources",
+        lambda *args: iter(
+            [
+                {
+                    "displayName": SPEC.display_name,
+                    "name": "projects/123/agents/native",
+                    "workflowAgentDefinition": {},
+                }
+            ]
+        ),
+    )
+    write = Mock()
+    monkeypatch.setattr(register_agent, "_request", write)
+    with pytest.raises(SystemExit, match="refusing to overwrite"):
+        register_agent.register_agent("basic_assistant", "app", "test-project", SPEC, RESOURCE)
+    write.assert_not_called()
+
+
 def test_authorization_on_second_page_is_reused(monkeypatch):
     monkeypatch.setattr(
         http,

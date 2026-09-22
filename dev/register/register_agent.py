@@ -263,6 +263,11 @@ def ensure_authorization(
 def _find_existing(project_id: str, app_id: str, display_name: str) -> str | None:
     for agent in iter_resources(_agents_url(project_id, app_id), project_id, "agents"):
         if agent.get("displayName") == display_name:
+            if "workflowAgentDefinition" in agent:
+                raise SystemExit(
+                    "A native workflow already uses this display name. Use distinct names "
+                    "for the ADK backend and native wrapper; refusing to overwrite it."
+                )
             return str(agent.get("name"))
     return None
 
@@ -299,6 +304,9 @@ def register_agent(
     else:
         result = _request("POST", _agents_url(project_id, app_id), project_id, agent)
         print(f"REGISTERED_AGENT={result.get('name')}")
+    if spec.source_root == "workflows":
+        print("REGISTERED_TYPE=ADK_PIPELINE (not a native Workflow Builder workflow)")
+        print("NATIVE_WORKFLOW_SETUP=docs/native-workflows.md")
     return str(result.get("name"))
 
 
