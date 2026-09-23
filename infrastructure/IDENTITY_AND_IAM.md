@@ -1,5 +1,11 @@
 # Execution identities and IAM ownership
 
+User access groups are separate from runtime identities. The optional
+[registration helper](../docs/agent-access-groups.md) creates Cloud Identity
+security groups and grants agent-use permission on Gemini Enterprise registrations.
+It requires directory-admin credentials; this Terraform stack does not create or
+manage those groups. Existing memberships remain under the group owner's control.
+
 No application helper grants IAM to itself. The companion agent repository can,
 when explicitly configured, grant approved roles to the exact Agent Identity of a
 runtime that already exists. The caller running that helper must already have IAM

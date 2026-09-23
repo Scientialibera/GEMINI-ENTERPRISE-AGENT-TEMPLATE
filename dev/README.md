@@ -1,5 +1,9 @@
 # Developer scripts
 
+For deployment-created user access groups, follow [agent access groups](../docs/agent-access-groups.md).
+`release_dev.py` checks groups before deployment; standalone registration also
+creates or reuses them. Group settings stay on the deployment machine, not the runtime.
+
 Run these scripts from the repository root. Remote commands require ENVIRONMENT=dev
 and existing deployment permissions. Follow the root [setup guide](../README.md) for
 authentication, OAuth client setup, Agent Identity IAM and runtime configuration.
@@ -12,13 +16,12 @@ uv run --group dev python dev/release_dev.py --agent recipe_card_workflow
 
 Every script takes `--agent <name>`, and a workflow is named the same way: the registry
 holds agents and workflows together, because they deploy identically. `source_root` on
-the spec is the only thing that tells them apart, and only the prompt path and the
-delegated-auth source scan consult it.
+the spec also selects native workflow registration for workflow entries.
 
 The local runner reads dev/.env.local; remote commands read dev/.env.dev.
-These commands deploy ADK backends, including Python workflows. They do not create
-native Workflow Builder wrappers. Complete the [native setup](../docs/native-workflows.md)
-after registration if the app should expose a native workflow.
+Workflow registration automatically creates an ADK backend with a `Backend` suffix
+and a native wrapper under the original name. Both remain available. See the
+[native workflow guide](../docs/native-workflows.md) for migration and validation.
 Copy the matching example file and fill in the required values. Shell variables take
 precedence. Both files and dev/.state/ are ignored by Git.
 

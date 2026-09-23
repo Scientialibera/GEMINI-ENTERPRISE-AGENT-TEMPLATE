@@ -1,81 +1,91 @@
-# Create a native recipe workflow
+# Native workflow registration
 
-`recipe_card_workflow` is a Python ADK SequentialAgent. Its stages run on Agent
-Engine and its listing uses `adkAgentDefinition`. It does not create a native
-Workflow Builder workflow or its workflow badge.
+Optional [access-group setup](agent-access-groups.md) grants the same group use
+permission on both the native wrapper and its ADK backend. Existing workflow
+graphs and schedules are preserved. Disabled wrappers require a state review;
+if a wrapper remains private after sharing, publish it before retrying verification.
 
-Google supports adding a registered ADK agent as an **Existing agent** step in a
-native workflow. Keep the backend and create a separate wrapper to retain Python
-image generation, shared pacing and PowerPoint rendering.
+Entries with `source_root="workflows"` deploy their Python pipeline to Agent Engine.
+Registration then creates two Gemini Enterprise resources:
 
-## Deploy the backend
+- **Recipe Card Workflow Backend** is the ADK registration required by the reference node.
+- **Recipe Card Workflow** is the native workflow users should open.
 
-Complete the root README's project, bucket, identity and app setup, then run:
+Both remain available. Disabling or deleting the backend can break the wrapper;
+there is no verified hidden-but-callable setting. A native wrapper references an
+app agent resource, not a Reasoning Engine directly.
+
+## Release a workflow
 
 ```bash
 uv run --group dev python dev/release_dev.py --agent recipe_card_workflow
 ```
 
-Confirm **Recipe Card Workflow** is published and available to your user in the
-same project. Test it directly before adding the wrapper. Generation incurs API
-charges; reuse existing photography where possible.
+To register an already-deployed runtime without deploying again:
 
-## Create the native workflow
+```bash
+uv run --group dev python dev/register/register_agent.py --agent recipe_card_workflow
+```
 
-1. Have an administrator enable Workflow Builder if it is unavailable.
-2. In the Gemini Enterprise web app, create a workflow named **Recipe Card Workflow
-   (Native)**. Keep its name distinct from the ADK backend's **Recipe Card Workflow**.
-3. Start with a manual trigger. Configure the recipe request, including servings
-   and ingredient substitutions, as input.
-4. Choose **Add step → Existing agents → Recipe Card Workflow**. A plain Gemini
-   Agent step does not carry this repository's Python tools.
-5. Insert the recipe input into the step's Prompt using the builder's variable
-   picker. Add this instruction:
+`--skip-register` on the release helper skips both registrations. Regular agent
+entries continue to create only their ADK registration.
 
-   > Create the requested recipe card using your complete recipe pipeline. Preserve
-   > the requested servings and substitutions. Return the published deck link only
-   > after rendering succeeds. If generation is incomplete, explain what remains
-   > and retain the run identifier so the photographs can be reused.
+## First release and migration
 
-   Pass inputs explicitly; other workflow variables are not automatically available
-   to the referenced agent. Do not type a guessed variable expression.
-6. Preview the workflow. Confirm the Existing agent step returns a real deck link,
-   then open the deck as the intended user and check ingredients, customizations
-   and images. A successful wrapper run alone does not validate the card content.
-7. Make the workflow live and verify its workflow presentation in the app. Sharing
-   the wrapper does not replace backend availability or Cloud Storage permissions.
+The helper creates an enabled wrapper with a manual trigger and one
+`AGENT_REFERENCE_NODE` referencing the backend. It does not create a schedule.
+The default prompt asks the backend to collect missing inputs and complete its
+pipeline. Configure explicit input mappings in Workflow Builder if needed;
+the helper does not invent trigger-variable expressions.
 
-The picker shows published ADK/A2A agents shared with the current user in the same
-project. If an agent is missing, check publication, project and sharing. Delegated
-agents require authentication before starting a new workflow run. The recipe
-backend uses Agent Identity for storage operations.
+An existing ADK registration for the same runtime is reused and renamed with the
+`Backend` suffix, preserving its resource ID and existing references. Multiple
+registrations for that runtime, conflicting backend names or an unmanaged native
+workflow under the intended name stop registration rather than overwrite data.
+The earlier **Recipe Card Workflow API Test** remains separate and is not adopted
+or deleted automatically.
 
-## What the comparison demonstrates
+## Later releases
 
-`recipe_card_agent` chooses tools conversationally. `recipe_card_workflow` fixes
-writer → image director → renderer in Python. The native wrapper calls the latter
-as **one Existing agent step**; the three Python stages are not separate canvas
-nodes. Making the canvas own each stage would require separately deployed stage
-agents and explicit persisted handoffs, which this template does not implement.
+The helper identifies its wrapper by the description marker
+`Managed native workflow wrapper: <package_name>`. Keep this marker intact.
+It preserves the existing graph, prompt, schedule and sharing state. If that
+graph no longer references the expected backend, registration fails for manual
+review. The wrapper is read back to verify its reference. Creation failure leaves
+the backend registered; a retry reuses it.
 
-## Ownership and changes
+Serialize releases per workflow and app. This integration has no verified API
+idempotency key, so do not register the same workflow concurrently. Inspect
+resources after an interrupted or ambiguous API response before retrying.
 
-The release script owns the ADK backend. Parameter Manager controls its models,
-limits and stage instructions. Workflow Builder owns the wrapper, trigger, prompt
-and workflow versions. The wrapper dynamically references the published backend.
-Updating the backend preserves that reference; replacing its registration requires
-checking the wrapper again. Never replace an ADK definition merely to change its icon.
+## Test in the app
 
-After backend changes, preview the wrapper again. Test recovery, access as another
-user and concurrent runs before production use. Enable scheduling only after checking
-inputs, quotas, runtime duration and output delivery.
+Enable Workflow Builder and ensure intended users can access both resources.
+Open **Recipe Card Workflow**, enter a recipe request and confirm the backend
+returns a real deck link. Open that deck as the intended user and check its
+content. Test missing-input handling, recovery and access as another user before
+sharing widely. Recipe generation incurs API charges.
 
-## Automation status
+The wrapper calls the Python workflow as one step. The writer, image director
+and renderer remain Python stages, not separate native canvas nodes. Runtime
+prompts and models remain controlled by Parameter Manager; the native node's
+handoff prompt is separate and maintained in Workflow Builder.
 
-Checked 2026-09-22: the app API returns `workflowAgentDefinition` for existing native
-workflows, but the public v1alpha discovery schema does not describe that definition.
-This repository does not create or update native wrappers by API. An Existing agent
-node payload has not been verified for this app, so use Workflow Builder rather than
-inventing fields. A backend release is not completion of the native wrapper.
+## API support status
 
-Source: [Google: Add an existing agent step](https://docs.cloud.google.com/gemini/enterprise/docs/workflow-builder/add-existing-agents).
+On 22 September 2026, a UI-created example revealed the native reference payload.
+Creating and retrieving a private manual wrapper through the authenticated
+Discovery Engine v1alpha API succeeded; the user also confirmed it in the app.
+The integrated helper subsequently renamed the existing recipe backend, created
+an enabled native wrapper and reused both resource IDs on a second registration.
+These checks did not run recipe generation.
+The public discovery schema still omits `workflowAgentDefinition`. This is an
+observed, undocumented integration, not a published Google API contract. API
+round-trip verification does not replace testing the workflow's execution.
+
+Implementation: `dev/register/native_workflow.py`. Native registration uses
+`workflowAgentDefinition.agentFlow` with `MANUAL_TRIGGER` and
+`AGENT_REFERENCE_NODE`, whose `agentReferenceType` is `ADK_AGENT`.
+
+Sources: [Existing agent steps](https://docs.cloud.google.com/gemini/enterprise/docs/workflow-builder/add-existing-agents)
+and [agent states](https://docs.cloud.google.com/gemini/enterprise/docs/agents-overview).

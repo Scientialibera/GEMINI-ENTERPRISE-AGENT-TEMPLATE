@@ -21,6 +21,8 @@ from gemini_shared.config.bootstrap import AUTHORIZATION_ID_ENV
 from paths import ROOT
 from registry import AgentSpec, detect_delegated_auth, get_agent_spec
 
+from register.access_groups import prepare_access_group
+from register.agent_sharing import check_sharing, share_agent
 from register.api_http import REQUEST_TIMEOUT_SECONDS, iter_resources
 from register.api_http import request as _request
 from register.oauth import OAUTH_CLIENTS_ENV, oauth_client_id_for
@@ -281,6 +283,7 @@ def register_agent(
 ) -> str:
     """Create or update the app registration for this runtime."""
 
+    access_group = prepare_access_group(project_id, app_id, spec.package_name)
     # Catch undeclared delegated tools before registration.
     if detect_delegated_auth(spec) and not spec.uses_delegated_auth:
         raise SystemExit(
@@ -295,19 +298,54 @@ def register_agent(
         ensure_authorization(project_id, authorization_id, agent_name, spec)
 
     agent = _build_agent(spec, reasoning_engine, project_id)
+    if access_group:
+        agent["sharingConfig"] = {"scope": "RESTRICTED"}
+    is_workflow = spec.source_root == "workflows"
+    if is_workflow:
+        from register.native_workflow import find_backend, find_wrapper
 
-    existing = _find_existing(project_id, app_id, spec.display_name)
+        registrations = list(iter_resources(_agents_url(project_id, app_id), project_id, "agents"))
+        wrapper = find_wrapper(registrations, spec.package_name, spec.display_name)
+        if access_group and wrapper:
+            check_sharing(
+                f"{DISCOVERY_ENGINE_HOST}/{DISCOVERY_ENGINE_VERSION}/{wrapper['name']}",
+                project_id,
+            )
+        existing = find_backend(registrations, spec.display_name, reasoning_engine)
+        agent["displayName"] = f"{spec.display_name} Backend"
+    else:
+        existing = _find_existing(project_id, app_id, spec.display_name)
     if existing:
         url = f"{DISCOVERY_ENGINE_HOST}/{DISCOVERY_ENGINE_VERSION}/{existing}"
+        if access_group:
+            check_sharing(url, project_id)
         result = _request("PATCH", url, project_id, agent)
         print(f"UPDATED_AGENT={result.get('name')}")
     else:
         result = _request("POST", _agents_url(project_id, app_id), project_id, agent)
         print(f"REGISTERED_AGENT={result.get('name')}")
-    if spec.source_root == "workflows":
-        print("REGISTERED_TYPE=ADK_PIPELINE (not a native Workflow Builder workflow)")
-        print("NATIVE_WORKFLOW_SETUP=docs/native-workflows.md")
-    return str(result.get("name"))
+    name = result.get("name")
+    if not isinstance(name, str) or "/agents/" not in name:
+        raise ValueError("Registration returned no agent resource; inspect before retrying.")
+    if access_group:
+        share_agent(
+            f"{DISCOVERY_ENGINE_HOST}/{DISCOVERY_ENGINE_VERSION}/{name}", project_id, access_group
+        )
+    if is_workflow:
+        from register.native_workflow import ensure_wrapper
+
+        print(f"WORKFLOW_BACKEND={name}")
+        wrapper_name = ensure_wrapper(
+            _agents_url(project_id, app_id), project_id, spec.package_name, spec.display_name, name
+        )
+        if access_group:
+            share_agent(
+                f"{DISCOVERY_ENGINE_HOST}/{DISCOVERY_ENGINE_VERSION}/{wrapper_name}",
+                project_id,
+                access_group,
+            )
+        return wrapper_name
+    return name
 
 
 def main() -> None:

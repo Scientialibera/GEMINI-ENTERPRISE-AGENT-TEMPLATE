@@ -1,5 +1,9 @@
 # Gemini Enterprise ADK agents and workflows
 
+Deployment can optionally create per-agent security groups for user access.
+See [agent access groups](docs/agent-access-groups.md) for directory prerequisites,
+configuration and membership management. This is separate from runtime Agent Identity IAM.
+
 This repository contains six Python agents, one workflow and the scripts to run them
 locally, deploy them to Agent Engine and register them in Gemini Enterprise.
 
@@ -556,7 +560,6 @@ parameters it manages; leave it unset elsewhere. The updater never writes it, or
 other unset optional field, into another agent's parameter, so runtimes deployed before
 a field existed keep loading.
 
-
 Each agent/workflow reads its own parameter. `model` selects its text model, including
 all workflow stages and compaction. `image_model` selects image generation. Choose
 compatible Gemini models supported in the configured locations. Model locations remain
@@ -870,13 +873,13 @@ gemini_shared/mcp/ when multiple agents use them.
 
 ## Add a Python ADK workflow
 
-An ADK workflow is not a native Workflow Builder entry. The release script registers
-its Python backend as an ADK agent. To add the native workflow experience while
-retaining Python tools, follow [Create a native recipe workflow](docs/native-workflows.md).
+The release script registers the Python backend with a `Backend` suffix and creates
+a native Workflow Builder wrapper under the workflow's original name. The backend
+must remain available for the wrapper to call it. See [Native workflow registration](docs/native-workflows.md).
 
 An ADK workflow is deployed exactly like an agent: the same runtime, the same Agent
-Identity, the same Parameter Manager entry and the same registration. Only two things
-differ, so most of this repository does not distinguish them.
+Identity and the same Parameter Manager entry. Registration additionally creates
+the native wrapper. The source layout differs as follows.
 
 1. It lives under `workflows/` rather than `agents/`, and its `AgentSpec` sets
    `source_root="workflows"`. That field is the only registry change a workflow needs.

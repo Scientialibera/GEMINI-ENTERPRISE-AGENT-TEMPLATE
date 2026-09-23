@@ -13,6 +13,14 @@ REQUEST_TIMEOUT_SECONDS = 60
 CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
 
+class ApiError(SystemExit):
+    """An HTTP failure whose status can be handled without parsing its message."""
+
+    def __init__(self, method: str, url: str, status: int, body: str):
+        self.status = status
+        super().__init__(f"{method} {url} failed with HTTP {status}: {body}")
+
+
 def request(method: str, url: str, project_id: str, payload=None) -> dict[str, object]:
     credentials, _ = google.auth.default(scopes=[CLOUD_PLATFORM_SCOPE])
     credentials.refresh(google.auth.transport.requests.Request())
@@ -24,7 +32,7 @@ def request(method: str, url: str, project_id: str, payload=None) -> dict[str, o
         timeout=REQUEST_TIMEOUT_SECONDS,
     )
     if not response.ok:
-        raise SystemExit(f"{method} {url} failed with HTTP {response.status_code}: {response.text}")
+        raise ApiError(method, url, response.status_code, response.text)
     return response.json() if response.content else {}
 
 

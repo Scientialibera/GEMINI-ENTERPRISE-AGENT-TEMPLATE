@@ -10,6 +10,8 @@ from config.settings import load_environment, require_dev_environment
 from deploy.package_agent import package_agent
 from deploy.state import find_resource_name, runtime_override
 from paths import ROOT
+from register.access_groups import prepare_access_group
+from register.group_config import group_config
 from register.register_agent import APP_ENGINE_ID_ENV, register_agent
 from registry import get_agent_spec
 
@@ -32,11 +34,16 @@ def main() -> None:
     load_environment(".env.dev")
     spec = get_agent_spec(args.agent)
     project_id, location, staging_bucket = require_dev_environment(spec=spec)
+    app_id = os.getenv(APP_ENGINE_ID_ENV, "").strip()
+    if not args.skip_register:
+        group_config(project_id, app_id, spec.package_name)
 
     existing_resource = runtime_override(project_id, location)
 
     print("STEP=preflight")
     ensure_dev_prerequisites(project_id, location, staging_bucket, spec)
+    if not args.skip_register:
+        prepare_access_group(project_id, app_id, spec.package_name)
 
     # Preflight may create an explicitly requested new sandbox project. Resolve
     # its numeric state scope only after that project exists.
