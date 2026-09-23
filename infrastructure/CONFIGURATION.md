@@ -42,9 +42,15 @@ If the experiment is retained, copy the accepted value back into the agent repos
 
 QA and production should normally restrict Parameter Manager writes to the release identity.
 
+The agent repository's Parameter Updater is such an in-band write path from chat: it
+publishes validated versions under its own Agent Identity after the user confirms a diff.
+Its changes are drift in the same sense, and an instruction it edits is replaced on that
+agent's next release unless the repository prompt is updated. Deploy it to an environment
+only where chat-driven configuration changes are acceptable, and restrict who can use it.
+
 ## Drift policy
 
-- Agent Identities normally receive Parameter Manager read access only, granted here through the all-agent principal set.
+- Agent Identities normally receive Parameter Manager read access only, granted here through the all-agent principal set. The Parameter Updater is the exception: its exact identity also holds `parameterViewer` and `parameterVersionAdder`, which add versions but cannot delete, disable or rewrite one.
 - The agent repository's release path owns parameter/version creation.
 - Manual shared-environment changes are treated as drift.
 - Break-glass changes must be reconciled into Git immediately.

@@ -1,6 +1,6 @@
 # Gemini Enterprise ADK agents and workflows
 
-This repository contains five Python agents, one workflow and the scripts to run them
+This repository contains six Python agents, one workflow and the scripts to run them
 locally, deploy them to Agent Engine and register them in Gemini Enterprise.
 
 An **agent** is conversational: it holds tools and decides which to call as the
@@ -16,6 +16,7 @@ recipe card exists in both forms so the two can be compared directly.
 | bigquery_mcp_agent | Explore BigQuery through Google's managed MCP server using the user's delegated token. |
 | monitoring_mcp_agent | Inspect Cloud Monitoring metrics, alerts and dashboards through Google's managed MCP server using the user's delegated token. See its [README](agents/monitoring_mcp_agent/README.md). |
 | recipe_card_agent | Write a recipe, generate its photography and publish a PowerPoint recipe card to Cloud Storage. |
+| parameter_updater | Inspect and change other agents' live model, prompt and limits in Parameter Manager, with a previewed diff and explicit confirmation before each publish. See [below](#parameter-updater). |
 
 | Workflow | Purpose |
 |---|---|
@@ -377,6 +378,11 @@ tools, complete **Authorize** and confirm BigQuery returns data the signed-in us
 access. Test another user with different permissions to check access boundaries.
 Signing in alone does not prove delegated API access works.
 
+For parameter_updater, ask it to change a harmless field such as another agent's
+`log_level`, confirm the diff, then ask it to roll back. Both publishes should appear as
+new versions of that parameter. A first attempt right after deployment can be denied
+for a few minutes while its new IAM grants propagate.
+
 For Cloud Storage, set agent_identity_bucket_name in the runtime parameter and configure
 a bucket-scoped binding for the exact runtime identity, for example:
 
@@ -540,9 +546,16 @@ versions/latest. RuntimeConfig rejects unknown fields and invalid values.
   "max_attempts": 3,
   "max_model_calls_per_request": 100,
   "context_compaction_threshold_tokens": 100000,
-  "tool_call_logging": "off"
+  "tool_call_logging": "off",
+  "managed_project": null
 }
 ~~~
+
+`managed_project` is read only by parameter_updater and names the project whose
+parameters it manages; leave it unset elsewhere. The updater never writes it, or any
+other unset optional field, into another agent's parameter, so runtimes deployed before
+a field existed keep loading.
+
 
 Each agent/workflow reads its own parameter. `model` selects its text model, including
 all workflow stages and compaction. `image_model` selects image generation. Choose
@@ -599,6 +612,31 @@ the other settings. Prompt files are outside src/ and excluded from the runtime 
 For a live-only edit, publish the instruction directly in Parameter Manager. Also update
 prompt.md if you want to keep that edit: the next deployment publishes the repository
 prompt again. Local runs use AGENT_INSTRUCTION rather than loading prompt.md.
+
+### Parameter Updater
+
+parameter_updater makes that live edit from chat. It lists the project's parameters,
+reads any version, and publishes a change in two steps: `preview_parameter_update`
+merges the requested fields over the live version, validates the result against
+`RuntimeConfig` and returns a diff with a `change_id`; `apply_parameter_update` publishes
+only that previewed payload, and refuses if another version went live in between.
+A version that would not load is never written, which matters because a runtime starting
+cold has no last-known-good configuration to fall back to.
+
+It runs as its own Agent Identity with `parameterViewer` and `parameterVersionAdder`,
+declared in its `AgentSpec`. Neither role can delete, disable or rewrite a version, so a
+rollback is a new version carrying the old values. It will not edit its own parameter,
+set `config_revision` or `managed_project`, or accept `__REF__` secret references.
+
+Because it acts as itself, anyone who can use it in the app can change any agent's
+configuration in the managed project, and Cloud Audit Logs name the runtime rather than
+the person; the agent logs the requesting user ID with each publish. Restrict who can
+use it in Gemini Enterprise accordingly.
+
+`managed_project` in its own parameter selects another project to manage; the default is
+the project it runs in. Grant the same two roles to its identity in that project first.
+The prompt.md caveat above applies: an instruction edited here is replaced on that
+agent's next release unless prompt.md is updated to match.
 
 ### Bootstrap settings
 

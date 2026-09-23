@@ -38,6 +38,12 @@ BIGQUERY_JOB_USER = "roles/bigquery.jobUser"
 
 BIGQUERY_DATA_VIEWER = "roles/bigquery.dataViewer"
 
+# List parameters and versions, and add a version. Neither role can delete,
+# disable or rewrite a version, so every change stays in the history.
+PARAMETER_VIEWER = "roles/parametermanager.parameterViewer"
+
+PARAMETER_VERSION_ADDER = "roles/parametermanager.parameterVersionAdder"
+
 
 @dataclass(frozen=True, slots=True)
 class BucketRoles:
@@ -172,6 +178,32 @@ AGENTS: dict[str, AgentSpec] = {
         starter_prompts=(
             "Report the active config revision and model.",
             "Which Parameter Manager resource is this agent reading?",
+        ),
+    ),
+    "parameter_updater": AgentSpec(
+        package_name="parameter-updater",
+        module="parameter_updater.agent",
+        display_name="Parameter Updater",
+        extra_packages=(
+            "agents/parameter_updater/src/parameter_updater",
+            "packages/gemini_shared/src/gemini_shared",
+        ),
+        # Project-wide because Parameter Manager has no per-parameter IAM. Render
+        # comes from the baseline every Agent Identity already holds. A managed
+        # project other than this one needs the same two roles granted there.
+        agent_identity_project_roles=(PARAMETER_VIEWER, PARAMETER_VERSION_ADDER),
+        registration_description=(
+            "Inspect and change the live runtime configuration of this project's agents: "
+            "model, instruction and limits in Parameter Manager. Every change is "
+            "previewed as a diff and published only after confirmation."
+        ),
+        invocation_description=(
+            "Use this to see or change another agent's model, prompt or limits without a redeploy."
+        ),
+        starter_prompts=(
+            "List the agent configurations in this project.",
+            "Show the Basic Assistant's live instruction and its recent versions.",
+            "Switch the Recipe Card Agent's model to gemini-3.7-flash.",
         ),
     ),
     "auth_reference_agent": AgentSpec(

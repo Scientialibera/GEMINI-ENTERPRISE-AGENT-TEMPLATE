@@ -32,3 +32,9 @@ def test_monitoring_mcp_agent_imports(monkeypatch):
     _base_env(monkeypatch)
     module = importlib.import_module("monitoring_mcp_agent.agent")
     assert module.root_agent.name == "monitoring_mcp_agent"
+
+
+def test_parameter_updater_imports(monkeypatch):
+    _base_env(monkeypatch)
+    module = importlib.import_module("parameter_updater.agent")
+    assert module.root_agent.name == "parameter_updater"

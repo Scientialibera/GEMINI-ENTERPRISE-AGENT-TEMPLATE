@@ -27,6 +27,7 @@ STORAGE_OBJECT_LIMIT_ENV = "STORAGE_OBJECT_LIMIT"
 BIGQUERY_QUERY_ROW_LIMIT_ENV = "BIGQUERY_QUERY_ROW_LIMIT"
 TOOL_CALL_LOGGING_ENV = "TOOL_CALL_LOGGING"
 STAGE_INSTRUCTIONS_ENV = "STAGE_INSTRUCTIONS"
+MANAGED_PROJECT_ENV = "MANAGED_PROJECT"
 
 # How much of a tool call reaches the logs. ADK logs nothing naming a called
 # tool, so without this the call sequence is invisible. "full" records the
@@ -85,6 +86,11 @@ class RuntimeConfig(BaseModel):
         default=DEFAULT_COMPACTION_THRESHOLD, ge=1000, le=1_000_000
     )
     tool_call_logging: str = Field(default=DEFAULT_TOOL_CALL_LOGGING, min_length=1)
+    # The project whose runtime parameters the Parameter Updater inspects and
+    # edits. Empty means the project it is deployed in. Live rather than baked
+    # in, so pointing it elsewhere is a publish, not a redeploy; the identity
+    # still needs Parameter Manager roles in that project.
+    managed_project: str | None = Field(default=None, min_length=1)
 
     @field_validator("model", "image_model", "instruction", "config_revision", "environment")
     @classmethod
@@ -152,6 +158,7 @@ def _local_payload() -> dict[str, object]:
         ),
         "tool_call_logging": os.getenv(TOOL_CALL_LOGGING_ENV, DEFAULT_TOOL_CALL_LOGGING).strip()
         or DEFAULT_TOOL_CALL_LOGGING,
+        "managed_project": os.getenv(MANAGED_PROJECT_ENV, "").strip() or None,
     }
 
 

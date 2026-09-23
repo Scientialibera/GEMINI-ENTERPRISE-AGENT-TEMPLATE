@@ -58,6 +58,15 @@ Identity at the narrowest practical resource scope. The companion dev helper app
 explicitly configured exact-agent project roles and Cloud Storage bucket bindings after
 deployment, once the Reasoning Engine ID exists.
 
+One agent writes configuration: the Parameter Updater's exact identity holds
+`roles/parametermanager.parameterViewer` and `roles/parametermanager.parameterVersionAdder`
+at project scope, because Parameter Manager has no per-parameter IAM. It can therefore
+publish a version of any parameter in the project, acting as itself rather than the
+signed-in user, so Cloud Audit Logs name the runtime; the agent logs the requesting user
+ID with each publish. Neither role can delete, disable or update a version. These are
+per-agent grants, never principal-set roles: adding them to agent_identity_project_roles
+would let every agent rewrite every other agent's configuration.
+
 ## Terraform runner
 
 The workload stack assumes its execution identity already exists and is authorized.
