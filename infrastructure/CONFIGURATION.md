@@ -16,6 +16,13 @@ Do not keep the same shared live setting in Terraform, Agent Engine env and a de
 
 ## Initial variables
 
+Optional per-agent access-group settings (`GEMINI_AGENT_GROUPS_ENABLED` and
+`GEMINI_AGENT_GROUP_*`) belong in the deployment environment, not Terraform
+variables, runtime parameters or agent prompts. The registration helper manages
+those groups separately from runtime Agent Identity IAM. See
+[agent access groups](../docs/agent-access-groups.md) for the required directory
+authority, naming rules and membership ownership.
+
 `variables.tf` defines the contract. Copy `terraform.tfvars.example` to the target environment root and replace the applicable placeholders.
 
 Secret payloads are never placed in `terraform.tfvars`.

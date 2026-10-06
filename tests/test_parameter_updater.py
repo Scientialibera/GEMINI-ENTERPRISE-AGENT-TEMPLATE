@@ -1,10 +1,13 @@
 """The Parameter Updater publishes only previewed, valid, non-stale changes."""
 
+import asyncio
 import json
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from gemini_shared.config.runtime_config import reset_runtime_config_for_tests
+from google.adk.tools import FunctionTool
 from google.api_core import exceptions
 
 TARGET = "basic-assistant-config"
@@ -89,7 +92,9 @@ def test_preview_publishes_nothing_and_apply_publishes_exactly_the_preview(tools
     ]
     assert fake.created == []
 
-    applied = parameters.apply_parameter_update(preview["change_id"], context)
+    applied = parameters.apply_parameter_update(
+        preview["change_id"], preview["proposed_update"], context
+    )
 
     assert applied["status"] == "applied"
     assert applied["previous_version"] == "bootstrap-v1"
@@ -100,8 +105,67 @@ def test_preview_publishes_nothing_and_apply_publishes_exactly_the_preview(tools
     assert written["instruction"] == LIVE["instruction"]
     assert written["config_revision"] == preview["new_revision"]
     # A second apply of the same ID must not publish again.
-    assert parameters.apply_parameter_update(preview["change_id"], context)["status"] == "error"
+    assert (
+        parameters.apply_parameter_update(
+            preview["change_id"], preview["proposed_update"], context
+        )["status"]
+        == "error"
+    )
     assert len(fake.created) == 1
+
+
+def test_publish_tool_requires_adk_confirmation(tools):
+    from parameter_updater.agent import root_agent
+
+    parameters, fake = tools
+    [publish_tool] = [
+        tool for tool in root_agent.tools if getattr(tool, "name", "") == "apply_parameter_update"
+    ]
+    assert isinstance(publish_tool, FunctionTool)
+
+    context = _context()
+    context.tool_confirmation = None
+    context.actions = SimpleNamespace(skip_summarization=False)
+    context.request_confirmation = Mock()
+    preview = parameters.preview_parameter_update(
+        TARGET, json.dumps({"log_level": "DEBUG"}), context
+    )
+    args = {
+        "change_id": preview["change_id"],
+        "proposed_update": preview["proposed_update"],
+    }
+    assert asyncio.run(publish_tool.check_require_confirmation(args, context)) is True
+
+    pending = asyncio.run(publish_tool.run_async(args=args, tool_context=context))
+    assert "confirmation" in pending["error"]
+    context.request_confirmation.assert_called_once()
+    assert fake.created == []
+
+    context.tool_confirmation = SimpleNamespace(confirmed=False)
+    rejected = asyncio.run(publish_tool.run_async(args=args, tool_context=context))
+    assert "rejected" in rejected["error"]
+    assert fake.created == []
+
+    context.tool_confirmation = SimpleNamespace(confirmed=True)
+    approved = asyncio.run(publish_tool.run_async(args=args, tool_context=context))
+    assert approved["status"] == "applied"
+    assert len(fake.created) == 1
+
+
+def test_changed_approval_text_cannot_publish(tools):
+    parameters, fake = tools
+    context = _context()
+    preview = parameters.preview_parameter_update(
+        TARGET, json.dumps({"log_level": "DEBUG"}), context
+    )
+    assert "log_level" in preview["proposed_update"]
+
+    result = parameters.apply_parameter_update(
+        preview["change_id"], "A different update", context
+    )
+
+    assert result["status"] == "refused"
+    assert fake.created == []
 
 
 def test_apply_refuses_when_another_version_went_live_after_the_preview(tools):
@@ -113,7 +177,9 @@ def test_apply_refuses_when_another_version_went_live_after_the_preview(tools):
     fake.create_version("home-project", TARGET, "someone-else", json.dumps(LIVE))
     fake.created.clear()
 
-    result = parameters.apply_parameter_update(preview["change_id"], context)
+    result = parameters.apply_parameter_update(
+        preview["change_id"], preview["proposed_update"], context
+    )
 
     assert result["status"] == "stale"
     assert fake.created == []
@@ -130,7 +196,9 @@ def test_instruction_change_is_diffed_and_carries_the_release_note(tools):
     assert change["field"] == "instruction"
     assert "-Line two." in change["diff"]
     assert "+Line 2, edited." in change["diff"]
-    applied = parameters.apply_parameter_update(preview["change_id"], context)
+    applied = parameters.apply_parameter_update(
+        preview["change_id"], preview["proposed_update"], context
+    )
     assert "prompt.md" in applied["note"]
 
 
@@ -198,7 +266,7 @@ def test_written_payload_omits_unset_optional_fields(tools):
     parameters, fake = tools
     context = _context()
     preview = parameters.preview_parameter_update(TARGET, json.dumps({"model": "m2"}), context)
-    parameters.apply_parameter_update(preview["change_id"], context)
+    parameters.apply_parameter_update(preview["change_id"], preview["proposed_update"], context)
 
     written = json.loads(fake.created[0][3])
     assert "managed_project" not in written

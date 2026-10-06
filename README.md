@@ -280,6 +280,24 @@ Use a separate OAuth client and authorization for each delegated agent in this t
 The defaults are `<package-name>-authz` for the authorization and
 `<package-name>-oauth-client-secret` for its secret.
 
+**For AI-assisted setup:** present OAuth client setup as a Markdown table, not a
+paragraph. Use one row per delegated agent being deployed, with columns for the
+agent, exact OAuth client name, application type and authorized redirect URIs.
+Read names from `AgentSpec.oauth_client_name` and URLs from `OAUTH_REDIRECT_URIS`
+in `dev/register/register_agent.py`; do not guess them. Show both complete URLs
+in every row so they can be copied into the matching client. Do not put client
+secrets or tokens in the table. Show consent scopes separately, grouped by agent.
+
+The current client setup is:
+
+| Agent | OAuth client name | Application type | Authorized redirect URIs (add both) |
+|---|---|---|---|
+| `auth_reference_agent` | Auth Reference Agent (dev) | Web application | `https://vertexaisearch.cloud.google.com/static/oauth/oauth.html`<br>`https://vertexaisearch.cloud.google.com/oauth-redirect` |
+| `bigquery_mcp_agent` | BigQuery MCP Agent (dev) | Web application | `https://vertexaisearch.cloud.google.com/static/oauth/oauth.html`<br>`https://vertexaisearch.cloud.google.com/oauth-redirect` |
+| `monitoring_mcp_agent` | Monitoring MCP Agent (dev) | Web application | `https://vertexaisearch.cloud.google.com/static/oauth/oauth.html`<br>`https://vertexaisearch.cloud.google.com/oauth-redirect` |
+
+Agents without delegated tools do not need an OAuth client for Agent Identity access.
+
 Configure the project's OAuth consent screen, including the test users and scopes
 needed for your test. In Google Auth Platform, create a **Web application** client with
 the name printed by register_agent.py. Add both callbacks used by this integration:
@@ -622,9 +640,28 @@ parameter_updater makes that live edit from chat. It lists the project's paramet
 reads any version, and publishes a change in two steps: `preview_parameter_update`
 merges the requested fields over the live version, validates the result against
 `RuntimeConfig` and returns a diff with a `change_id`; `apply_parameter_update` publishes
-only that previewed payload, and refuses if another version went live in between.
+only that previewed payload after the user approves ADK's tool confirmation card,
+and refuses if another version went live in between.
+The card includes a `Proposed update` field copied from the stored preview. The
+tool refuses to publish if that text differs; for long changes, review the full
+diff in chat because the card text is shortened.
 A version that would not load is never written, which matters because a runtime starting
 cold has no last-known-good configuration to fall back to.
+ADK's confirmation feature is experimental. The deployed Agent Engine emits a
+confirmation request before publishing; verify that your Gemini Enterprise app
+renders the card and resumes correctly before relying on it as the sole review
+experience.
+
+If a chat stalls after you approve the card, check the target parameter's latest
+version before trying again. Approval alone does not prove a publish succeeded:
+the tool must return the new version. If the preview is no longer available, read
+the live parameter and make a new preview. Saying yes in chat does not approve
+the tool call.
+The Agent Engine logs show model authentication errors separately from Parameter
+Manager errors, so a stalled reply does not by itself indicate a failed write.
+The updater retries a model `401` once with a fresh client. If that also fails,
+it reports the authentication problem in chat; check the live version before
+repeating a confirmed change. Other model errors still surface normally.
 
 It runs as its own Agent Identity with `parameterViewer` and `parameterVersionAdder`,
 declared in its `AgentSpec`. Neither role can delete, disable or rewrite a version, so a

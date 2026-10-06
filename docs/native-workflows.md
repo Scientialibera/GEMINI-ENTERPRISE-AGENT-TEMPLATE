@@ -32,8 +32,11 @@ entries continue to create only their ADK registration.
 
 ## First release and migration
 
-The helper creates an enabled wrapper with a manual trigger and one
-`AGENT_REFERENCE_NODE` referencing the backend. It does not create a schedule.
+The helper requests an enabled wrapper with a manual trigger and one
+`AGENT_REFERENCE_NODE` referencing the backend. The API can return a private
+wrapper despite that request; successful registration does not prove publication.
+Check the returned state and publish it in Workflow Builder if needed. The helper
+does not create a schedule.
 The default prompt asks the backend to collect missing inputs and complete its
 pipeline. Configure explicit input mappings in Workflow Builder if needed;
 the helper does not invent trigger-variable expressions.
@@ -49,7 +52,10 @@ or deleted automatically.
 
 The helper identifies its wrapper by the description marker
 `Managed native workflow wrapper: <package_name>`. Keep this marker intact.
-It preserves the existing graph, prompt, schedule and sharing state. If that
+It preserves the existing graph, prompt and schedule. With access groups disabled,
+it also leaves sharing unchanged. With access groups enabled, registration adds
+the configured group binding and verifies the enabled state; it does not remove
+existing grants or automatically activate private drafts. If that
 graph no longer references the expected backend, registration fails for manual
 review. The wrapper is read back to verify its reference. Creation failure leaves
 the backend registered; a retry reuses it.
@@ -77,8 +83,10 @@ On 22 September 2026, a UI-created example revealed the native reference payload
 Creating and retrieving a private manual wrapper through the authenticated
 Discovery Engine v1alpha API succeeded; the user also confirmed it in the app.
 The integrated helper subsequently renamed the existing recipe backend, created
-an enabled native wrapper and reused both resource IDs on a second registration.
-These checks did not run recipe generation.
+a native wrapper and reused both resource IDs on a second registration. A later
+read-back showed the wrapper as `PRIVATE`, so the earlier claim that it was enabled
+was not supported. These checks did not run recipe generation or prove access for
+another user.
 The public discovery schema still omits `workflowAgentDefinition`. This is an
 observed, undocumented integration, not a published Google API contract. API
 round-trip verification does not replace testing the workflow's execution.

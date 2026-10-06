@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from gemini_shared import apply_runtime_model, runtime_instruction
-from gemini_shared.runtime import create_app, create_model
+from gemini_shared.runtime import create_app
 from google.adk.agents import Agent
+from google.adk.tools import FunctionTool
 
 from .config import BOOTSTRAP
+from .model import RefreshingGemini
 from .tools import (
     apply_parameter_update,
     list_runtime_parameters,
@@ -16,7 +18,10 @@ from .tools import (
 
 root_agent = Agent(
     name="parameter_updater",
-    model=create_model(BOOTSTRAP),
+    model=RefreshingGemini(
+        model=BOOTSTRAP.bootstrap_model,
+        client_kwargs={"location": BOOTSTRAP.model_location},
+    ),
     description="Inspect and edit agents' live runtime parameters in Parameter Manager.",
     instruction=runtime_instruction,
     before_model_callback=apply_runtime_model,
@@ -24,7 +29,7 @@ root_agent = Agent(
         list_runtime_parameters,
         read_runtime_parameter,
         preview_parameter_update,
-        apply_parameter_update,
+        FunctionTool(apply_parameter_update, require_confirmation=True),
     ],
 )
 

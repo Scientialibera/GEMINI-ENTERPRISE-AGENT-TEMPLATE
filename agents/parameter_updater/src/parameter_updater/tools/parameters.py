@@ -46,6 +46,7 @@ PROTECTED_FIELDS = frozenset({"config_revision", "managed_project"})
 # a prompt an agent could then be asked to repeat.
 SECRET_REFERENCE = "__REF__"  # noqa: S105 - a syntax marker, not a credential
 DIFF_LIMIT = 6000
+APPROVAL_TEXT_LIMIT = 3000
 HISTORY = 10
 RELEASE_NOTE = (
     "A release of that agent from the repository republishes its prompt.md when it "
@@ -177,13 +178,37 @@ def _diff(before: dict[str, object], after: dict[str, object]) -> list[dict[str,
     return changes
 
 
+def _approval_text(
+    project: str, parameter: str, live_version: str, changes: list[dict[str, object]]
+) -> str:
+    """Summarize the stored preview for the approval card."""
+    sections = [f"Parameter: {parameter}\nProject: {project}\nLive version: {live_version}"]
+    for change in changes:
+        field = change["field"]
+        if "diff" in change:
+            detail = change["diff"]
+        else:
+            before = json.dumps(change["before"], ensure_ascii=False)
+            after = json.dumps(change["after"], ensure_ascii=False)
+            detail = f"{before} → {after}"
+        sections.append(f"{field}:\n{detail}")
+    summary = "\n\n".join(sections)
+    if len(summary) > APPROVAL_TEXT_LIMIT:
+        summary = (
+            summary[: APPROVAL_TEXT_LIMIT - 48]
+            + "\n... (shortened; review the full diff in chat)"
+        )
+    return summary
+
+
 def preview_parameter_update(
     parameter: str, changes_json: str, tool_context: ToolContext
 ) -> dict[str, object]:
     """Validate a change to one runtime parameter and show what it would do.
 
     Nothing is published. Show the returned changes to the user and call
-    apply_parameter_update with the returned change_id only once they confirm.
+    apply_parameter_update with the returned change_id and proposed_update to
+    open its approval card.
 
     Args:
         parameter: The parameter ID, for example `basic-assistant-config`.
@@ -244,6 +269,7 @@ def preview_parameter_update(
         return {"status": "no_change", "parameter": parameter, "live_version": live.version}
 
     change_id = uuid4().hex[:8]
+    proposed_update = _approval_text(project, parameter, live.version, diff)
     tool_context.state[f"{PENDING_PREFIX}{change_id}"] = {
         "project": project,
         "parameter": parameter,
@@ -251,6 +277,7 @@ def preview_parameter_update(
         "revision": revision,
         "payload": json.dumps(proposed),
         "instruction_changed": any(c["field"] == "instruction" for c in diff),
+        "proposed_update": proposed_update,
     }
     return {
         "status": "awaiting_confirmation",
@@ -260,17 +287,22 @@ def preview_parameter_update(
         "live_version": live.version,
         "new_revision": revision,
         "changes": diff,
+        "proposed_update": proposed_update,
     }
 
 
-def apply_parameter_update(change_id: str, tool_context: ToolContext) -> dict[str, object]:
-    """Publish a previewed change, after the user has confirmed it.
+def apply_parameter_update(
+    change_id: str, proposed_update: str, tool_context: ToolContext
+) -> dict[str, object]:
+    """Publish a previewed change after its ADK confirmation card is approved.
 
     The new version becomes the agent's live configuration on its next cache
     refresh, without a redeploy.
 
     Args:
         change_id: The change_id preview_parameter_update returned.
+        proposed_update: Copy the preview's proposed_update exactly. This is
+            displayed on the approval card and checked against the stored preview.
     """
     key = f"{PENDING_PREFIX}{change_id}"
     pending = tool_context.state.get(key)
@@ -278,6 +310,12 @@ def apply_parameter_update(change_id: str, tool_context: ToolContext) -> dict[st
         return {
             "status": "error",
             "error": "No pending change has that ID. Preview the change again.",
+        }
+    if proposed_update != pending["proposed_update"]:
+        return {
+            "status": "refused",
+            "error": "Approval text differs from the stored preview. Use the exact "
+            "proposed_update returned by preview_parameter_update.",
         }
     project, parameter = pending["project"], pending["parameter"]
     if project != _target_project():

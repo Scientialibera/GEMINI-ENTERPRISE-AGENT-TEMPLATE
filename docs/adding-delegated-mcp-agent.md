@@ -111,6 +111,15 @@ names and environment keys. Add the client ID to `OAUTH_CLIENTS` as
 client ID override. Follow the root README for redirect URIs, consent setup and the
 per-agent Secret Manager secret. Never commit client secrets or token files.
 
+When handing setup instructions to the user, follow the root README's
+[OAuth client table format](../README.md#configure-delegated-oauth). Include the
+exact client name and both redirect URLs in its row, not scattered across prose.
+
+If deployment-created access groups are enabled, the new registry entry also gets
+its own group during release/registration. Follow [agent access groups](agent-access-groups.md)
+for directory prerequisites and test membership-based access separately from OAuth
+consent and downstream API permissions.
+
 Declare the endpoint in the spec's `runtime_env` as `MCP_SERVER_URL`, so it is
 versioned and no other agent's value can retarget it. Keep it out of `RUNTIME_ENV_KEYS`:
 a name that is not forwarded cannot be overridden by a leftover shell value at deploy
@@ -126,6 +135,9 @@ as an automatic migration step.
 
 Document required API enablement and user IAM in the agent README. Check the current
 `infrastructure/` and release preflight before assuming they provision the new service.
+When behavior changes or a test disproves a setup claim, update the relevant guide
+under `docs/`, configuration examples and infrastructure notes as well as the README.
+Distinguish unit-tested behavior from live validation and record remaining checks.
 Release can mutate cloud resources and IAM; it is not a read-only validation command.
 Obtain approval before deployment, consent configuration or permission changes.
 

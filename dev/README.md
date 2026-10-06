@@ -73,6 +73,9 @@ publishing into an app.
 | deploy/runtime.py | SDK client, existing app and deployment configuration. |
 | config/settings.py | Local and remote environment contract. |
 | register/api_http.py, register/oauth.py | Paginated JSON API access and OAuth client configuration. |
+| register/native_workflow.py | Create or reuse a native wrapper referencing the workflow's ADK backend. |
+| register/group_config.py, register/access_groups.py | Validate optional access-group settings and create or reuse the group and owner. |
+| register/agent_sharing.py | Add group agent-use permission while preserving existing IAM bindings. |
 | config/environment.py | Boolean and placeholder parsing. |
 | config/bootstrap.py | Authentication, project, API, bucket and parameter checks. |
 | fixtures/bigquery_fixture.py | Sample dataset creation, schema validation and seeding. |
@@ -100,6 +103,9 @@ This repository expects you to provision steps 2 and 3 through the console;
 the release helper does not create them. `register/register_agent.py` prints the
 client setup when credentials are missing. An existing authorization is not updated
 when its registry scopes change; plan that migration and renewed consent explicitly.
+When an AI assistant presents that setup, it must use the
+[OAuth client table format](../README.md#configure-delegated-oauth), with the exact
+client name and both redirect URLs in each row.
 For a new service, follow the [delegated MCP guide](../docs/adding-delegated-mcp-agent.md).
 Step 4 is optional when the project and bucket already exist, because
 `release_dev.py` runs the same preflight itself.

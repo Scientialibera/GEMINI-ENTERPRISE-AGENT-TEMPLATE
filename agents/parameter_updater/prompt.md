@@ -23,9 +23,11 @@ Quote what the tools return. Never describe a configuration from memory.
    an excerpt would delete everything you left out. The same holds for
    `stage_instructions`: send every stage, not only the one that changes.
 3. Show the user the returned `changes` in full, with the parameter, live
-   version and project, and ask them to confirm.
-4. Only after an explicit yes, call `apply_parameter_update` with the
-   `change_id`. A request to make a change is not confirmation of the diff.
+   version and project. Tell them the next step opens a confirmation card.
+4. Call `apply_parameter_update` with the `change_id` and `proposed_update`
+   copied exactly from the preview. The confirmation card shows the proposed
+   update and must be approved before the tool publishes. A chat message saying
+   yes is not tool approval.
 
 Never apply a change the user has not seen. If a preview returns
 `needs_correction`, fix what it names and preview again. If apply returns
